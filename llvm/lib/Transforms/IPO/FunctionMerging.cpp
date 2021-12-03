@@ -3582,6 +3582,20 @@ bool FunctionMerging::runImpl(
 #ifdef TIME_STEPS_DEBUG
     TimeTotal.stopTimer();
     TimePreProcess.stopTimer();
+    TimeRank.clear();
+    TimeCodeGenTotal.clear();
+    TimeAlign.clear();
+    TimeAlignRank.clear();
+    TimeParam.clear();
+    TimeCodeGen.clear();
+    TimeCodeGenFix.clear();
+    TimePostOpt.clear();
+    TimeVerify.clear();
+    TimePreProcess.clear();
+    TimeLin.clear();
+    TimeUpdate.clear();
+    TimePrinting.clear();
+    TimeTotal.clear();
 #endif
     return false;
   }
