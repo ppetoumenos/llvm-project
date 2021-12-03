@@ -3579,6 +3579,10 @@ bool FunctionMerging::runImpl(
       reporter.add_candidate(&F);
     }
     reporter.report();
+#ifdef TIME_STEPS_DEBUG
+    TimeTotal.stopTimer();
+    TimePreProcess.stopTimer();
+#endif
     return false;
   }
 
