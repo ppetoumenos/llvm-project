@@ -150,10 +150,10 @@ static bool runImpl(Function *F, DominatorTree &DT, PostDominatorTree &PDT,
           // compute CFM code size reduction
           CFMProfit = 
               CFMSuccess ? BeforeSize - EstimateFunctionSize(CFMFunc.Cloned, TTI) : 0;
+          errs() << "CFM code reduction : " << CFMProfit << "\n";
           if (CFMSuccess)
             CFMFunc.Invalidate();
         }
-        errs() << "CFM code reduction : " << CFMProfit << "\n";
 
         int BFProfit = 0;
         if (!RunCFMOnly || RunBFOnly) {
