@@ -808,19 +808,19 @@ static bool matchLandingPad(LandingPadInst *LP1, LandingPadInst *LP2) {
 
 static bool matchLoadInsts(const LoadInst *LI1, const LoadInst *LI2) {
   return LI1->isVolatile() == LI2->isVolatile() &&
-         LI1->getAlignment() == LI2->getAlignment() &&
+         LI1->getAlign() == LI2->getAlign() &&
          LI1->getOrdering() == LI2->getOrdering();
 }
 
 static bool matchStoreInsts(const StoreInst *SI1, const StoreInst *SI2) {
   return SI1->isVolatile() == SI2->isVolatile() &&
-         SI1->getAlignment() == SI2->getAlignment() &&
+         SI1->getAlign() == SI2->getAlign() &&
          SI1->getOrdering() == SI2->getOrdering();
 }
 
 static bool matchAllocaInsts(const AllocaInst *AI1, const AllocaInst *AI2) {
   if (AI1->getArraySize() != AI2->getArraySize() ||
-      AI1->getAlignment() != AI2->getAlignment())
+      AI1->getAlign() != AI2->getAlign())
     return false;
 
   /*
@@ -902,7 +902,7 @@ static bool matchCallInsts(const CallBase *CI1, const CallBase *CI2) {
     }
   }
 
-  return CI1->getNumArgOperands() == CI2->getNumArgOperands() &&
+  return CI1->arg_size() == CI2->arg_size() &&
          CI1->getCallingConv() == CI2->getCallingConv() &&
          CI1->getAttributes() == CI2->getAttributes();
 }
@@ -1311,8 +1311,8 @@ static void MergeArguments(LLVMContext &Context, Function *F1, Function *F2,
     for (unsigned i = 0; i < ArgsList1.size(); i++) {
       if (ArgsList1[i]->getType() == (*I).getType()) {
 
-        auto AttrSet1 = AttrList1.getParamAttributes(ArgsList1[i]->getArgNo());
-        auto AttrSet2 = AttrList2.getParamAttributes((*I).getArgNo());
+        auto AttrSet1 = AttrList1.getParamAttrs(ArgsList1[i]->getArgNo());
+        auto AttrSet2 = AttrList2.getParamAttrs((*I).getArgNo());
         if (AttrSet1 != AttrSet2)
           continue;
 
@@ -1508,8 +1508,7 @@ LLVMContext &Context, Type *IntPtrTy, const FunctionMergingOptions &Options =
 {}) {
 */
 
-template <typename BlockListType>
-void FunctionMerger::CodeGenerator<BlockListType>::destroyGeneratedCode() {
+void FunctionMerger::CodeGenerator::destroyGeneratedCode() {
   for (Instruction *I : CreatedInsts) {
     I->dropAllReferences();
   }
@@ -2829,8 +2828,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
     }
   };
 
-  SALSSACodeGen<Function::BasicBlockListType> CG(F1->getBasicBlockList(),
-                                                 F2->getBasicBlockList());
+  SALSSACodeGen CG(F1, F2);
   Gen(CG);
 
   FunctionMergeResult Result(F1, F2, MergedFunc, RequiresUnifiedReturn);
@@ -3090,7 +3088,7 @@ static size_t EstimateFunctionSize(Function *F, TargetTransformInfo *TTI) {
     //  break;
     default:
       auto cost = TTI->getInstructionCost(&I, TargetTransformInfo::TargetCostKind::TCK_CodeSize);
-    size += cost.getValue().getValue();
+      size += cost.getValue().value();
     }
   }
   return size_t(std::ceil(size));
@@ -3150,7 +3148,7 @@ unsigned instToInt(Instruction *I) {
 
     const LoadInst *LI = dyn_cast<LoadInst>(I);
     uint32_t lValue = LI->isVolatile() ? 1 : 10;        // Volatility
-    lValue += LI->getAlignment();                       // Alignment
+    lValue += LI->getAlign().value();                       // Alignment
     lValue += static_cast<unsigned>(LI->getOrdering()); // Ordering
 
     value = value * lValue;
@@ -3162,7 +3160,7 @@ unsigned instToInt(Instruction *I) {
 
     const StoreInst *SI = dyn_cast<StoreInst>(I);
     uint32_t sValue = SI->isVolatile() ? 2 : 20;        // Volatility
-    sValue += SI->getAlignment();                       // Alignment
+    sValue += SI->getAlign().value();                       // Alignment
     sValue += static_cast<unsigned>(SI->getOrdering()); // Ordering
 
     value = value * sValue;
@@ -3172,7 +3170,7 @@ unsigned instToInt(Instruction *I) {
 
   case Instruction::Alloca: {
     const AllocaInst *AI = dyn_cast<AllocaInst>(I);
-    uint32_t aValue = AI->getAlignment(); // Alignment
+    uint32_t aValue = AI->getAlign().value(); // Alignment
 
     if (AI->getArraySize()) {
       aValue += reinterpret_cast<std::uintptr_t>(AI->getArraySize());
@@ -3926,8 +3924,7 @@ Value *createCastIfNeeded(Value *V, Type *DstType, IRBuilder<> &Builder,
   return Result;
 }
 
-template <typename BlockListType>
-void FunctionMerger::CodeGenerator<BlockListType>::removeRedundantInstructions(
+void FunctionMerger::CodeGenerator::removeRedundantInstructions(
     std::vector<Instruction *> &WorkInst, DominatorTree &DT) {
   std::set<Instruction *> SkipList;
 
@@ -3982,8 +3979,7 @@ static void postProcessFunction(Function &F) {
   FPM.doFinalization();
 }
 
-template <typename BlockListType>
-static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
+static void CodeGen(std::vector<BasicBlock *> &Blocks1, std::vector<BasicBlock *> &Blocks2,
                     BasicBlock *EntryBB1, BasicBlock *EntryBB2,
                     Function *MergedFunc, Value *IsFunc1, BasicBlock *PreBB,
                     AlignedSequence<Value *> &AlignedSeq,
@@ -4119,7 +4115,7 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
   };
 
   auto ProcessEachFunction =
-      [&](BlockListType &Blocks,
+      [&](std::vector<BasicBlock *> &Blocks,
           std::unordered_map<BasicBlock *, BasicBlock *> &BlocksFX,
           Value *IsFunc1) {
         for (BasicBlock *BB : Blocks) {
@@ -4212,8 +4208,7 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
   }
 }
 
-template <typename BlockListType>
-bool FunctionMerger::SALSSACodeGen<BlockListType>::generate(
+bool FunctionMerger::SALSSACodeGen::generate(
     AlignedSequence<Value *> &AlignedSeq, ValueToValueMapTy &VMap,
     const FunctionMergingOptions &Options) {
 
@@ -4221,27 +4216,23 @@ bool FunctionMerger::SALSSACodeGen<BlockListType>::generate(
   TimeCodeGen.startTimer();
 #endif
 
-  LLVMContext &Context = CodeGenerator<BlockListType>::getContext();
-  Function *MergedFunc = CodeGenerator<BlockListType>::getMergedFunction();
-  Value *IsFunc1 = CodeGenerator<BlockListType>::getFunctionIdentifier();
-  Type *ReturnType = CodeGenerator<BlockListType>::getMergedReturnType();
+  LLVMContext &Context = CodeGenerator::getContext();
+  Function *MergedFunc = CodeGenerator::getMergedFunction();
+  Value *IsFunc1 = CodeGenerator::getFunctionIdentifier();
+  Type *ReturnType = CodeGenerator::getMergedReturnType();
   bool RequiresUnifiedReturn =
-      CodeGenerator<BlockListType>::getRequiresUnifiedReturn();
-  BasicBlock *EntryBB1 = CodeGenerator<BlockListType>::getEntryBlock1();
-  BasicBlock *EntryBB2 = CodeGenerator<BlockListType>::getEntryBlock2();
-  BasicBlock *PreBB = CodeGenerator<BlockListType>::getPreBlock();
+      CodeGenerator::getRequiresUnifiedReturn();
+  BasicBlock *EntryBB1 = CodeGenerator::getEntryBlock1();
+  BasicBlock *EntryBB2 = CodeGenerator::getEntryBlock2();
+  BasicBlock *PreBB = CodeGenerator::getPreBlock();
 
-  Type *RetType1 = CodeGenerator<BlockListType>::getReturnType1();
-  Type *RetType2 = CodeGenerator<BlockListType>::getReturnType2();
+  Type *RetType1 = CodeGenerator::getReturnType1();
+  Type *RetType2 = CodeGenerator::getReturnType2();
 
-  Type *IntPtrTy = CodeGenerator<BlockListType>::getIntPtrType();
+  Type *IntPtrTy = CodeGenerator::getIntPtrType();
 
-  // BlockListType &Blocks1 = CodeGenerator<BlockListType>::getBlocks1();
-  // BlockListType &Blocks2 = CodeGenerator<BlockListType>::getBlocks2();
-  std::vector<BasicBlock *> &Blocks1 =
-      CodeGenerator<BlockListType>::getBlocks1();
-  std::vector<BasicBlock *> &Blocks2 =
-      CodeGenerator<BlockListType>::getBlocks2();
+  std::vector<BasicBlock *> &Blocks1 = CodeGenerator::getBlocks1();
+  std::vector<BasicBlock *> &Blocks2 = CodeGenerator::getBlocks2();
 
   std::list<Instruction *> LinearOffendingInsts;
   std::set<Instruction *> OffendingInsts;
@@ -4268,12 +4259,12 @@ bool FunctionMerger::SALSSACodeGen<BlockListType>::generate(
   if (RequiresUnifiedReturn) {
     IRBuilder<> Builder(PreBB);
     RetUnifiedAddr = Builder.CreateAlloca(ReturnType);
-    CodeGenerator<BlockListType>::insert(dyn_cast<Instruction>(RetUnifiedAddr));
+    CodeGenerator::insert(dyn_cast<Instruction>(RetUnifiedAddr));
 
     RetAddr1 = Builder.CreateAlloca(RetType1);
     RetAddr2 = Builder.CreateAlloca(RetType2);
-    CodeGenerator<BlockListType>::insert(dyn_cast<Instruction>(RetAddr1));
-    CodeGenerator<BlockListType>::insert(dyn_cast<Instruction>(RetAddr2));
+    CodeGenerator::insert(dyn_cast<Instruction>(RetAddr1));
+    CodeGenerator::insert(dyn_cast<Instruction>(RetAddr2));
   }
 
   // errs() << "Assigning label operands\n";
@@ -4947,6 +4938,7 @@ bool FunctionMerger::SALSSACodeGen<BlockListType>::generate(
       return nullptr;
     IRBuilder<> Builder(&*PreBB->getFirstInsertionPt());
     AllocaInst *Addr = Builder.CreateAlloca((*InstSet.begin())->getType());
+	Type *Ty = Addr->getAllocatedType();
 
     for (Instruction *I : InstSet) {
       for (auto UIt = I->use_begin(), E = I->use_end(); UIt != E;) {
@@ -4964,10 +4956,10 @@ bool FunctionMerger::SALSSACodeGen<BlockListType>::generate(
           if (InsertionPt == I)
             continue;
           IRBuilder<> Builder(InsertionPt);
-          UI.set(Builder.CreateLoad(Addr->getType()->getPointerElementType(), Addr));
+          UI.set(Builder.CreateLoad(Ty, Addr));
         } else {
           IRBuilder<> Builder(User);
-          UI.set(Builder.CreateLoad(Addr->getType()->getPointerElementType(), Addr));
+          UI.set(Builder.CreateLoad(Ty, Addr));
         }
       }
     }

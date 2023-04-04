@@ -66,7 +66,6 @@
 #include "llvm/ADT/SequenceAlignment.h"
 
 #include "llvm/Transforms/IPO/SearchStrategy.h"
-#include "llvm/Transforms/IPO/tsl/robin_map.h"
 
 #include <map>
 #include <vector>
@@ -251,15 +250,13 @@ public:
   FunctionMergeResult merge(Function *F1, Function *F2, std::string Name = "",
                             const FunctionMergingOptions &Options = {});
 
-  template <typename BlockListType> class CodeGenerator {
+  class CodeGenerator {
   private:
     LLVMContext *ContextPtr;
     Type *IntPtrTy;
 
     Value *IsFunc1;
 
-    // BlockListType &Blocks1;
-    // BlockListType &Blocks2;
     std::vector<BasicBlock *> Blocks1;
     std::vector<BasicBlock *> Blocks2;
 
@@ -283,15 +280,13 @@ public:
                                      DominatorTree &DT);
 
   public:
-    // CodeGenerator(BlockListType &Blocks1, BlockListType &Blocks2) :
-    // Blocks1(Blocks1), Blocks2(Blocks2) {}
-    CodeGenerator(BlockListType &Blocks1, BlockListType &Blocks2) {
-      for (BasicBlock &BB : Blocks1)
-        this->Blocks1.push_back(&BB);
-      for (BasicBlock &BB : Blocks2)
-        this->Blocks2.push_back(&BB);
+    CodeGenerator(Function* F1, Function* F2) 
+    {
+        for (BasicBlock &BB: *F1)
+            Blocks1.push_back(&BB);
+        for (BasicBlock &BB: *F2)
+            Blocks2.push_back(&BB);
     }
-
     virtual ~CodeGenerator() {}
 
     CodeGenerator &setContext(LLVMContext *ContextPtr) {
@@ -378,12 +373,10 @@ public:
     }
   };
 
-  template <typename BlockListType>
-  class SALSSACodeGen : public FunctionMerger::CodeGenerator<BlockListType> {
+  class SALSSACodeGen : public FunctionMerger::CodeGenerator {
 
   public:
-    SALSSACodeGen(BlockListType &Blocks1, BlockListType &Blocks2)
-        : CodeGenerator<BlockListType>(Blocks1, Blocks2) {}
+    SALSSACodeGen(Function *F1, Function *F2) : CodeGenerator(F1, F2) {}
     virtual ~SALSSACodeGen() {}
     virtual bool generate(AlignedSequence<Value *> &AlignedSeq,
                           ValueToValueMapTy &VMap,
