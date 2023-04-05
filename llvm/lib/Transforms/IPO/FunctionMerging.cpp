@@ -1054,19 +1054,20 @@ bool FunctionMerger::matchInstructions(Instruction *I1, Instruction *I2,
 }
 
 bool FunctionMerger::match(Value *V1, Value *V2) {
-  if (isa<Instruction>(V1) && isa<Instruction>(V2))
-    return matchInstructions(dyn_cast<Instruction>(V1),
-                             dyn_cast<Instruction>(V2));
+  if (auto *I1 = dyn_cast<Instruction>(V1))
+    if (auto *I2 = dyn_cast<Instruction>(V2))
+      return matchInstructions(I1, I2);
 
-  if (isa<BasicBlock>(V1) && isa<BasicBlock>(V2)) {
-    auto *BB1 = dyn_cast<BasicBlock>(V1);
-    auto *BB2 = dyn_cast<BasicBlock>(V2);
-	return matchBlocks(BB1, BB2);
-  }
+  if (auto *BB1 = dyn_cast<BasicBlock>(V1))
+    if (auto *BB2 = dyn_cast<BasicBlock>(V2))
+      return matchBlocks(BB1, BB2);
+
   return false;
 }
 
 bool FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2) {
+  if (BB1 == nullptr || BB2 == nullptr)
+    return false;
   if (BB1->isLandingPad() || BB2->isLandingPad()) {
     LandingPadInst *LP1 = BB1->getLandingPadInst();
     LandingPadInst *LP2 = BB2->getLandingPadInst();
@@ -1078,43 +1079,34 @@ bool FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2) {
 }
 
 bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
-  if (isa<BasicBlock>(V1) && isa<BasicBlock>(V2)) {
-    auto *BB1 = dyn_cast<BasicBlock>(V1);
-    auto *BB2 = dyn_cast<BasicBlock>(V2);
-    if (BB1->isLandingPad() || BB2->isLandingPad()) {
-      LandingPadInst *LP1 = BB1->getLandingPadInst();
-      LandingPadInst *LP2 = BB2->getLandingPadInst();
-      if (LP1 == nullptr || LP2 == nullptr)
-        return false;
-      if (!matchLandingPad(LP1, LP2))
-        return false;
-    }
+  auto *BB1 = dyn_cast<BasicBlock>(V1);
+  auto *BB2 = dyn_cast<BasicBlock>(V2);
+  if (BB1 == nullptr || BB2 == nullptr)
+    return false;
 
-    auto It1 = BB1->begin();
-    auto It2 = BB2->begin();
+  if (!matchBlocks(BB1, BB2))
+    return false;
 
-    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
-      It1++;
-    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
-      It2++;
+  auto It1 = BB1->begin();
+  auto It2 = BB2->begin();
 
-    while (It1 != BB1->end() && It2 != BB2->end()) {
-      Instruction *I1 = &*It1;
-      Instruction *I2 = &*It2;
+  while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
+    It1++;
+  while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
+    It2++;
 
-      if (!matchInstructions(I1, I2))
-        return false;
-
-      It1++;
-      It2++;
-    }
-
-    if (It1 != BB1->end() || It2 != BB2->end())
+  while (It1 != BB1->end() && It2 != BB2->end()) {
+    if (!matchInstructions(&*It1, &*It2))
       return false;
 
-    return true;
+    It1++;
+    It2++;
   }
-  return false;
+
+  if (It1 != BB1->end() || It2 != BB2->end())
+    return false;
+
+  return true;
 }
 
 static unsigned
@@ -1183,6 +1175,13 @@ CanonicalLinearizationOfBlocks(Function *F,
                                         Visited);
 }
 
+static void vectorizeBB(SmallVectorImpl<Value *> &Vec, BasicBlock *BB) {
+  Vec.push_back(BB);
+  for (Instruction &I : *BB)
+    if (!isa<LandingPadInst>(&I) && !isa<PHINode>(&I))
+      Vec.push_back(&I);
+}
+
 void FunctionMerger::linearize(Function *F, SmallVectorImpl<Value *> &FVec,
                                FunctionMerger::LinearizationKind LK) {
   std::list<BasicBlock *> OrderedBBs;
@@ -1199,14 +1198,8 @@ void FunctionMerger::linearize(Function *F, SmallVectorImpl<Value *> &FVec,
   }
 
   FVec.reserve(FReserve + OrderedBBs.size());
-  for (BasicBlock *BB : OrderedBBs) {
-    FVec.push_back(BB);
-    for (Instruction &I : *BB) {
-      if (!isa<LandingPadInst>(&I) && !isa<PHINode>(&I)) {
-        FVec.push_back(&I);
-      }
-    }
-  }
+  for (BasicBlock *BB : OrderedBBs)
+    vectorizeBB(FVec, BB);
 }
 
 bool FunctionMerger::validMergeTypes(Function *F1, Function *F2,
@@ -2225,6 +2218,9 @@ public:
 };
 
 AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
+  // this should never happen
+  assert(BB1 != nullptr || BB2 != nullptr);
+
   // Add only BB1, skipping Phi nodes and Landing Pads
   if (BB1 != nullptr && BB2 == nullptr) {
     Data.emplace_back(BB1, nullptr, false);
@@ -2248,7 +2244,7 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
   }
 
   // Add both, skipping Phi nodes and Landing Pads
-  Data.emplace_back(BB1, BB2, FunctionMerger::match(BB1, BB2));
+  Data.emplace_back(BB1, BB2, FunctionMerger::matchBlocks(BB1, BB2));
 
   auto It1 = BB1->begin();
   while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
@@ -2262,7 +2258,7 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
     Instruction *I1 = &*It1;
     Instruction *I2 = &*It2;
 
-    if (FunctionMerger::match(I1, I2)) {
+    if (FunctionMerger::matchInstructions(I1, I2)) {
       Data.emplace_back(I1, I2, true);
     } else {
       Data.emplace_back(I1, nullptr, false);
@@ -2361,26 +2357,27 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 #endif
 
   AlignedCode AlignedSeq;
-  if (EnableHyFMNW) { // HyFM [NW]
+  if (EnableHyFMNW || EnableHyFMPA) { // Processing individual pairs of blocks
 
-    int B1Max = 0;
-    int B2Max = 0;
-    size_t MaxMem = 0;
+    int B1Max{0}, B2Max{0};
+    size_t MaxMem{0};
 
-    int NumBB1 = 0;
-    int NumBB2 = 0;
-    size_t MemSize = 0;
+    int NumBB1{0}, NumBB2{0};
+    size_t MemSize{0};
 
 #ifdef TIME_STEPS_DEBUG
     TimeAlignRank.startTimer();
 #endif
-    std::vector<BlockFingerprint> Blocks;
+
+    // Fingerprints for all Blocks in F1 organized by size
+    std::map<size_t, std::vector<BlockFingerprint>> Blocks;
     for (BasicBlock &BB1 : *F1) {
       BlockFingerprint BD1(&BB1);
-      MemSize += BD1.footprint();
       NumBB1++;
-      Blocks.push_back(std::move(BD1));
+      MemSize += BD1.footprint();
+      Blocks[BD1.Size].push_back(std::move(BD1));
     }
+
 #ifdef TIME_STEPS_DEBUG
     TimeAlignRank.stopTimer();
 #endif
@@ -2389,125 +2386,102 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 #ifdef TIME_STEPS_DEBUG
       TimeAlignRank.startTimer();
 #endif
-      NumBB2++;
       BasicBlock *BB2 = &BIt;
       BlockFingerprint BD2(BB2);
+      NumBB2++;
+      MemSize += BD2.footprint();
 
-      auto BestIt = Blocks.end();
-      float BestDist = std::numeric_limits<float>::max();
-      for (auto BDIt = Blocks.begin(), E = Blocks.end(); BDIt != E; BDIt++) {
-        auto D = BD2.distance(*BDIt);
-        if (D < BestDist) {
-          BestDist = D;
-          BestIt = BDIt;
+      // list all the map entries in Blocks in order of distance from BD2.Size
+      auto ItSetIncr = Blocks.lower_bound(BD2.Size);
+      auto ItSetDecr = std::reverse_iterator(ItSetIncr);
+      std::vector<decltype(ItSetIncr)> ItSets;
+
+      while (ItSetDecr != Blocks.rend() && ItSetIncr != Blocks.end()) {
+        if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size){
+          ItSets.push_back(std::prev(ItSetDecr.base())); 
+          ItSetDecr++;
+        } else {
+          ItSets.push_back(ItSetIncr);
+          ItSetIncr++;
         }
       }
+
+      while (ItSetDecr != Blocks.rend()) {
+        ItSets.push_back(std::prev(ItSetDecr.base())); 
+        ItSetDecr++;
+      }
+
+      while (ItSetIncr != Blocks.end()) {
+        ItSets.push_back(ItSetIncr);
+        ItSetIncr++;
+      }
+
+      // Find the closest block starting from blocks with similar size
+      auto BestIt = ItSets[0]->second.end();
+      auto BestSet = ItSets[0];
+      float BestDist = std::numeric_limits<float>::max();
+      for (auto ItSet : ItSets) {
+        for (auto BDIt = ItSet->second.begin(), E = ItSet->second.end(); BDIt != E; BDIt++) {
+          auto D = BD2.distance(*BDIt);
+          if (D < BestDist) {
+            BestDist = D;
+            BestIt = BDIt;
+            BestSet = ItSet;
+            if (BestDist < std::numeric_limits<float>::epsilon())
+              break;
+          }
+        }
+        if (BestDist < std::numeric_limits<float>::epsilon())
+          break;
+      }
+
 #ifdef TIME_STEPS_DEBUG
       TimeAlignRank.stopTimer();
 #endif
 
       bool MergedBlock = false;
-      if (BestIt != Blocks.end()) {
-        auto &BD1 = *BestIt;
-        BasicBlock *BB1 = BD1.BB;
-
-        SmallVector<Value *, 8> BB1Vec;
-        SmallVector<Value *, 8> BB2Vec;
-
-        BB1Vec.push_back(BB1);
-        for (auto &I : *BB1)
-          if (!isa<PHINode>(&I) && !isa<LandingPadInst>(&I))
-            BB1Vec.push_back(&I);
-
-        BB2Vec.push_back(BB2);
-        for (auto &I : *BB2)
-          if (!isa<PHINode>(&I) && !isa<LandingPadInst>(&I))
-            BB2Vec.push_back(&I);
-
-        NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
-
-        auto MemReq = SA.getMemoryRequirement(BB1Vec, BB2Vec);
-        if (Verbose)
-          errs() << "PStats: " << BB1Vec.size() << " , " << BB2Vec.size() << " , " << MemReq << "\n";
-
-        if (MemReq > MaxMem) {
-          MaxMem = MemReq;
-          B1Max = BB1Vec.size();
-          B2Max = BB2Vec.size();
-        }
-
-        AlignedCode AlignedBlocks{SA.getAlignment(BB1Vec, BB2Vec)};
-
-        if (!HyFMProfitability || AlignedBlocks.isProfitable()) {
-          AlignedSeq.extend(AlignedBlocks);
-          Blocks.erase(BestIt);
-          MergedBlock = true;
-        }
-      }
-
-      if (!MergedBlock)
-        AlignedSeq.extend(AlignedCode(nullptr, BB2));
-    }
-
-    for (auto &BD1 : Blocks)
-      AlignedSeq.extend(AlignedCode(BD1.BB, nullptr));
-
-    if (Verbose) {
-      errs() << "Stats: " << B1Max << " , " << B2Max << " , " << MaxMem << "\n";
-      errs() << "RStats: " << NumBB1 << " , " << NumBB2 << " , " << MemSize << "\n";
-    }
-
-    ProfitableFn = AlignedSeq.hasMatches();
-  } else if (EnableHyFMPA) { // HyFM [PA]
-    int NumBB1 = 0;
-    int NumBB2 = 0;
-    size_t MemSize = 0;
-
-#ifdef TIME_STEPS_DEBUG
-    TimeAlignRank.startTimer();
-#endif
-    std::map<size_t, std::vector<BlockFingerprint>> BlocksF1;
-    for (BasicBlock &BB1 : *F1) {
-      BlockFingerprint BD1(&BB1);
-      NumBB1++;
-      MemSize += BD1.footprint();
-      BlocksF1[BD1.Size].push_back(std::move(BD1));
-    }
-#ifdef TIME_STEPS_DEBUG
-    TimeAlignRank.stopTimer();
-#endif
-
-    for (BasicBlock &BIt : *F2) {
-#ifdef TIME_STEPS_DEBUG
-      TimeAlignRank.startTimer();
-#endif
-      NumBB2++;
-      BasicBlock *BB2 = &BIt;
-      BlockFingerprint BD2(BB2);
-
-      auto &SetRef = BlocksF1[BD2.Size];
-
-      auto BestIt = SetRef.end();
-      float BestDist = std::numeric_limits<float>::max();
-      for (auto BDIt = SetRef.begin(), E = SetRef.end(); BDIt != E; BDIt++) {
-        auto D = BD2.distance(*BDIt);
-        if (D < BestDist) {
-          BestDist = D;
-          BestIt = BDIt;
-        }
-      }
-#ifdef TIME_STEPS_DEBUG
-      TimeAlignRank.stopTimer();
-#endif
-
-      bool MergedBlock = false;
-      if (BestIt != SetRef.end()) {
+      if (BestIt != ItSets[0]->second.end()) {
         BasicBlock *BB1 = BestIt->BB;
-        AlignedCode AlignedBlocks(BB1, BB2);
+        AlignedCode AlignedBlocks;
+
+        if (EnableHyFMNW) {
+          SmallVector<Value *, 8> BB1Vec;
+          vectorizeBB(BB1Vec, BB1);
+
+          SmallVector<Value *, 8> BB2Vec;
+          vectorizeBB(BB2Vec, BB2);
+
+          NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
+          AlignedBlocks = SA.getAlignment(BB1Vec, BB2Vec);
+
+          if (Verbose) {
+            auto MemReq = SA.getMemoryRequirement(BB1Vec, BB2Vec);
+            errs() << "MStats: " << BB1Vec.size() << " , " << BB2Vec.size() << " , " << MemReq << "\n";
+
+            if (MemReq > MaxMem) {
+              MaxMem = MemReq;
+              B1Max = BB1Vec.size();
+              B2Max = BB2Vec.size();
+            }
+          }
+        } else if (EnableHyFMPA) {
+          AlignedBlocks = AlignedCode(BB1, BB2);
+
+          if (Verbose) {
+            auto MemReq = AlignedBlocks.size() * (sizeof(AlignedCode::Entry) + 2 * sizeof(void*));
+            errs() << "MStats: " << BB1->size() << " , " << BB2->size() << " , " << MemReq << "\n";
+
+            if (MemReq > MaxMem) {
+              MaxMem = MemReq;
+              B1Max = BB1->size();
+              B2Max = BB2->size();
+            }
+          }
+        }
 
         if (!HyFMProfitability || AlignedBlocks.isProfitable()) {
           AlignedSeq.extend(AlignedBlocks);
-          SetRef.erase(BestIt);
+          BestSet->second.erase(BestIt);
           MergedBlock = true;
         }
       }
@@ -2516,14 +2490,17 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
         AlignedSeq.extend(AlignedCode(nullptr, BB2));
     }
 
-    for (auto &Pair : BlocksF1)
+    for (auto &Pair : Blocks)
       for (auto &BD1 : Pair.second)
         AlignedSeq.extend(AlignedCode(BD1.BB, nullptr));
 
-    if (Verbose)
+    if (Verbose) {
+      errs() << "SStats: " << B1Max << " , " << B2Max << " , " << MaxMem << "\n";
       errs() << "RStats: " << NumBB1 << " , " << NumBB2 << " , " << MemSize << "\n";
+    }
 
     ProfitableFn = AlignedSeq.hasMatches();
+
   } else { //default SALSSA
     SmallVector<Value *, 8> F1Vec;
     SmallVector<Value *, 8> F2Vec;
@@ -2541,7 +2518,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 
     auto MemReq = SA.getMemoryRequirement(F1Vec, F2Vec);
     auto MemAvailable = getTotalSystemMemory();
-    errs() << "Stats: " << F1Vec.size() << " , " << F2Vec.size() << " , " << MemReq << "\n";
+    errs() << "MStats: " << F1Vec.size() << " , " << F2Vec.size() << " , " << MemReq << "\n";
     if (MemReq > MemAvailable * 0.9) {
       errs() << "Insufficient Memory\n";
 #ifdef TIME_STEPS_DEBUG
@@ -2574,7 +2551,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
     if (Entry.match()) {
       NumMatches++;
       if (isa<BasicBlock>(Entry.get(1))) {
-        CurrBB1 = dyn_cast<BasicBlock>(Entry.get(1));
+        CurrBB1 = cast<BasicBlock>(Entry.get(1));
       } else if (auto *I = dyn_cast<Instruction>(Entry.get(1))) {
         if (CurrBB1 == nullptr)
           CurrBB1 = I->getParent();
@@ -2583,7 +2560,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
         }
       }
       if (isa<BasicBlock>(Entry.get(0))) {
-        CurrBB0 = dyn_cast<BasicBlock>(Entry.get(0));
+        CurrBB0 = cast<BasicBlock>(Entry.get(0));
       } else if (auto *I = dyn_cast<Instruction>(Entry.get(0))) {
         if (CurrBB0 == nullptr)
           CurrBB0 = I->getParent();
