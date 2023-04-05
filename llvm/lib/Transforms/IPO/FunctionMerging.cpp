@@ -1061,16 +1061,20 @@ bool FunctionMerger::match(Value *V1, Value *V2) {
   if (isa<BasicBlock>(V1) && isa<BasicBlock>(V2)) {
     auto *BB1 = dyn_cast<BasicBlock>(V1);
     auto *BB2 = dyn_cast<BasicBlock>(V2);
-    if (BB1->isLandingPad() || BB2->isLandingPad()) {
-      LandingPadInst *LP1 = BB1->getLandingPadInst();
-      LandingPadInst *LP2 = BB2->getLandingPadInst();
-      if (LP1 == nullptr || LP2 == nullptr)
-        return false;
-      return matchLandingPad(LP1, LP2);
-    } 
-    return true;
+	return matchBlocks(BB1, BB2);
   }
   return false;
+}
+
+bool FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2) {
+  if (BB1->isLandingPad() || BB2->isLandingPad()) {
+    LandingPadInst *LP1 = BB1->getLandingPadInst();
+    LandingPadInst *LP2 = BB2->getLandingPadInst();
+    if (LP1 == nullptr || LP2 == nullptr)
+      return false;
+    return matchLandingPad(LP1, LP2);
+  } 
+  return true;
 }
 
 bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
@@ -1279,7 +1283,7 @@ static bool validMergePair(Function *F1, Function *F2) {
 }
 
 static void MergeArguments(LLVMContext &Context, Function *F1, Function *F2,
-                           AlignedSequence<Value *> &AlignedSeq,
+                           AlignedCode &AlignedSeq,
                            std::map<unsigned, unsigned> &ParamMap1,
                            std::map<unsigned, unsigned> &ParamMap2,
                            std::vector<Type *> &Args,
@@ -2220,13 +2224,64 @@ public:
   }
 };
 
-bool FunctionMerger::isSAProfitable(AlignedSequence<Value *> &AlignedBlocks) {
+AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
+  // Add only BB1, skipping Phi nodes and Landing Pads
+  if (BB1 != nullptr && BB2 == nullptr) {
+    Data.emplace_back(BB1, nullptr, false);
+    for (Instruction &I : *BB1) {
+      if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
+        continue;
+      Data.emplace_back(&I, nullptr, false);
+    }
+    return;
+  }
+
+  // Add only BB2, skipping Phi nodes and Landing Pads
+  if (BB1 == nullptr && BB2 != nullptr) {
+    Data.emplace_back(nullptr, BB2, false);
+    for (Instruction &I : *BB2) {
+      if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
+        continue;
+      Data.emplace_back(nullptr, &I, false);
+    }
+    return;
+  }
+
+  // Add both, skipping Phi nodes and Landing Pads
+  Data.emplace_back(BB1, BB2, FunctionMerger::match(BB1, BB2));
+
+  auto It1 = BB1->begin();
+  while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
+    It1++;
+
+  auto It2 = BB2->begin();
+  while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
+    It2++;
+
+  while (It1 != BB1->end() && It2 != BB2->end()) {
+    Instruction *I1 = &*It1;
+    Instruction *I2 = &*It2;
+
+    if (FunctionMerger::match(I1, I2)) {
+      Data.emplace_back(I1, I2, true);
+    } else {
+      Data.emplace_back(I1, nullptr, false);
+      Data.emplace_back(nullptr, I2, false);
+    }
+
+    It1++;
+    It2++;
+  }
+  assert ((It1 == BB1->end()) && (It2 == BB2->end()));
+}
+
+bool AlignedCode::isProfitable() const {
     int OriginalCost = 0;
     int MergedCost = 0;
 
     bool InsideSplit = false;
 
-    for (auto &Entry : AlignedBlocks) {
+    for (auto &Entry : Data) {
       Instruction *I1 = nullptr;
       if (Entry.get(0))
         I1 = dyn_cast<Instruction>(Entry.get(0));
@@ -2263,103 +2318,8 @@ bool FunctionMerger::isSAProfitable(AlignedSequence<Value *> &AlignedBlocks) {
     return Profitable;
 }
 
-bool FunctionMerger::isPAProfitable(BasicBlock *BB1, BasicBlock *BB2){
-  int OriginalCost = 0;
-  int MergedCost = 0;
-
-  bool InsideSplit = !FunctionMerger::match(BB1, BB2);
-  if(InsideSplit)
-    MergedCost = 1;
-
-  auto It1 = BB1->begin();
-  while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
-    It1++;
-
-  auto It2 = BB2->begin();
-  while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
-    It2++;
-
-  while (It1 != BB1->end() && It2 != BB2->end()) {
-    Instruction *I1 = &*It1;
-    Instruction *I2 = &*It2;
-
-    OriginalCost += 2;
-    if (matchInstructions(I1, I2)) {
-      MergedCost += 1; // reduces 1 inst by merging two insts into one
-      if (InsideSplit) {
-        InsideSplit = false;
-        MergedCost += 2; // two branches to converge
-      }
-    } else {
-      if (!InsideSplit) {
-        InsideSplit = true;
-        MergedCost += 1; // one branch to split
-      }
-      MergedCost += 2; // two instructions
-    }
-    It1++;
-    It2++;
-  }
-  assert(It1 == BB1->end() && It2 == BB2->end());
-
-  bool Profitable = (MergedCost <= OriginalCost);
-  if (Verbose)
-    errs() << ((Profitable) ? "Profitable" : "Unprofitable") << "\n";
-  return Profitable;
-}
-
-void FunctionMerger::extendAlignedSeq(AlignedSequence<Value *> &AlignedSeq, BasicBlock *BB1, BasicBlock *BB2, AlignmentStats &stats) {
-  if (BB1 != nullptr && BB2 == nullptr) {
-    AlignedSeq.Data.emplace_back(BB1, nullptr, false);
-    for (Instruction &I : *BB1) {
-      if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
-        continue;
-      stats.Insts++;
-      AlignedSeq.Data.emplace_back(&I, nullptr, false);
-    }
-  } else if (BB1 == nullptr && BB2 != nullptr) {
-    AlignedSeq.Data.emplace_back(nullptr, BB2, false);
-    for (Instruction &I : *BB2) {
-      if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
-        continue;
-      stats.Insts++;
-      AlignedSeq.Data.emplace_back(nullptr, &I, false);
-    }
-  } else {
-    AlignedSeq.Data.emplace_back(BB1, BB2, FunctionMerger::match(BB1, BB2));
-
-    auto It1 = BB1->begin();
-    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
-      It1++;
-
-    auto It2 = BB2->begin();
-    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
-      It2++;
-
-    while (It1 != BB1->end() && It2 != BB2->end()) {
-      Instruction *I1 = &*It1;
-      Instruction *I2 = &*It2;
-
-      stats.Insts++;
-      if (matchInstructions(I1, I2)) {
-        AlignedSeq.Data.emplace_back(I1, I2, true);
-        stats.Matches++;
-        if (!I1->isTerminator())
-          stats.CoreMatches++;
-      } else {
-        AlignedSeq.Data.emplace_back(I1, nullptr, false);
-        AlignedSeq.Data.emplace_back(nullptr, I2, false);
-      }
-
-      It1++;
-      It2++;
-    }
-    assert ((It1 == BB1->end()) && (It2 == BB2->end()));
-  }
-}
-
-void FunctionMerger::extendAlignedSeq(AlignedSequence<Value *> &AlignedSeq, AlignedSequence<Value *> &AlignedSubSeq, AlignmentStats &stats) {
-  for (auto &Entry : AlignedSubSeq) {
+void AlignedCode::extend(const AlignedCode &Other) {
+  for (auto &Entry : Other) {
     Instruction *I1 = nullptr;
     if (Entry.get(0))
       I1 = dyn_cast<Instruction>(Entry.get(0));
@@ -2370,19 +2330,19 @@ void FunctionMerger::extendAlignedSeq(AlignedSequence<Value *> &AlignedSeq, Alig
 
     bool IsInstruction = I1 != nullptr || I2 != nullptr;
 
-    AlignedSeq.Data.emplace_back(Entry.get(0), Entry.get(1), Entry.match());
+    Data.emplace_back(Entry.get(0), Entry.get(1), Entry.match());
 
     if (IsInstruction) {
-      stats.Insts++;
-      if (Entry.match())
-        stats.Matches++;
-      Instruction *I = I1 ? I1 : I2;
-      if (I->isTerminator())
-        stats.CoreMatches++;
+      Insts++;
+      if (Entry.match()) {
+        Matches++;
+        Instruction *I = I1 ? I1 : I2;
+        if (!I->isTerminator())
+          CoreMatches++;
+      }
     }
   }
 }
-
 
 bool AcrossBlocks;
 
@@ -2400,9 +2360,8 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
   time_align_start = std::chrono::steady_clock::now();
 #endif
 
-  AlignedSequence<Value *> AlignedSeq;
+  AlignedCode AlignedSeq;
   if (EnableHyFMNW) { // HyFM [NW]
-    AlignmentStats TotalAlignmentStats;
 
     int B1Max = 0;
     int B2Max = 0;
@@ -2477,31 +2436,29 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
           B2Max = BB2Vec.size();
         }
 
-        AlignedSequence<Value *> AlignedBlocks = SA.getAlignment(BB1Vec, BB2Vec);
+        AlignedCode AlignedBlocks{SA.getAlignment(BB1Vec, BB2Vec)};
 
-        if (!HyFMProfitability || isSAProfitable(AlignedBlocks)) {
-          extendAlignedSeq(AlignedSeq, AlignedBlocks, TotalAlignmentStats);
+        if (!HyFMProfitability || AlignedBlocks.isProfitable()) {
+          AlignedSeq.extend(AlignedBlocks);
           Blocks.erase(BestIt);
           MergedBlock = true;
         }
       }
 
       if (!MergedBlock)
-        extendAlignedSeq(AlignedSeq, nullptr, BB2, TotalAlignmentStats);
+        AlignedSeq.extend(AlignedCode(nullptr, BB2));
     }
 
     for (auto &BD1 : Blocks)
-      extendAlignedSeq(AlignedSeq, BD1.BB, nullptr, TotalAlignmentStats);
+      AlignedSeq.extend(AlignedCode(BD1.BB, nullptr));
 
     if (Verbose) {
       errs() << "Stats: " << B1Max << " , " << B2Max << " , " << MaxMem << "\n";
       errs() << "RStats: " << NumBB1 << " , " << NumBB2 << " , " << MemSize << "\n";
     }
 
-    ProfitableFn = TotalAlignmentStats.isProfitable();
+    ProfitableFn = AlignedSeq.hasMatches();
   } else if (EnableHyFMPA) { // HyFM [PA]
-    AlignmentStats TotalAlignmentStats;
-
     int NumBB1 = 0;
     int NumBB2 = 0;
     size_t MemSize = 0;
@@ -2546,26 +2503,27 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
       bool MergedBlock = false;
       if (BestIt != SetRef.end()) {
         BasicBlock *BB1 = BestIt->BB;
+        AlignedCode AlignedBlocks(BB1, BB2);
 
-        if (!HyFMProfitability || isPAProfitable(BB1, BB2)) {
-          extendAlignedSeq(AlignedSeq, BB1, BB2, TotalAlignmentStats);
+        if (!HyFMProfitability || AlignedBlocks.isProfitable()) {
+          AlignedSeq.extend(AlignedBlocks);
           SetRef.erase(BestIt);
           MergedBlock = true;
         }
       }
 
       if (!MergedBlock)
-        extendAlignedSeq(AlignedSeq, nullptr, BB2, TotalAlignmentStats);
+        AlignedSeq.extend(AlignedCode(nullptr, BB2));
     }
 
     for (auto &Pair : BlocksF1)
       for (auto &BD1 : Pair.second)
-        extendAlignedSeq(AlignedSeq, BD1.BB, nullptr, TotalAlignmentStats);
+        AlignedSeq.extend(AlignedCode(BD1.BB, nullptr));
 
     if (Verbose)
       errs() << "RStats: " << NumBB1 << " , " << NumBB2 << " , " << MemSize << "\n";
 
-    ProfitableFn = TotalAlignmentStats.isProfitable();
+    ProfitableFn = AlignedSeq.hasMatches();
   } else { //default SALSSA
     SmallVector<Value *, 8> F1Vec;
     SmallVector<Value *, 8> F2Vec;
@@ -2594,7 +2552,6 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
     }
     
     AlignedSeq = SA.getAlignment(F1Vec, F2Vec);
-
   }
 
 #ifdef TIME_STEPS_DEBUG
@@ -3983,7 +3940,7 @@ template <typename BlockListType>
 static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                     BasicBlock *EntryBB1, BasicBlock *EntryBB2,
                     Function *MergedFunc, Value *IsFunc1, BasicBlock *PreBB,
-                    AlignedSequence<Value *> &AlignedSeq,
+                    AlignedCode &AlignedSeq,
                     ValueToValueMapTy &VMap,
                     std::unordered_map<BasicBlock *, BasicBlock *> &BlocksF1,
                     std::unordered_map<BasicBlock *, BasicBlock *> &BlocksF2,
@@ -4210,7 +4167,7 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
 }
 
 bool FunctionMerger::SALSSACodeGen::generate(
-    AlignedSequence<Value *> &AlignedSeq, ValueToValueMapTy &VMap,
+    AlignedCode &AlignedSeq, ValueToValueMapTy &VMap,
     const FunctionMergingOptions &Options) {
 
 #ifdef TIME_STEPS_DEBUG
