@@ -539,7 +539,7 @@ static bool matchIntrinsicCalls(Intrinsic::ID ID, const CallBase *CI1,
       Assert(AI && AI->isStaticAlloca(),
              "llvm.localescape only accepts static allocas", CS);
     }
-    FrameEscapeInfo[BB->getParent()].first = CS.getNumArgOperands();
+    FrameEscapeInfo[BB->getParent()].first = CS.get_size();
     SawFrameEscape = true;
     */
     break;
@@ -592,7 +592,7 @@ static bool matchIntrinsicCalls(Intrinsic::ID ID, const CallBase *CI1,
       break;
     }
     case Intrinsic::experimental_gc_relocate: {
-      Assert(CS.getNumArgOperands() == 3, "wrong number of arguments", CS);
+      Assert(CS.get_size() == 3, "wrong number of arguments", CS);
 
       Assert(isa<PointerType>(CS.getType()->getScalarType()),
              "gc.relocate must return a pointer or a vector of pointers", CS);
@@ -3979,7 +3979,8 @@ static void postProcessFunction(Function &F) {
   FPM.doFinalization();
 }
 
-static void CodeGen(std::vector<BasicBlock *> &Blocks1, std::vector<BasicBlock *> &Blocks2,
+template <typename BlockListType>
+static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                     BasicBlock *EntryBB1, BasicBlock *EntryBB2,
                     Function *MergedFunc, Value *IsFunc1, BasicBlock *PreBB,
                     AlignedSequence<Value *> &AlignedSeq,
@@ -4115,7 +4116,7 @@ static void CodeGen(std::vector<BasicBlock *> &Blocks1, std::vector<BasicBlock *
   };
 
   auto ProcessEachFunction =
-      [&](std::vector<BasicBlock *> &Blocks,
+      [&](BlockListType &Blocks,
           std::unordered_map<BasicBlock *, BasicBlock *> &BlocksFX,
           Value *IsFunc1) {
         for (BasicBlock *BB : Blocks) {
@@ -4402,7 +4403,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
             LandingPadInst *LP2 = F2BB->getLandingPadInst();
             assert((LP1 != nullptr && LP2 != nullptr) &&
                    "Should be both as per the BasicBlock match!");
-			(void)LP2;
+            (void)LP2;
 
             BasicBlock *LPadBB =
                 BasicBlock::Create(Context, "lpad.bb", MergedFunc);
@@ -4938,7 +4939,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
       return nullptr;
     IRBuilder<> Builder(&*PreBB->getFirstInsertionPt());
     AllocaInst *Addr = Builder.CreateAlloca((*InstSet.begin())->getType());
-	Type *Ty = Addr->getAllocatedType();
+    Type *Ty = Addr->getAllocatedType();
 
     for (Instruction *I : InstSet) {
       for (auto UIt = I->use_begin(), E = I->use_end(); UIt != E;) {

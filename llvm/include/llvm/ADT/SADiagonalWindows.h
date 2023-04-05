@@ -46,26 +46,18 @@ public:
 
       Offset1 = EndWindow1;
       Offset2 = EndWindow2;
-
-      //Finished Seq1 or Seq2
-      if (Offset1>=Seq1.size()) {
-        //Copy the remaining entries from Seq2
-        if (Offset2<Seq2.size()) {
-		      ArrayView< ContainerType > View2(Seq2);
-		      View2.sliceWindow(Offset2, Seq2.size());
-          for (auto Char : View2)
-            Res.Data.push_back(typename BaseType::EntryType(Blank,Char,false));
-        }
-      } else if (Offset2>=Seq2.size()) {
-        //Copy the remaining entries from Seq1
-        if (Offset1<Seq1.size()) {
-		      ArrayView< ContainerType > View1(Seq1);
-		      View1.sliceWindow(Offset1, Seq1.size());
-          for (auto Char : View1)
-            Res.Data.push_back(typename BaseType::EntryType(Char,Blank,false));
-        }
-      }
     }
+
+    //Copy the remaining entries from Seq1 and Seq2
+    if (Offset1 < Seq1.size()) {
+      for (auto it = Seq1.begin() + Offset1; it != Seq1.end(); ++it)
+        Res.Data.push_back(typename BaseType::EntryType(*it,Blank,false));
+    }
+    if (Offset2 < Seq2.size()) {
+      for (auto it = Seq2.begin() + Offset2; it != Seq2.end(); ++it)
+        Res.Data.push_back(typename BaseType::EntryType(Blank,*it,false));
+    }
+
 
     return Res;
   }
