@@ -2357,6 +2357,8 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 #endif
 
   AlignedCode AlignedSeq;
+  NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
+
   if (EnableHyFMNW || EnableHyFMPA) { // Processing individual pairs of blocks
 
     int B1Max{0}, B2Max{0};
@@ -2396,30 +2398,37 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
       auto ItSetDecr = std::reverse_iterator(ItSetIncr);
       std::vector<decltype(ItSetIncr)> ItSets;
 
-      while (ItSetDecr != Blocks.rend() && ItSetIncr != Blocks.end()) {
-        if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size){
+      if (EnableHyFMNW) { 
+        while (ItSetDecr != Blocks.rend() && ItSetIncr != Blocks.end()) {
+          if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size){
+            ItSets.push_back(std::prev(ItSetDecr.base())); 
+            ItSetDecr++;
+          } else {
+            ItSets.push_back(ItSetIncr);
+            ItSetIncr++;
+          }
+        }
+
+        while (ItSetDecr != Blocks.rend()) {
           ItSets.push_back(std::prev(ItSetDecr.base())); 
           ItSetDecr++;
-        } else {
+        }
+
+        while (ItSetIncr != Blocks.end()) {
           ItSets.push_back(ItSetIncr);
           ItSetIncr++;
         }
-      }
-
-      while (ItSetDecr != Blocks.rend()) {
-        ItSets.push_back(std::prev(ItSetDecr.base())); 
-        ItSetDecr++;
-      }
-
-      while (ItSetIncr != Blocks.end()) {
-        ItSets.push_back(ItSetIncr);
-        ItSetIncr++;
+      } else {
+        ItSetIncr = Blocks.find(BD2.Size);
+        if (ItSetIncr != Blocks.end())
+          ItSets.push_back(ItSetIncr);
       }
 
       // Find the closest block starting from blocks with similar size
-      auto BestIt = ItSets[0]->second.end();
-      auto BestSet = ItSets[0];
+      std::vector<BlockFingerprint>::iterator BestIt;
+      std::map<size_t, std::vector<BlockFingerprint>>::iterator BestSet;
       float BestDist = std::numeric_limits<float>::max();
+
       for (auto ItSet : ItSets) {
         for (auto BDIt = ItSet->second.begin(), E = ItSet->second.end(); BDIt != E; BDIt++) {
           auto D = BD2.distance(*BDIt);
@@ -2440,7 +2449,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 #endif
 
       bool MergedBlock = false;
-      if (BestIt != ItSets[0]->second.end()) {
+      if (BestDist < std::numeric_limits<float>::max()) {
         BasicBlock *BB1 = BestIt->BB;
         AlignedCode AlignedBlocks;
 
@@ -2451,7 +2460,6 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
           SmallVector<Value *, 8> BB2Vec;
           vectorizeBB(BB2Vec, BB2);
 
-          NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
           AlignedBlocks = SA.getAlignment(BB1Vec, BB2Vec);
 
           if (Verbose) {
@@ -2513,8 +2521,6 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 #ifdef TIME_STEPS_DEBUG
     TimeLin.stopTimer();
 #endif
-
-    NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
 
     auto MemReq = SA.getMemoryRequirement(F1Vec, F2Vec);
     auto MemAvailable = getTotalSystemMemory();
