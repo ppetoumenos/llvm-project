@@ -186,6 +186,10 @@ static cl::opt<bool>
     EnableHyFMNW("func-merging-hyfm-nw", cl::init(false), cl::Hidden,
                  cl::desc("Enable HyFM with the Needleman-Wunsch alignment"));
 
+static cl::opt<bool>
+    EnableHyFMGA("func-merging-hyfm-ga", cl::init(false), cl::Hidden,
+                 cl::desc("Enable HyFM with the DAG-based alignment"));
+
 static cl::opt<bool> EnableSALSSACoalescing(
     "func-merging-coalescing", cl::init(true), cl::Hidden,
     cl::desc("Enable phi-node coalescing during SSA reconstruction"));
@@ -2358,6 +2362,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
 
   AlignedCode AlignedSeq;
   NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
+  GraphSA<SmallVectorImpl<Value *>> GA(ScoringSystem(-1, 2), FunctionMerger::match);
 
   if (EnableHyFMNW || EnableHyFMPA) { // Processing individual pairs of blocks
 
@@ -2483,6 +2488,25 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
               MaxMem = MemReq;
               B1Max = BB1->size();
               B2Max = BB2->size();
+            }
+          }
+        } else if (EnableHyFMGA) {
+          SmallVector<Value *, 8> BB1Vec;
+          vectorizeBB(BB1Vec, BB1);
+
+          SmallVector<Value *, 8> BB2Vec;
+          vectorizeBB(BB2Vec, BB2);
+
+          AlignedBlocks = GA.getAlignment(BB1Vec, BB2Vec);
+
+          if (Verbose) {
+            auto MemReq = GA.getMemoryRequirement(BB1Vec, BB2Vec);
+            errs() << "MStats: " << BB1Vec.size() << " , " << BB2Vec.size() << " , " << MemReq << "\n";
+
+            if (MemReq > MaxMem) {
+              MaxMem = MemReq;
+              B1Max = BB1Vec.size();
+              B2Max = BB2Vec.size();
             }
           }
         }

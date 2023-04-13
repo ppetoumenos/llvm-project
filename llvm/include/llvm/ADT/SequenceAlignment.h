@@ -165,5 +165,6 @@ public:
 #include "llvm/ADT/SANeedlemanWunsch.h"
 #include "llvm/ADT/SAHirschberg.h"
 #include "llvm/ADT/SADiagonalWindows.h"
+#include "llvm/ADT/SAGraphAlignment.h"
 
 #endif
