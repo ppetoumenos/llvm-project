@@ -166,19 +166,20 @@ protected:
   }
 };
 
+enum Relation {
+  NONE,
+  ANCESTOR,
+  DESCENTANT,
+};
+
 template<typename ContainerType, typename Ty>
 class DependencyInfo {
   llvm::SmallVector<llvm::SmallBitVector> Mtx;
   size_t Size;
 
 public:
-  enum Relation {
-    NONE,
-    ANCESTOR,
-    DESCENTANT,
-  };
 
-  DependencyInfo(ContainerType Seq) : Size{Seq.Size()} {
+  DependencyInfo(ContainerType &Seq) : Size{Seq.size()} {
     llvm::SmallDenseMap<llvm::Instruction *, size_t> IMap;
 
     for (size_t Idx = 0; Idx < Size; ++Idx) {
@@ -261,6 +262,7 @@ public:
     if (Idx > Jdx && Mtx[Idx][Jdx])
       return DESCENTANT;
     return NONE;
+  }
 };
 
 template<typename Ty>
@@ -343,8 +345,8 @@ public:
 
 
     // Triangular matrices indicating direct or indirect dependencies
-    DependencyInfo Dependent1(Seq1);
-    DependencyInfo Dependent2(Seq2);
+    DependencyInfo<ContainerType, Ty> Dependent1(Seq1);
+    DependencyInfo<ContainerType, Ty> Dependent2(Seq2);
 
     std::vector<std::pair<size_t, size_t>> Matches;
     // Finding matching pairs. Skip the last instruction.
@@ -372,8 +374,8 @@ public:
           continue;
         }
 
-        Relation rel1 = Dependent1.getRelation(element1a, element2a);
-        Relation rel2 = Dependent2.getRelation(element1b, element2b);
+        auto rel1 = Dependent1.getRelation(element1a, element2a);
+        auto rel2 = Dependent2.getRelation(element1b, element2b);
         if (rel1 == ANCESTOR && rel2 == DESCENTANT)
           Conflicts.get_direct(i, j) = true;
         if (rel1 == DESCENTANT && rel2 == ANCESTOR)
