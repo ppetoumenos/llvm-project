@@ -61,13 +61,6 @@ Pass *createLoopExtractorPass();
 Pass *createSingleLoopExtractorPass();
 
 //===----------------------------------------------------------------------===//
-/// createFunctionMergingPass - This pass merges similar functions to reduce
-/// code size.
-///
-ModulePass *createFunctionMergingPass();
-
-
-//===----------------------------------------------------------------------===//
 /// createBarrierNoopPass - This pass is purely a module pass barrier in a pass
 /// manager.
 ModulePass *createBarrierNoopPass();

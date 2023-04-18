@@ -3781,42 +3781,8 @@ bool FunctionMerging::runImpl(
   return true;
 }
 
-class FunctionMergingLegacyPass : public ModulePass {
-public:
-  static char ID;
-  FunctionMergingLegacyPass() : ModulePass(ID) {
-    initializeFunctionMergingLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-  bool runOnModule(Module &M) override {
-    auto GTTI = [this](Function &F) -> TargetTransformInfo * {
-      return &this->getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
-    };
-
-    FunctionMerging FM;
-    return FM.runImpl(M, GTTI);
-  }
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TargetTransformInfoWrapperPass>();
-    // ModulePass::getAnalysisUsage(AU);
-  }
-};
-
-char FunctionMergingLegacyPass::ID = 0;
-INITIALIZE_PASS(FunctionMergingLegacyPass, "func-merging",
-                "New Function Merging", false, false)
-
-ModulePass *llvm::createFunctionMergingPass() {
-  return new FunctionMergingLegacyPass();
-}
-
 PreservedAnalyses FunctionMergingPass::run(Module &M,
                                            ModuleAnalysisManager &AM) {
-  //auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-  //std::function<TargetTransformInfo *(Function &)> GTTI =
-  //    [&FAM](Function &F) -> TargetTransformInfo * {
-  //  return &FAM.getResult<TargetIRAnalysis>(F);
-  //};
-
   FunctionMerging FM;
   if (!FM.runImpl(M)) //, GTTI))
     return PreservedAnalyses::all();
