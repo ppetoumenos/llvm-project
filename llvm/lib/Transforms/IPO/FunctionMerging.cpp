@@ -133,7 +133,7 @@
 
 #define DEBUG_TYPE "func-merging"
 
-//#define ENABLE_DEBUG_CODE
+#define ENABLE_DEBUG_CODE
 
 #define TIME_STEPS_DEBUG
 
@@ -2352,6 +2352,10 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
   LLVMContext &Context = *ContextPtr;
   FunctionMergeResult ErrorResponse(F1, F2, nullptr);
 
+  //std::string F1Name{GetValueName(F1)};
+  //if (F1Name != "@_ZN6dealii12_GLOBAL__N_119generate_unit_pointEjjNS_8internal8int2typeILi3EEE")
+  //  return ErrorResponse;
+
   if (!validMergePair(F1, F2))
     return ErrorResponse;
 
@@ -2364,7 +2368,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
   NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
   GraphSA<SmallVectorImpl<Value *>> GA(ScoringSystem(-1, 2), FunctionMerger::match);
 
-  if (EnableHyFMNW || EnableHyFMPA) { // Processing individual pairs of blocks
+  if (EnableHyFMNW || EnableHyFMPA || EnableHyFMGA) { // Processing individual pairs of blocks
 
     int B1Max{0}, B2Max{0};
     size_t MaxMem{0};
@@ -2403,7 +2407,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
       auto ItSetDecr = std::reverse_iterator(ItSetIncr);
       std::vector<decltype(ItSetIncr)> ItSets;
 
-      if (EnableHyFMNW) { 
+      if (EnableHyFMNW || EnableHyFMGA) { 
         while (ItSetDecr != Blocks.rend() && ItSetIncr != Blocks.end()) {
           if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size){
             ItSets.push_back(std::prev(ItSetDecr.base())); 
@@ -2491,6 +2495,13 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
             }
           }
         } else if (EnableHyFMGA) {
+          if (Debug) {
+            BB1->dump();
+            errs() << "xxx\n";
+            BB2->dump();
+            errs() << "------------------------------------------------------------\n";
+          }
+
           SmallVector<Value *, 8> BB1Vec;
           vectorizeBB(BB1Vec, BB1);
 
@@ -2585,18 +2596,16 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
       } else if (auto *I = dyn_cast<Instruction>(Entry.get(1))) {
         if (CurrBB1 == nullptr)
           CurrBB1 = I->getParent();
-        else if (CurrBB1 != I->getParent()) {
+        else if (CurrBB1 != I->getParent()) 
           AcrossBlocks = true;
-        }
       }
       if (isa<BasicBlock>(Entry.get(0))) {
         CurrBB0 = cast<BasicBlock>(Entry.get(0));
       } else if (auto *I = dyn_cast<Instruction>(Entry.get(0))) {
         if (CurrBB0 == nullptr)
           CurrBB0 = I->getParent();
-        else if (CurrBB0 != I->getParent()) {
+        else if (CurrBB0 != I->getParent()) 
           AcrossBlocks = true;
-        }
       }
     } else {
       if (isa_and_nonnull<BasicBlock>(Entry.get(0)))
