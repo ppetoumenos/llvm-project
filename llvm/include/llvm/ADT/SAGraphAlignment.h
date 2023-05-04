@@ -1,6 +1,7 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <stack>
 #include <vector>
 #include <utility>
 
@@ -12,49 +13,6 @@
 #include "llvm/Analysis/ValueTracking.h"
 
 //#define ENABLE_GA_DEBUG
-
-class FMDEdge;
-class FMDNode;
-
-class FMDEdge : public llvm::DGEdge<FMDNode, FMDEdge> {
-public:
-  FMDEdge(FMDNode &N) : DGEdge<FMDNode, FMDEdge>(N) {}
-  FMDEdge(const FMDEdge &E) : DGEdge<FMDNode, FMDEdge>(E) {}
-  FMDEdge(FMDEdge &&E) : DGEdge<FMDNode, FMDEdge>(std::move(E)) {}
-  FMDEdge &operator=(const FMDEdge &E) = default;
-
-  FMDEdge &operator=(FMDEdge &&E) {
-    DGEdge<FMDNode, FMDEdge>::operator=(std::move(E));
-    return *this;
-  }
-};
-
-class FMDNode : public llvm::DGNode<FMDNode, FMDEdge> {
-  llvm::Instruction* I;
-  int Idx;
-public:
-  FMDNode() = delete;
-  FMDNode(llvm::Instruction *I, int Idx) :  I(I), Idx(Idx) {};
-  FMDNode(const FMDNode &N) : DGNode<FMDNode, FMDEdge>(N), I(N.I), Idx(N.Idx) {};
-  FMDNode(FMDNode &&N) : DGNode<FMDNode, FMDEdge>(N), I(N.I), Idx(N.Idx) {};
-  FMDNode &operator=(const FMDNode &N) = default;
-
-  FMDNode &operator=(FMDNode &&N) {
-    DGNode<FMDNode, FMDEdge>::operator=(std::move(N));
-    I = N.I;
-    Idx = N.Idx;
-    return *this;
-  }
-
-  /// Get the instruction in this node.
-  const llvm::Instruction *getInstruction() const {
-    return I;
-  }
-
-  int getIdx() const {
-    return Idx;
-  }
-};
 
 template<typename Ty>
 class TriangularMatrix {
@@ -71,102 +29,6 @@ public:
     if (x > y)
       return get_direct(x, y);
     return get_direct(y, x);
-  }
-};
-
-template <typename ContainerType>
-class FMDGraph : public llvm::DirectedGraph<FMDNode, FMDEdge>{
-  llvm::DenseMap<llvm::Instruction *, FMDNode *> IMap;
-public:
-  using NodeType = FMDNode;
-  using EdgeType = FMDEdge;
-
-  FMDGraph() = delete;
-  FMDGraph(const FMDGraph &G) = delete;
-  FMDGraph(FMDGraph &&G) = delete;
-  FMDGraph(ContainerType &Seq) {
-    for (size_t count = 0; count < Seq.size(); ++count) {
-      llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(Seq[count]);
-      if (!I)
-        continue;
-      FMDNode *NewNode = new FMDNode(I, count);
-      addNode(*NewNode);
-      IMap.insert(std::make_pair(I, NewNode));
-    }
-
-    for (auto *N : Nodes) {
-      std::set<FMDNode *> Visited;
-      const llvm::Instruction *I = N->getInstruction();
-      const int Idx = N->getIdx();
-
-      for (const llvm::User *U: I->users()) {
-        const llvm::Instruction *UI = llvm::dyn_cast<llvm::Instruction>(U);
-        if (!UI)
-          continue;
-        if (UI->getParent() != I->getParent())
-          continue;
-        auto It = IMap.find(UI);
-        if (It != IMap.end()) {
-          auto *ND = It->second;
-          if (ND == N)
-            continue;
-          if (Visited.insert(ND).second) {
-            auto *NewEdge = new FMDEdge(*ND);
-            connect(*N, *ND, *NewEdge);
-          }
-        }
-      }
-
-      // Serialize if control might leave this basic block
-      if (I->mayThrow() || !I->willReturn() || llvm::isa<llvm::CallBase>(I)) {
-        for (auto *ND : Nodes) {
-          if (ND->getIdx() < Idx) {
-            auto *NewEdge = new FMDEdge(*N);
-            connect(*ND, *N, *NewEdge);
-          } else if (ND->getIdx() > Idx) {
-            auto *NewEdge = new FMDEdge(*ND);
-            connect(*N, *ND, *NewEdge);
-          }
-        }
-        continue;
-      }
-
-      if (I->mayWriteToMemory()) {
-        for (auto *ND : Nodes) {
-          const llvm::Instruction *ID = ND->getInstruction();
-          if (ID->mayReadFromMemory() || ID->mayWriteToMemory()) {
-            if (ND->getIdx() < Idx) {
-              auto *NewEdge = new FMDEdge(*N);
-              connect(*ND, *N, *NewEdge);
-            } else if (ND->getIdx() > Idx) {
-              auto *NewEdge = new FMDEdge(*ND);
-              connect(*N, *ND, *NewEdge);
-            }
-          }
-        }
-      }
-
-    }
-  }
-
-  FMDNode *getNode(const llvm::Value *V) {
-    const llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(V);
-    assert(I != nullptr);
-    return IMap.find(I)->second;
-  }
-
-  ~FMDGraph() {
-    for (auto *N : Nodes) {
-      for (auto *E : *N) {
-        delete E;
-      }
-      delete N;
-    }
-  }
-
-protected:
-  bool addNode(NodeType &N) {
-    return DirectedGraph<FMDNode, FMDEdge>::addNode(N);
   }
 };
 
@@ -295,6 +157,21 @@ public:
       llvm::errs() << "\n";
     }
   }
+
+  size_t size() {
+    return Size;
+  }
+
+  llvm::SmallBitVector getConnections(size_t Idx) {
+    llvm::SmallBitVector conns(Size);
+    for (size_t i = 0; i < Size; ++i) {
+      if (i < Idx)
+        conns[i] = Dep[Idx][i];
+      else if (i > Idx)
+        conns[i] = Dep[i][Idx];
+    }
+    return conns;
+  }
 };
 
 
@@ -364,31 +241,154 @@ class ConflictsInfo {
 
 };
 
-template<typename Ty>
-bool isReady(TriangularMatrix<Ty> &Mtx, size_t Idx) {
-  for (size_t Jdx = 0; Jdx < Idx; ++Jdx)
-    if (Mtx.get_direct(Idx, Jdx))
-      return false;
-  return true;
-}
-
-template<typename Ty>
-bool removeDependency(TriangularMatrix<Ty> &Mtx, size_t Idx, size_t Jdx) {
-  auto &entry = Mtx.get_direct(Jdx, Idx);
-  if (!entry)
-    return false;
-
-  entry = false;
-  return isReady(Mtx, Jdx);
-}
-
-
 template <typename ContainerType,
           typename Ty = typename ContainerType::value_type, Ty Blank = Ty(0),
           typename MatchFnTy = std::function<bool(Ty, Ty)>>
 class GraphSA : public SequenceAligner<ContainerType, Ty, Blank, MatchFnTy> {
 private:
   using BaseType = SequenceAligner<ContainerType, Ty, Blank, MatchFnTy>;
+
+
+  std::unordered_map<size_t, size_t> EagerMatchSolver(
+      std::vector<std::pair<size_t, size_t>> &Matches,
+      DependencyInfo<ContainerType, Ty> &D1,
+      DependencyInfo<ContainerType, Ty> &D2) {
+
+    std::unordered_map<size_t, size_t> Selected;
+    size_t mcount = Matches.size();
+    size_t Size1 = D1.size();
+    size_t Size2 = D2.size();
+
+    if (mcount == 0)
+      return Selected;
+
+    // Register conflicts
+    ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
+
+    // Count conflicts
+    std::vector<size_t> num_conflicts(mcount);
+    for (size_t i = 0; i < mcount; ++i) {
+      for (size_t j = 0; j < i; ++j) {
+        if (CI.isConflict(i, j)) {
+          num_conflicts[i]++;
+          num_conflicts[j]++;
+        }
+      }
+    }
+
+    // Rank matches by ascending numbers of conflicts
+    std::vector<int> idxs(mcount);
+    std::iota(idxs.begin(), idxs.end(), 0);
+    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];});
+
+    // Greedy selection of matches
+    for (size_t i = 0; i < mcount; ++i) {
+      int MatchIdx1 = idxs[i];
+      if (MatchIdx1 < 0)
+        continue;
+
+      auto Match = Matches[MatchIdx1];
+      Selected[Match.first] = Match.second;
+
+      for (size_t j = i + 1; j < mcount; ++j) {
+        int &MatchIdx2 = idxs[j];
+        if (MatchIdx2 < 0)
+          continue;
+        if (CI.isConflict(MatchIdx1, MatchIdx2))
+          MatchIdx2 = -1;
+      }
+    }
+    return Selected;
+  }
+
+  static constexpr bool count_matches = false;
+
+  std::unordered_map<size_t, size_t> ExhaustiveSolver(
+      std::vector<std::pair<size_t, size_t>> &Matches,
+      DependencyInfo<ContainerType, Ty> &D1,
+      DependencyInfo<ContainerType, Ty> &D2) {
+
+    std::unordered_map<size_t, size_t> Selected;
+    size_t mcount = Matches.size();
+    size_t Size1 = D1.size();
+    size_t Size2 = D2.size();
+
+    if (mcount == 0)
+      return Selected;
+
+    // Register conflicts
+    ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
+
+    std::stack<size_t> stk;
+    std::stack<size_t> score;
+    std::stack<llvm::SmallBitVector> valid;
+
+    size_t best_score = 0;
+    llvm::SmallBitVector best(mcount);
+    llvm::SmallBitVector curr(mcount);
+
+    stk.push(0);
+    score.push(0);
+    valid.emplace(mcount);
+    valid.top().set();
+
+    while (!stk.empty()) {
+      size_t Idx = stk.top();
+      size_t this_score = score.top();
+      curr.flip(Idx);
+
+      auto& curr_valid = valid.top();
+      curr_valid.reset(Idx);
+      auto next_valid = curr_valid;
+
+      if (curr[Idx]) {
+        for (size_t Jdx: curr_valid.set_bits())
+          if (CI.isConflict(Idx, Jdx))
+            next_valid.reset(Jdx);
+        if (count_matches)
+          this_score += 1;
+        else {
+          this_score += 10; // Matching node
+          llvm::SmallBitVector pred1 = D1.getConnections(Matches[Idx].first);
+          llvm::SmallBitVector pred2 = D2.getConnections(Matches[Idx].second);
+          for (size_t Jdx: curr.set_bits())
+            if (pred1[Matches[Jdx].first] && pred2[Matches[Jdx].second])
+              this_score += 1;
+        }
+      }
+
+
+      bool cannot_be_best;
+      if (count_matches)
+        cannot_be_best = (this_score + next_valid.count()) < best_score;
+      else
+        cannot_be_best = (this_score + next_valid.count() * 25) < best_score;
+
+      if (next_valid.none() || cannot_be_best) {
+        if (this_score > best_score) {
+          best = curr;
+          best_score = this_score;
+        }
+
+        while (!stk.empty() && !curr[stk.top()]) {
+          stk.pop();
+          score.pop();
+          valid.pop();
+        }
+      } else {
+        stk.push(next_valid.find_first());
+        score.push(this_score);
+        valid.push(next_valid);
+      } 
+    }
+    
+    for (size_t Idx: best.set_bits()) {
+      auto Match = Matches[Idx];
+      Selected[Match.first] = Match.second;
+    }
+
+    return Selected;
+  }
 
 public:
   static ScoringSystem getDefaultScoring() { return ScoringSystem(0, 1, 0); }
@@ -418,53 +418,19 @@ public:
     return MemorySize;
   }
 
-  TriangularMatrix<int> getDependencies(ContainerType &Seq) {
-    FMDGraph<ContainerType> G(Seq);
-
-    size_t SeqSize = Seq.size();
-
-    TriangularMatrix<int> Dependent(SeqSize);
-
-    for (size_t i = 0; i < SeqSize; ++i) {
-      for (size_t j = 0; j < i; ++j) {
-        if (Dependent.get_direct(i, j)) {
-          for (FMDEdge *E: G.getNode(Seq[i])->getEdges()) {
-            size_t k = E->getTargetNode().getIdx();
-            assert(k > i);
-            Dependent.get_direct(k, j) = true;
-          }
-        }
-      }
-    }
-    return Dependent;
-  }
-
   virtual AlignedSequence<Ty, Blank> getAlignment(ContainerType &Seq1,
                                                   ContainerType &Seq2) override {
-    AlignedSequence<Ty, Blank> Result;
-
     assert(BaseType::getMatchOperation() != nullptr);
-
 
     // Triangular matrices indicating direct or indirect dependencies
     DependencyInfo<ContainerType, Ty> Dependent1(Seq1);
     DependencyInfo<ContainerType, Ty> Dependent2(Seq2);
 
-    std::vector<std::pair<size_t, size_t>> Matches;
-    std::unordered_map<size_t, size_t> M1;
-    std::unordered_map<size_t, size_t> M2;
-
     const size_t Size1{Seq1.size()};
     const size_t Size2{Seq2.size()};
 
-    // Last entries (Terminators) can only match with each other
-    // Directly add them to the solution
-    if (BaseType::match(Seq1.back(), Seq2.back())) {
-      M1[Size1 - 1] = Size2 - 1;
-      M2[Size2 - 1] = Size1 - 1;
-    }
-
     // Finding matching pairs. Skip the basicblock and the last instruction.
+    std::vector<std::pair<size_t, size_t>> Matches;
     for (size_t i = 1; i < Size1 - 1; ++i)
       for (size_t j = 1; j < Size2 - 1; ++j)
         if (BaseType::match(Seq1[i], Seq2[j]))
@@ -476,80 +442,30 @@ public:
     llvm::errs() << "Number of Matches: " << Matches.size() << "\n";
 #endif
 
-    size_t mcount = Matches.size();
+    // Get a solution in the form of map from Seq1 indexes to Seq2 indexes
+    std::unordered_map<size_t, size_t> M1;
+    if (Matches.size() > 80)
+      M1 = EagerMatchSolver(Matches, Dependent1, Dependent2);
+    else
+      M1 = ExhaustiveSolver(Matches, Dependent1, Dependent2);
 
-    // Register conflicts
-    ConflictsInfo<ContainerType, Ty> CI(Matches, Dependent1, Dependent2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
+    // Terminators can only match with each other. Add them to the solution if matching.
+    if (BaseType::match(Seq1.back(), Seq2.back()))
+      M1[Size1 - 1] = Size2 - 1;
 
-
-#if 0
-    // One set for each match, containing the match index and its conflicts indexes
-    std::vector<std::pair<size_t, std::set<int>>> MatchSets;
-    for (size_t i = 0; i < mcount; ++i) {
-      std::set<int> S;
-      S.emplace(i);
-      for (size_t j = 0; j < mcount; ++j) {
-        if (i == j)
-          continue;
-        if (CI.isConflict(i, j))
-          S.emplace(j);
-      }
-      MatchSets.push_back({i, std::move(S)});
-    }
-
-    std::sort(MatchSets.begin(), MatchSets.end(), [] (auto S1, auto S2) {return S1.second.size() < S2.second.size();});
-    for (size_t i = 0; i < MatchSets.size(); ++i) {
-      int Idx = MatchSets[i].first;
-      if (Idx < 0)
-        continue;
-      M1[Matches[Idx].first] = Matches[Idx].second;
-      M2[Matches[Idx].second] = Matches[Idx].first;
-      for (size_t j = i + 1; j < MatchSets.size(); ++j) {
-        if (MatchSets[j].first < 0)
-          continue;
-        if (MatchSets[j].second.count(Idx) > 0) {
-          MatchSets[j].first = -1;
-        }
-      }
-    }
-#else
-    std::vector<size_t> num_conflicts(mcount);
-    for (size_t i = 0; i < mcount; ++i) {
-      for (size_t j = 0; j < i; ++j) {
-        if (CI.isConflict(i, j)) {
-          num_conflicts[i]++;
-          num_conflicts[j]++;
-        }
-      }
-    }
-
-    std::vector<int> idxs(mcount);
-    std::iota(idxs.begin(), idxs.end(), 0);
-    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];});
-
-    for (size_t i = 0; i < mcount; ++i) {
-      int MatchIdx1 = idxs[i];
-      if (MatchIdx1 < 0)
-        continue;
-
-      M1[Matches[MatchIdx1].first] = Matches[MatchIdx1].second;
-      M2[Matches[MatchIdx1].second] = Matches[MatchIdx1].first;
-
-      for (size_t j = i + 1; j < mcount; ++j) {
-        int &MatchIdx2 = idxs[j];
-        if (MatchIdx2 < 0)
-          continue;
-        if (CI.isConflict(MatchIdx1, MatchIdx2))
-          MatchIdx2 = -1;
-      }
-    }
-#endif
+    // Reverse lookup
+    decltype(M1) M2;
+    for (const auto& kv: M1)
+      M2[kv.second] = kv.first;
 
 #ifdef ENABLE_GA_DEBUG
-  llvm::errs() << "Selected Matches: \n";
-  for (auto &p : M1)
-    llvm::errs() << "--->\t" << p.first << "\t" << p.second << "\n";
+    llvm::errs() << "Selected Matches: \n";
+    for (auto &p : M1)
+      llvm::errs() << "--->\t" << p.first << "\t" << p.second << "\n";
 #endif
+
+    // Construct the aligned Sequence
+    AlignedSequence<Ty, Blank> Result;
 
     // Process BB entries
     if (BaseType::match(Seq1[0], Seq2[0])) {
