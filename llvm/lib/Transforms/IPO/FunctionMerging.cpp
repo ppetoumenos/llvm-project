@@ -133,9 +133,13 @@
 
 #define DEBUG_TYPE "func-merging"
 
-#define ENABLE_DEBUG_CODE
+//#define ENABLE_DEBUG_CODE
+
+//#define SKIP_MERGING
 
 #define TIME_STEPS_DEBUG
+
+#define CHANGES
 
 using namespace llvm;
 
@@ -253,6 +257,12 @@ static cl::opt<bool> Deterministic(
 static cl::opt<unsigned> BucketSizeCap(
     "bucket-size-cap", cl::init(1000000000), cl::Hidden,
     cl::desc("Define a threshold to be used"));
+
+// Command line option to specify the function to merge. This is
+// mainly used for debugging.
+static cl::opt<std::string> ToMergeFile(
+    "func-merging-pairs-file", cl::init(""), cl::value_desc("filename"),
+    cl::desc("File containing the functions and basic blocks to merge"), cl::Hidden);
 
 static std::string GetValueName(const Value *V);
 
@@ -1733,6 +1743,169 @@ public:
   virtual void print_stats() = 0;
 };
 
+template <class T, template<typename> class FPTy = Fingerprint> class MatcherManual : public Matcher<T>{
+private:
+  struct MatcherEntry {
+    T candidate;
+    size_t size;
+    FPTy<T> FP;
+    MatcherEntry() : MatcherEntry(nullptr, 0){};
+
+    template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+    MatcherEntry(T candidate, size_t size, 
+    typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate){}
+    
+    template <typename T1 = FPTy<T>, typename T2 = FingerprintMH<T>>
+    MatcherEntry(T candidate, size_t size, SearchStrategy &strategy,
+    typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate, strategy){}
+  };
+  using MatcherIt = typename std::list<MatcherEntry>::iterator;
+
+  bool initialized{false};
+  FunctionMerger &FM;
+  FunctionMergingOptions &Options;
+  std::list<MatcherEntry> candidates;
+  std::unordered_map<T, MatcherIt> cache;
+  std::vector<MatchInfo<T>> matches;
+  std::unordered_map<std::string, std::string> matchNames;
+
+public:
+  MatcherManual() = default;
+  MatcherManual(FunctionMerger &FM, FunctionMergingOptions &Options, std::string Filename)
+      : FM(FM), Options(Options) {
+        std::ifstream File{Filename};
+        std::string FuncName1, FuncName2;
+        while (File >> FuncName1 >> FuncName2) {
+          matchNames[FuncName1] = FuncName2;
+          matchNames[FuncName2] = FuncName1;
+        }
+      }
+
+  virtual ~MatcherManual() = default;
+
+  void add_candidate(T candidate, size_t size) override {
+    if (matchNames.count(GetValueName(candidate)) == 0)
+      return;
+    add_candidate_helper(candidate, size);
+    cache[candidate] = candidates.begin();
+  }
+
+  template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+  void add_candidate_helper(T candidate, size_t size, 
+  typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
+  {
+      candidates.emplace_front(candidate, size);
+  }
+
+  void remove_candidate(T candidate) override {
+    auto cache_it = cache.find(candidate);
+    assert(cache_it != cache.end());
+    candidates.erase(cache_it->second);
+  }
+
+  T next_candidate() override {
+    if (!initialized) {
+      candidates.sort([&](auto &item1, auto &item2) -> bool {
+        return item1.FP.magnitude > item2.FP.magnitude;
+      });
+      initialized = true;
+    }
+    update_matches(candidates.begin());
+    return candidates.front().candidate;
+  }
+
+  std::vector<MatchInfo<T>> &get_matches(T candidate) override {
+    return matches;
+  }
+
+  size_t size() override { return candidates.size(); }
+
+  void print_stats() override {
+    int Sum = 0;
+    int Count = 0;
+    float MinDistance = std::numeric_limits<float>::max();
+    float MaxDistance = 0;
+
+    int Index1 = 0;
+    for (auto It1 = candidates.begin(), E1 = candidates.end(); It1!=E1; It1++) {
+
+      int BestIndex = 0;
+      bool FoundCandidate = false;
+      float BestDist = std::numeric_limits<float>::max();
+
+      unsigned CountCandidates = 0;
+      int Index2 = Index1;
+      for (auto It2 = It1, E2 = candidates.end(); It2 != E2; It2++) {
+
+        if (It1->candidate == It2->candidate || Index1 == Index2) {
+          Index2++;
+          continue;
+        }
+
+        if ((!FM.validMergeTypes(It1->candidate, It2->candidate, Options) &&
+             !Options.EnableUnifiedReturnType) ||
+            !validMergePair(It1->candidate, It2->candidate))
+          continue;
+
+        auto Dist = It1->FP.distance(It2->FP);
+        if (Dist < BestDist) {
+          BestDist = Dist;
+          FoundCandidate = true;
+          BestIndex = Index2;
+        }
+        if (RankingThreshold && CountCandidates > RankingThreshold) {
+          break;
+        }
+        CountCandidates++;
+        Index2++;
+      }
+      if (FoundCandidate) {
+        int Distance = std::abs(Index1 - BestIndex);
+        Sum += Distance;
+        if (Distance > MaxDistance) MaxDistance = Distance;
+        if (Distance < MinDistance) MinDistance = Distance;
+        Count++;
+      }
+      Index1++;
+    }
+    errs() << "Total: " << Count << "\n";
+    errs() << "Min Distance: " << MinDistance << "\n";
+    errs() << "Max Distance: " << MaxDistance << "\n";
+    errs() << "Average Distance: " << (((double)Sum)/((double)Count)) << "\n";
+  }
+
+
+private:
+  void update_matches(MatcherIt it) {
+    matches.clear();
+
+    MatchInfo<T> best_match;
+    best_match.OtherSize = it->size;
+    best_match.OtherMagnitude = it->FP.magnitude;
+    best_match.Distance = std::numeric_limits<float>::max();
+
+    for (auto entry = std::next(candidates.cbegin()); entry != candidates.cend(); ++entry) {
+      if ((!FM.validMergeTypes(it->candidate, entry->candidate, Options) &&
+           !Options.EnableUnifiedReturnType) ||
+          !validMergePair(it->candidate, entry->candidate))
+        continue;
+      if (matchNames[GetValueName(it->candidate)] == GetValueName(entry->candidate)) {
+        best_match.candidate = entry->candidate;
+        best_match.Size = entry->size;
+        best_match.Magnitude = entry->FP.magnitude;
+        best_match.Distance = 0;
+        break;
+      }
+    }
+
+    if (best_match.candidate != nullptr)
+      matches.push_back(std::move(best_match));
+    return;
+  }
+};
+
 template <class T, template<typename> class FPTy = Fingerprint> class MatcherFQ : public Matcher<T>{
 private:
   struct MatcherEntry {
@@ -2352,9 +2525,11 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
   LLVMContext &Context = *ContextPtr;
   FunctionMergeResult ErrorResponse(F1, F2, nullptr);
 
-  //std::string F1Name{GetValueName(F1)};
-  //if (F1Name != "@_ZN6dealii12_GLOBAL__N_119generate_unit_pointEjjNS_8internal8int2typeILi3EEE")
-  //  return ErrorResponse;
+#if 0
+  std::string F1Name{GetValueName(F1)};
+  if (F1Name != "@_ZN11xercesc_2_512KVStringPair8setValueEPKt")
+    return ErrorResponse;
+#endif
 
   if (!validMergePair(F1, F2))
     return ErrorResponse;
@@ -3508,7 +3683,9 @@ bool FunctionMerging::runImpl(
   errs() << "LSHRows: " << LSHRows << "\n";
   errs() << "LSHBands: " << LSHBands << "\n";
 
-  if (EnableF3M) {
+  if (!ToMergeFile.empty()) {
+    matcher = std::make_unique<MatcherManual<Function *>>(FM, Options, ToMergeFile);
+  } else if (EnableF3M) {
     matcher = std::make_unique<MatcherLSH<Function *>>(FM, Options, LSHRows, LSHBands);
     errs() << "LSH MH\n";
   } else {
@@ -3659,7 +3836,10 @@ bool FunctionMerging::runImpl(
           match.MergedSize = SizeF12;
           match.Profitable = (SizeF12 + MergingOverheadThreshold) < SizeF1F2;
 
-          if (match.Profitable) {
+#ifdef SKIP_MERGING
+          Result.getMergedFunction()->eraseFromParent();
+#else
+          if (!ToMergeFile.empty() || match.Profitable) {
             TotalMerges++;
             matcher->remove_candidate(F2);
 
@@ -3674,6 +3854,7 @@ bool FunctionMerging::runImpl(
           } else {
             Result.getMergedFunction()->eraseFromParent();
           }
+#endif
         }
 #ifdef TIME_STEPS_DEBUG
         TimeUpdate.stopTimer();
@@ -4125,13 +4306,95 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
               VMap[&I] = NewI;
               // errs() << "Cloned into " << NewBB->getName() << " : " <<
               // NewI->getName() << " " << NewI->getOpcodeName() << "\n";
-              // I.dump();
+              I.dump();
             }
           }
         }
       };
+
+  auto ProcessEachFunction_NonSeq =
+      [&](int FuncIdx, 
+          std::unordered_map<BasicBlock *, BasicBlock *> &BlocksFX,
+          Value *IsFunc1) {
+
+        BasicBlock *LastMergedBB = nullptr;
+        BasicBlock *NewBB = nullptr;
+
+        for (auto &Entry: AlignedSeq) {
+          Value *V = Entry.get(FuncIdx);
+          if (V == nullptr)
+            continue;
+
+          if (BasicBlock *BB = dyn_cast<BasicBlock>(V)) {
+            LastMergedBB = nullptr;
+            NewBB = nullptr;
+            if (auto It = MaterialNodes.find(BB); It != MaterialNodes.end()) {
+              LastMergedBB = It->second;
+            } else {
+              std::string BBName = std::string("src.bb");
+              NewBB = BasicBlock::Create(MergedFunc->getContext(), BBName,
+                                         MergedFunc);
+              VMap[BB] = NewBB;
+              BlocksFX[NewBB] = BB;
+
+              // IMPORTANT: make sure any use in a blockaddress constant
+              // operation is updated correctly
+              for (User *U : BB->users()) {
+                if (auto *BA = dyn_cast<BlockAddress>(U)) {
+                  VMap[BA] = BlockAddress::get(MergedFunc, NewBB);
+                }
+              }
+
+              IRBuilder<> Builder(NewBB);
+              for (Instruction &I : *BB) {
+                if (isa<PHINode>(&I)) {
+                  VMap[&I] = Builder.CreatePHI(I.getType(), 0);
+                }
+              }
+            }
+          } else if (Instruction *I = dyn_cast<Instruction>(V)) {
+            if (isa<LandingPadInst>(I))
+              continue;
+            if (isa<PHINode>(I))
+              continue;
+
+            if (auto It = MaterialNodes.find(I); It != MaterialNodes.end()) {
+              BasicBlock *NodeBB = It->second;
+              if (LastMergedBB) {
+                ChainBlocks(LastMergedBB, NodeBB, IsFunc1);
+              } else {
+                IRBuilder<> Builder(NewBB);
+                Builder.CreateBr(NodeBB);
+              }
+              // end keep track
+              LastMergedBB = NodeBB;
+            } else {
+              if (LastMergedBB) {
+                std::string BBName = std::string("split.bb");
+                NewBB = BasicBlock::Create(MergedFunc->getContext(), BBName,
+                                           MergedFunc);
+                ChainBlocks(LastMergedBB, NewBB, IsFunc1);
+                BlocksFX[NewBB] = BB;
+              }
+              LastMergedBB = nullptr;
+
+              IRBuilder<> Builder(NewBB);
+              Instruction *NewI = CloneInst(Builder, MergedFunc, I);
+              VMap[I] = NewI;
+            }
+          } else {
+            errs() << "Should never get here!\n";
+          }
+        }
+      };
+
+#ifdef CHANGES
+  ProcessEachFunction_NonSeq(0, BlocksF1, IsFunc1);
+  ProcessEachFunction_NonSeq(1, BlocksF2, IsFunc1);
+#else
   ProcessEachFunction(Blocks1, BlocksF1, IsFunc1);
   ProcessEachFunction(Blocks2, BlocksF2, IsFunc1);
+#endif
 
   auto *BB1 = dyn_cast<BasicBlock>(VMap[EntryBB1]);
   auto *BB2 = dyn_cast<BasicBlock>(VMap[EntryBB2]);
@@ -4742,6 +5005,114 @@ bool FunctionMerger::SALSSACodeGen::generate(
       return false;
     }
   }
+
+#ifdef CHANGES
+  // Replace select statements by merged PHIs
+
+  // Collect candidate pairs of PHI Nodes
+  SmallSet<std::pair<PHINode *, PHINode *>, 16> CandPHI;
+  for (Instruction *I: ListSelects) {
+    SelectInst *SI = dyn_cast<SelectInst>(I);
+    assert(SI != nullptr);
+
+    PHINode *PT = dyn_cast<PHINode>(SI->getTrueValue());
+    PHINode *PF = dyn_cast<PHINode>(SI->getFalseValue());
+
+    if (PT == nullptr || PF == nullptr)
+      continue;
+
+    // Only pair PHI Nodes in the same block
+    if (PT->getParent() != PF->getParent())
+      continue;
+
+    CandPHI.insert({PT, PF});
+  }
+
+  SmallSet<PHINode *, 8> RemovedPHIs;
+  for (auto [PT, PF] : CandPHI) {
+    if ((RemovedPHIs.count(PT) > 0) || (RemovedPHIs.count(PF) > 0))
+	  continue;
+    // Merge PT and PF if:
+    // 1) their defined incoming values do not overlap
+    // 2) their uses are only select statements on IsFunc1
+    bool valid = true;
+    SmallVector<SelectInst *> CandSel;
+
+    // Are PHIs mergeable?
+    for (unsigned i = 0; i < PT->getNumIncomingValues() && valid; ++i) {
+      // if PT incoming value is Undef, this edge pair is mergeable
+      Value *VT = PT->getIncomingValue(i);
+      if (dyn_cast<UndefValue>(VT) != nullptr)
+        continue;
+
+      // if the PF incoming value for the same block is Undef,
+      // this edge pair is mergeable
+      BasicBlock *PredBB = PT->getIncomingBlock(i);
+      if (PF->getBasicBlockIndex(PredBB) < 0) {
+        errs() << "PHI ERROR\n";
+        PT->dump();
+        PF->dump();
+        MergedFunc->dump();
+      }
+      Value *VF = PF->getIncomingValueForBlock(PredBB);
+      if(dyn_cast<UndefValue>(VF) != nullptr)
+        continue;
+
+      // If the two incoming values are the same, then we can merge them
+      if (VT == VF)
+        continue;
+
+      valid = false;
+    }
+
+    if (!valid)
+      continue;
+
+    // Are PHIs only used together in select statements?
+    for (auto *UI: PT->users()) {
+      SelectInst *SI = dyn_cast<SelectInst>(UI);
+      if (SI == nullptr) {
+        valid = false;
+        break;
+      }
+
+      if ((SI->getTrueValue() != PT) || (SI->getFalseValue() != PF)) {
+        valid = false;
+        break;
+      }
+
+      if (SI->getCondition() != IsFunc1) {
+        valid = false;
+        break;
+      }
+      CandSel.push_back(SI);
+    }
+
+    if (!valid)
+      continue;
+
+    // Do the actual PHI merging using PT
+    for (unsigned i = 0; i < PT->getNumIncomingValues() && valid; ++i) {
+      // If edge is set, use it
+      if (dyn_cast<UndefValue>(PT->getIncomingValue(i)) == nullptr)
+        continue;
+
+      // If edge not set, copy it from PF
+      BasicBlock *PredBB = PT->getIncomingBlock(i);
+      PT->setIncomingValue(i, PF->getIncomingValueForBlock(PredBB));
+    }
+
+    PF->replaceAllUsesWith(PT);
+    PF->eraseFromParent();
+    RemovedPHIs.insert(PF);
+
+    // Replace all uses of the select statements with PT
+    for (SelectInst *SI: CandSel) {
+      SI->replaceAllUsesWith(PT);
+      SI->eraseFromParent();
+    }
+  }
+#endif
 
   // errs() << "Collecting offending instructions\n";
   DominatorTree DT(*MergedFunc);

@@ -41,6 +41,8 @@ enum Relation {
 template<typename ContainerType, typename Ty>
 class DependencyInfo {
   llvm::SmallVector<llvm::SmallBitVector> Dep;
+  llvm::SmallVector<llvm::SmallBitVector> DataDep;
+  llvm::SmallVector<llvm::SmallSet<size_t, 8>> InputGroups;
   size_t Size;
 
 public:
@@ -53,12 +55,31 @@ public:
 
     for (size_t Idx = 0; Idx < Size; ++Idx) {
       Dep.emplace_back(Idx);
+      DataDep.emplace_back(Idx);
       llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(Seq[Idx]);
       if (I == nullptr)
         continue;
       IMap[I] = Idx;
     }
 
+    auto *BB = llvm::dyn_cast<llvm::BasicBlock>(Seq[0]);
+    auto *F = BB->getParent();
+    for (llvm::Argument &A: F->args()) {
+      InputGroups.emplace_back();
+      for (llvm::User *U : A.users()) {
+        const llvm::Instruction *UI = llvm::dyn_cast<llvm::Instruction>(U);
+        if (!UI || UI->getParent() != BB)
+          continue;
+
+        auto It = IMap.find(UI);
+        if (It == IMap.end())
+          continue;
+
+        InputGroups.back().insert(It->second);
+      }
+    }
+
+    size_t SerializingCount = 0;
     for (size_t Idx = 0; Idx < Size - 1; ++Idx) {
       llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(Seq[Idx]);
       if (I == nullptr)
@@ -80,6 +101,7 @@ public:
 
         assert(Idx < Jdx);
         Dep[Jdx].set(Idx);
+        DataDep[Jdx].set(Idx);
       }
 
       // Add dependencies between this and all other instructions,
@@ -88,6 +110,7 @@ public:
         Dep[Idx].set();
         for (size_t Jdx = Idx + 1; Jdx < Size; ++Jdx)
           Dep[Jdx].set(Idx);
+        SerializingCount++;
         continue;
       }
 
@@ -107,6 +130,24 @@ public:
             Dep[Jdx].set(Idx);
         }
       }
+    }
+
+    // If there are too many serializing instructions, then connecting all
+    // indirect dependencies will take ages, while the effect will be that
+    // all instructions will be dependent on almost all previous instructions.
+    // Let's spare us the agony and just mark everything as dependent on
+    // everything else.
+    // TODO: There are more elegant ways of fixing this, e.g. treating each
+    // block between two serializing instructions as a separate block for
+    // alignment purposes, but this would require some rewriting
+    if (((Size > 64) && (SerializingCount > Size / 3)) ||\
+        ((Size > 512) && (SerializingCount > Size / 4)) ||\
+        ((Size > 1024) && (SerializingCount > 256))) {
+      for (size_t Idx = 1; Idx < Size; ++Idx) {
+        Dep[Idx].set();
+        Dep[Idx].reset(0);
+      }
+      return;
     }
 
     // First column represents the BB entry
@@ -132,7 +173,7 @@ public:
 
   bool removeDependency(const size_t Idx, const size_t Jdx) {
 #ifdef ENABLE_GA_DEBUG
-    llvm::errs() << "BEFOR: " << (Dep[Jdx][Idx] ? "Y" : "N") << "\n";
+  //llvm::errs() << "BEFOR: " << (Dep[Jdx][Idx] ? "Y" : "N") << "\n";
 #endif
     if (!Dep[Jdx][Idx])
       return false;
@@ -166,12 +207,21 @@ public:
     llvm::SmallBitVector conns(Size);
     for (size_t i = 0; i < Size; ++i) {
       if (i < Idx)
-        conns[i] = Dep[Idx][i];
+        conns[i] = DataDep[Idx][i];
       else if (i > Idx)
-        conns[i] = Dep[i][Idx];
+        conns[i] = DataDep[i][Idx];
     }
     return conns;
   }
+
+  size_t getNumGroups() {
+    return InputGroups.size();
+  }
+
+  llvm::SmallSet<size_t, 8>& getGroup(size_t idx) {
+    return InputGroups[idx];
+  }
+
 };
 
 
@@ -241,6 +291,8 @@ class ConflictsInfo {
 
 };
 
+
+
 template <typename ContainerType,
           typename Ty = typename ContainerType::value_type, Ty Blank = Ty(0),
           typename MatchFnTy = std::function<bool(Ty, Ty)>>
@@ -248,6 +300,23 @@ class GraphSA : public SequenceAligner<ContainerType, Ty, Blank, MatchFnTy> {
 private:
   using BaseType = SequenceAligner<ContainerType, Ty, Blank, MatchFnTy>;
 
+  // Given a function that indicates whether selecting a certain Idx1 makes another Idx2 ineligible,
+  // and a vector of Idxs that is sorted by diminishing benefit, eagerly select a maximal set of Idxs
+  // Not-selected Idxs are set to -1, selected ones are left in the vector.
+  void EagerSelection(llvm::SmallVector<int> &Idxs, std::function<bool (int Idx1, int Idx2)> fn) {
+    size_t Count = Idxs.size();
+    for (size_t i = 0; i < Count; ++i) {
+      if (Idxs[i] < 0)
+        continue;
+
+      for (size_t j = i + 1; j < Count; ++j) {
+        if (Idxs[j] < 0)
+          continue;
+        if (fn(Idxs[i], Idxs[j]))
+          Idxs[j] = -1;
+      }
+    }
+  }
 
   std::unordered_map<size_t, size_t> EagerMatchSolver(
       std::vector<std::pair<size_t, size_t>> &Matches,
@@ -277,27 +346,167 @@ private:
     }
 
     // Rank matches by ascending numbers of conflicts
-    std::vector<int> idxs(mcount);
+    llvm::SmallVector<int> idxs(mcount);
     std::iota(idxs.begin(), idxs.end(), 0);
     std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];});
 
-    // Greedy selection of matches
-    for (size_t i = 0; i < mcount; ++i) {
-      int MatchIdx1 = idxs[i];
-      if (MatchIdx1 < 0)
+    // Given the ranking, do greedy selection of matches
+    EagerSelection(idxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
+    for (int MatchIdx: idxs)
+      if (MatchIdx >= 0)
+        Selected[Matches[MatchIdx].first] = Matches[MatchIdx].second;
+
+    return Selected;
+  }
+
+  size_t MinimalED(std::vector<std::pair<size_t, size_t>> &Matches,
+                 ConflictsInfo<ContainerType, Ty> &CI,
+                 size_t MatchIdx,
+                 llvm::SmallBitVector &conns1,
+                 llvm::SmallBitVector &conns2) {
+
+    llvm::SmallVector<int> ValidMatchIdxs;
+    auto [NodeIdx1, NodeIdx2] = Matches[MatchIdx];
+
+    for (size_t MatchJdx = 0; MatchJdx < Matches.size(); ++MatchJdx) {
+      if (MatchJdx == MatchIdx)
         continue;
+      auto [NodeJdx1, NodeJdx2] = Matches[MatchJdx];
+      if ((NodeJdx1 != NodeIdx1) && (NodeJdx2 != NodeIdx2))
+        if ((NodeJdx1 < NodeIdx1) == (NodeJdx2 < NodeIdx2))
+          if (conns1[NodeJdx1] && conns2[NodeJdx2])
+            ValidMatchIdxs.push_back(MatchJdx);
+    }
 
-      auto Match = Matches[MatchIdx1];
-      Selected[Match.first] = Match.second;
-
-      for (size_t j = i + 1; j < mcount; ++j) {
-        int &MatchIdx2 = idxs[j];
-        if (MatchIdx2 < 0)
-          continue;
-        if (CI.isConflict(MatchIdx1, MatchIdx2))
-          MatchIdx2 = -1;
+    llvm::SmallVector<size_t> num_conflicts(Matches.size());
+    for (size_t i = 0; i < ValidMatchIdxs.size(); ++i) {
+      for (size_t j = 0; j < i; ++j) {
+        if (CI.isConflict(ValidMatchIdxs[i], ValidMatchIdxs[j])) {
+          num_conflicts[ValidMatchIdxs[i]]++;
+          num_conflicts[ValidMatchIdxs[j]]++;
+        }
       }
     }
+
+    std::sort(ValidMatchIdxs.begin(), ValidMatchIdxs.end(), [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];});
+    EagerSelection(ValidMatchIdxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
+    size_t MatchedCount = std::count_if(ValidMatchIdxs.begin(), ValidMatchIdxs.end(), [] (int num) {return num >= 0;});
+    size_t Total1 = conns1.count();
+    size_t Total2 = conns2.count();
+#ifdef ENABLE_GA_DEBUG
+    for (auto MatchIdx: ValidMatchIdxs) {
+      if (MatchIdx < 0)
+        continue;
+      llvm::errs() << MatchIdx << " ";
+    }
+    llvm::errs() << "\n";
+    for (auto NodeIdx: conns1.set_bits())
+      llvm::errs() << NodeIdx << " ";
+    llvm::errs() << "\n";
+    for (auto NodeIdx: conns2.set_bits())
+      llvm::errs() << NodeIdx << " ";
+    llvm::errs() << "\n";
+
+    llvm::errs() << "ED for " << MatchIdx << " is:\t" << Total1 << " , " << Total2 << " , " << MatchedCount << " , " << Total1 + Total2 - 2 * MatchedCount << "\n";
+#endif
+    return Total1 + Total2 - 2 * MatchedCount;
+  }
+
+  llvm::SmallBitVector GetAdvantageousMatches(
+      std::vector<std::pair<size_t, size_t>> &Matches,
+      DependencyInfo<ContainerType, Ty> &D1,
+      DependencyInfo<ContainerType, Ty> &D2) {
+
+    llvm::SmallVector<llvm::SmallBitVector> Groups;
+
+    for (size_t GroupIdx = 0; GroupIdx < D1.getNumGroups(); ++GroupIdx) {
+      auto &Group1 = D1.getGroup(GroupIdx);
+      for (size_t GroupJdx = 0; GroupJdx < D2.getNumGroups(); ++GroupJdx) {
+        auto &Group2 = D2.getGroup(GroupJdx);
+        Groups.emplace_back(Matches.size());
+        for (size_t MatchIdx = 0; MatchIdx < Matches.size(); ++MatchIdx) {
+          size_t Idx1 = Matches[MatchIdx].first;
+          size_t Idx2 = Matches[MatchIdx].second;
+          if ((Group1.count(Idx1) > 0) && (Group2.count(Idx2) > 0))
+            Groups.back().set(MatchIdx);
+        }
+      }
+    }
+
+    // Sort the possible matches of input arguments by decreasing number of matching users
+    llvm::SmallVector<int> idxs(Groups.size());
+    std::iota(idxs.begin(), idxs.end(), 0);
+    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return Groups[idx1].size() > Groups[idx2].size();});
+
+    size_t Dim1 = D1.getNumGroups();
+    EagerSelection(idxs, [=] (int Idx1, int Idx2) {return ((Idx1 / Dim1) == (Idx2 / Dim1)) || ((Idx1 % Dim1) == (Idx2 % Dim1));});
+        
+    llvm::SmallBitVector Res(Matches.size());
+    for (int GroupIdx: idxs)
+      if (GroupIdx >= 0)
+        Res |= Groups[GroupIdx];
+    return Res;
+  }
+
+
+
+  std::unordered_map<size_t, size_t> EagerEDSolver(
+      std::vector<std::pair<size_t, size_t>> &Matches,
+      DependencyInfo<ContainerType, Ty> &D1,
+      DependencyInfo<ContainerType, Ty> &D2) {
+
+    std::unordered_map<size_t, size_t> Selected;
+    size_t mcount = Matches.size();
+    size_t Size1 = D1.size();
+    size_t Size2 = D2.size();
+
+    if (mcount == 0)
+      return Selected;
+
+    llvm::SmallBitVector GoodMatches = GetAdvantageousMatches(Matches, D1, D2);
+
+    // Register conflicts
+    ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
+
+    llvm::SmallVector<size_t> EditDistances(mcount);
+    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
+      auto conns1 = D1.getConnections(Matches[MatchIdx].first);
+      auto conns2 = D2.getConnections(Matches[MatchIdx].second);
+      EditDistances[MatchIdx] = MinimalED(Matches, CI, MatchIdx, conns1, conns2);
+      if (!GoodMatches[MatchIdx])
+        EditDistances[MatchIdx] += 2;
+    }
+
+    // Count conflicts
+    std::vector<size_t> num_conflicts(mcount);
+    for (size_t i = 0; i < mcount; ++i) {
+      for (size_t j = 0; j < i; ++j) {
+        if (CI.isConflict(i, j)) {
+          num_conflicts[i]++;
+          num_conflicts[j]++;
+        }
+      }
+    }
+
+#ifdef ENABLE_GA_DEBUG
+    for (size_t i = 0; i < mcount; ++i)
+      llvm::errs() << i << " : " << Matches[i].first << " -> " << Matches[i].second << "\t" << num_conflicts[i] << "\t" << EditDistances[i] << "\n";
+#endif
+
+    // Rank matches by ascending numbers of conflicts
+    llvm::SmallVector<int> idxs(mcount);
+    std::iota(idxs.begin(), idxs.end(), 0);
+    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {
+      return (EditDistances[idx1] < EditDistances[idx2]) || 
+            ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] < num_conflicts[idx2])) || 
+          ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] == num_conflicts[idx2]) && (std::abs((int)Matches[idx1].first - (int)Matches[idx1].second) < std::abs((int)Matches[idx2].first - (int)Matches[idx2].second)));});
+
+    // Given the ranking, do greedy selection of matches
+    EagerSelection(idxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
+    for (int MatchIdx: idxs)
+      if (MatchIdx >= 0)
+        Selected[Matches[MatchIdx].first] = Matches[MatchIdx].second;
+
     return Selected;
   }
 
@@ -348,7 +557,7 @@ private:
         if (count_matches)
           this_score += 1;
         else {
-          this_score += 10; // Matching node
+          this_score += 5; // Matching node
           llvm::SmallBitVector pred1 = D1.getConnections(Matches[Idx].first);
           llvm::SmallBitVector pred2 = D2.getConnections(Matches[Idx].second);
           for (size_t Jdx: curr.set_bits())
@@ -362,7 +571,7 @@ private:
       if (count_matches)
         cannot_be_best = (this_score + next_valid.count()) < best_score;
       else
-        cannot_be_best = (this_score + next_valid.count() * 25) < best_score;
+        cannot_be_best = (this_score + next_valid.count() * 20) < best_score;
 
       if (next_valid.none() || cannot_be_best) {
         if (this_score > best_score) {
@@ -444,8 +653,9 @@ public:
 
     // Get a solution in the form of map from Seq1 indexes to Seq2 indexes
     std::unordered_map<size_t, size_t> M1;
-    if (Matches.size() > 80)
-      M1 = EagerMatchSolver(Matches, Dependent1, Dependent2);
+    if (Matches.size() > 30)
+    //if (Matches.size() > 80)
+      M1 = EagerEDSolver(Matches, Dependent1, Dependent2);
     else
       M1 = ExhaustiveSolver(Matches, Dependent1, Dependent2);
 
@@ -555,10 +765,10 @@ public:
           }
 
 #ifdef ENABLE_GA_DEBUG
-          llvm::errs() << "XXXX 1 XXXX\n";
-          Dependent1.print_state();
-          llvm::errs() << "XXXX 2 XXXX\n";
-          Dependent2.print_state();
+          //llvm::errs() << "XXXX 1 XXXX\n";
+          //Dependent1.print_state();
+          //llvm::errs() << "XXXX 2 XXXX\n";
+          //Dependent2.print_state();
 #endif
         }
       } else if (state == 1) {
@@ -590,8 +800,8 @@ public:
             }
           }
 #ifdef ENABLE_GA_DEBUG
-          llvm::errs() << "XXXX 1 XXXX\n";
-          Dependent1.print_state();
+          //llvm::errs() << "XXXX 1 XXXX\n";
+          //Dependent1.print_state();
 #endif
         }
       } else if (state == 2) {
@@ -620,8 +830,8 @@ public:
             }
           }
 #ifdef ENABLE_GA_DEBUG
-          llvm::errs() << "XXXX 2 XXXX\n";
-          Dependent2.print_state();
+          //llvm::errs() << "XXXX 2 XXXX\n";
+          //Dependent2.print_state();
 #endif
         }
       } else if (state == 3) {
