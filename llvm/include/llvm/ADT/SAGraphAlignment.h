@@ -13,6 +13,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 
 //#define ENABLE_GA_DEBUG
+#define EDIT_DISTANCE
 
 template<typename Ty>
 class TriangularMatrix {
@@ -318,7 +319,7 @@ private:
     }
   }
 
-  std::unordered_map<size_t, size_t> EagerMatchSolver(
+  std::unordered_map<size_t, size_t> EagerSolver(
       std::vector<std::pair<size_t, size_t>> &Matches,
       DependencyInfo<ContainerType, Ty> &D1,
       DependencyInfo<ContainerType, Ty> &D2) {
@@ -334,6 +335,19 @@ private:
     // Register conflicts
     ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
 
+#ifdef EDIT_DISTANCE
+    llvm::SmallBitVector GoodMatches = GetAdvantageousMatches(Matches, D1, D2);
+
+    llvm::SmallVector<size_t> EditDistances(mcount);
+    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
+      auto conns1 = D1.getConnections(Matches[MatchIdx].first);
+      auto conns2 = D2.getConnections(Matches[MatchIdx].second);
+      EditDistances[MatchIdx] = MinimalED(Matches, CI, MatchIdx, conns1, conns2);
+      if (!GoodMatches[MatchIdx])
+        EditDistances[MatchIdx] += 2;
+    }
+#endif
+
     // Count conflicts
     std::vector<size_t> num_conflicts(mcount);
     for (size_t i = 0; i < mcount; ++i) {
@@ -345,10 +359,24 @@ private:
       }
     }
 
+#ifdef ENABLE_GA_DEBUG
+    for (size_t i = 0; i < mcount; ++i)
+      llvm::errs() << i << " : " << Matches[i].first << " -> " << Matches[i].second << "\t" << num_conflicts[i] << "\t" << EditDistances[i] << "\n";
+#endif
+
+#ifdef EDIT_DISTANCE
+	auto Comp = [&](int idx1, int idx2) {
+      return (EditDistances[idx1] < EditDistances[idx2]) || 
+            ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] < num_conflicts[idx2])) || 
+          ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] == num_conflicts[idx2]) && (std::abs((int)Matches[idx1].first - (int)Matches[idx1].second) < std::abs((int)Matches[idx2].first - (int)Matches[idx2].second)));};
+#else
+	auto Comp = [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];};
+#endif
+
     // Rank matches by ascending numbers of conflicts
     llvm::SmallVector<int> idxs(mcount);
     std::iota(idxs.begin(), idxs.end(), 0);
-    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];});
+    std::sort(idxs.begin(), idxs.end(), Comp);
 
     // Given the ranking, do greedy selection of matches
     EagerSelection(idxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
@@ -449,66 +477,6 @@ private:
   }
 
 
-
-  std::unordered_map<size_t, size_t> EagerEDSolver(
-      std::vector<std::pair<size_t, size_t>> &Matches,
-      DependencyInfo<ContainerType, Ty> &D1,
-      DependencyInfo<ContainerType, Ty> &D2) {
-
-    std::unordered_map<size_t, size_t> Selected;
-    size_t mcount = Matches.size();
-    size_t Size1 = D1.size();
-    size_t Size2 = D2.size();
-
-    if (mcount == 0)
-      return Selected;
-
-    llvm::SmallBitVector GoodMatches = GetAdvantageousMatches(Matches, D1, D2);
-
-    // Register conflicts
-    ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
-
-    llvm::SmallVector<size_t> EditDistances(mcount);
-    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
-      auto conns1 = D1.getConnections(Matches[MatchIdx].first);
-      auto conns2 = D2.getConnections(Matches[MatchIdx].second);
-      EditDistances[MatchIdx] = MinimalED(Matches, CI, MatchIdx, conns1, conns2);
-      if (!GoodMatches[MatchIdx])
-        EditDistances[MatchIdx] += 2;
-    }
-
-    // Count conflicts
-    std::vector<size_t> num_conflicts(mcount);
-    for (size_t i = 0; i < mcount; ++i) {
-      for (size_t j = 0; j < i; ++j) {
-        if (CI.isConflict(i, j)) {
-          num_conflicts[i]++;
-          num_conflicts[j]++;
-        }
-      }
-    }
-
-#ifdef ENABLE_GA_DEBUG
-    for (size_t i = 0; i < mcount; ++i)
-      llvm::errs() << i << " : " << Matches[i].first << " -> " << Matches[i].second << "\t" << num_conflicts[i] << "\t" << EditDistances[i] << "\n";
-#endif
-
-    // Rank matches by ascending numbers of conflicts
-    llvm::SmallVector<int> idxs(mcount);
-    std::iota(idxs.begin(), idxs.end(), 0);
-    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {
-      return (EditDistances[idx1] < EditDistances[idx2]) || 
-            ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] < num_conflicts[idx2])) || 
-          ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] == num_conflicts[idx2]) && (std::abs((int)Matches[idx1].first - (int)Matches[idx1].second) < std::abs((int)Matches[idx2].first - (int)Matches[idx2].second)));});
-
-    // Given the ranking, do greedy selection of matches
-    EagerSelection(idxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
-    for (int MatchIdx: idxs)
-      if (MatchIdx >= 0)
-        Selected[Matches[MatchIdx].first] = Matches[MatchIdx].second;
-
-    return Selected;
-  }
 
   static constexpr bool count_matches = false;
 
@@ -627,6 +595,8 @@ public:
     return MemorySize;
   }
 
+
+
   virtual AlignedSequence<Ty, Blank> getAlignment(ContainerType &Seq1,
                                                   ContainerType &Seq2) override {
     assert(BaseType::getMatchOperation() != nullptr);
@@ -654,8 +624,7 @@ public:
     // Get a solution in the form of map from Seq1 indexes to Seq2 indexes
     std::unordered_map<size_t, size_t> M1;
     if (Matches.size() > 30)
-    //if (Matches.size() > 80)
-      M1 = EagerEDSolver(Matches, Dependent1, Dependent2);
+      M1 = EagerSolver(Matches, Dependent1, Dependent2);
     else
       M1 = ExhaustiveSolver(Matches, Dependent1, Dependent2);
 
@@ -713,17 +682,82 @@ public:
     int state = 0;
     bool Progress = false;
     while (!Ready1.empty() || !Ready2.empty() || !ReadyMatches.empty()) {
-      if (state == 0) {
-        state = 1;
+      // state == 0 -> Try to insert matches
+      // state == 1 -> Try to insert unmatched entries from Seq1
+      // state == 2 -> Try to insert unmatched entries from Seq2
+      // state == 3 -> Check whether we failed to insert any entries in the other three states
+      
+      if (state == 3) {
+        if (!Progress) {
+          // If we get here, we went through a whole cycle of states without
+          // adding any instructions to the Result. This will only happen, if
+          // all ready instructions are matched with unready instructions.
+          // This should not happen but it does because we might have selected
+          // some matches that conflict with the other ones. 1-to-1 conflicts
+          // are forbidden by design, but 1-to-many are still possible. A better
+          // match selection algorithm could avoid this, but it's more convenient
+          // to just remove matches when it happens.
+
+          // Remove the match for the numerically smallest ready instruction
+          
+          size_t min1 = std::numeric_limits<size_t>::max();
+          if (UnReady1.size() > 0)
+            min1 = *(UnReady1.begin());
+
+          size_t min2 = std::numeric_limits<size_t>::max();
+          if (UnReady2.size() > 0)
+            min2 = *(UnReady2.begin());
+
+          assert(min1 != std::numeric_limits<size_t>::max() || min2 != std::numeric_limits<size_t>::max());
+
+          if (min1 <= min2) {
+            assert(M1.count(min1) > 0);
+            M2.erase(M1[min1]);
+            M1.erase(min1);
+            UnReady1.erase(min1);
+            Ready1.emplace(min1);
+          } else {
+            assert(M2.count(min2) > 0);
+            M1.erase(M2[min2]);
+            M2.erase(min2);
+            UnReady2.erase(min2);
+            Ready2.emplace(min2);
+          }
+        }
+        state = 0;
+        continue;
+      }
+
+      // Reset Progress if we're starting the cycle
+      if (state == 0)
         Progress = false;
-        while (!ReadyMatches.empty()) {
-          Progress = true;
-          size_t Idx1 = ReadyMatches.top();
-          size_t Idx2 = M1[Idx1];
 
-          Result.Data.push_front(typename BaseType::EntryType(Seq1[Idx1], Seq2[Idx2], true));
-          ReadyMatches.pop();
+      // Choose the Queue to draw matches from based on the state
+      auto& MatchesQ = (state == 0) ? ReadyMatches : ((state == 1) ? Ready1 : Ready2);
 
+      while (!MatchesQ.empty()) {
+        Progress = true;
+
+        size_t Idx1 = 0, Idx2 = 0;
+        Ty Entry1 = Blank, Entry2 = Blank;
+
+        if (state == 0) {
+          Idx1 = MatchesQ.top();
+          Idx2 = M1[Idx1];
+          Entry1 = Seq1[Idx1];
+          Entry2 = Seq2[Idx2];
+        } else if (state == 1) {
+          Idx1 = MatchesQ.top();
+          Entry1 = Seq1[Idx1];
+        } else if (state == 2) {
+          Idx2 = MatchesQ.top();
+          Entry2 = Seq2[Idx2];
+        }
+
+        MatchesQ.pop();
+        Result.Data.push_front(typename BaseType::EntryType(Entry1, Entry2, state == 0));
+
+        if ((state == 0) || (state == 1)) {
           for (size_t Jdx = Idx1 + 1; Jdx < Size1; ++Jdx) {
 #ifdef ENABLE_GA_DEBUG
             llvm::errs() << "REMOVE 1: " << Idx1 << " -> " << Jdx << "\n";
@@ -743,7 +777,9 @@ public:
               }
             }
           }
+        }
 
+        if ((state == 0) || (state == 2)) {
           for (size_t Jdx = Idx2 + 1; Jdx < Size2; ++Jdx) {
 #ifdef ENABLE_GA_DEBUG
             llvm::errs() << "REMOVE 2: " << Idx2 << " -> " << Jdx << "\n";
@@ -763,117 +799,9 @@ public:
               }
             }
           }
-
-#ifdef ENABLE_GA_DEBUG
-          //llvm::errs() << "XXXX 1 XXXX\n";
-          //Dependent1.print_state();
-          //llvm::errs() << "XXXX 2 XXXX\n";
-          //Dependent2.print_state();
-#endif
-        }
-      } else if (state == 1) {
-        state = 2;
-        while (!Ready1.empty()) {
-          Progress = true;
-          size_t Idx1 = Ready1.top();
-
-          Result.Data.push_front(typename BaseType::EntryType(Seq1[Idx1], Blank, false));
-          Ready1.pop();
-
-          for (size_t Jdx = Idx1 + 1; Jdx < Size1; ++Jdx) {
-#ifdef ENABLE_GA_DEBUG
-            llvm::errs() << "REMOVE 1: " << Idx1 << " -> " << Jdx << "\n";
-#endif
-            if (Dependent1.removeDependency(Idx1, Jdx)) {
-              auto it = M1.find(Jdx);
-              if (it == M1.end()) {
-                Ready1.emplace(Jdx);
-              } else {
-                auto it_other = UnReady2.find(it->second);
-                if (it_other != UnReady2.end()) {
-                  ReadyMatches.emplace(Jdx);
-                  UnReady2.erase(it_other);
-                } else {
-                  UnReady1.emplace(Jdx);
-                }
-              }
-            }
-          }
-#ifdef ENABLE_GA_DEBUG
-          //llvm::errs() << "XXXX 1 XXXX\n";
-          //Dependent1.print_state();
-#endif
-        }
-      } else if (state == 2) {
-        state = 3;
-        while (!Ready2.empty()) {
-          Progress = true;
-          size_t Idx2 = Ready2.top();
-
-          Result.Data.push_front(typename BaseType::EntryType(Blank, Seq2[Idx2], false));
-          Ready2.pop();
-
-          for (size_t Jdx = Idx2 + 1; Jdx < Size2; ++Jdx) {
-            if (Dependent2.removeDependency(Idx2, Jdx)) {
-              auto it = M2.find(Jdx);
-              if (it == M2.end()) {
-                Ready2.emplace(Jdx);
-              } else {
-                auto it_other = UnReady1.find(it->second);
-                if (it_other != UnReady1.end()) {
-                  ReadyMatches.emplace(it->second);
-                  UnReady1.erase(it_other);
-                } else {
-                  UnReady2.emplace(Jdx);
-                }
-              }
-            }
-          }
-#ifdef ENABLE_GA_DEBUG
-          //llvm::errs() << "XXXX 2 XXXX\n";
-          //Dependent2.print_state();
-#endif
-        }
-      } else if (state == 3) {
-        state = 0;
-        if (Progress)
-          continue;
-
-        // If we get here, we went through a whole cycle of states without
-        // adding any instructions to the Result. This will only happen, if
-        // all ready instructions are matched with unready instructions.
-        // This should not happen but it does because we might have selected
-        // some matches that conflict with the other ones. 1-to-1 conflicts
-        // are forbidden by design, but 1-to-many are still possible. A better
-        // match selection algorithm could avoid this, but it's more convenient
-        // to just remove matches when it happens.
-
-        // Remove the match for the numerically smallest ready instruction
-        
-        size_t min1 = std::numeric_limits<size_t>::max();
-        if (UnReady1.size() > 0)
-          min1 = *(UnReady1.begin());
-
-        size_t min2 = std::numeric_limits<size_t>::max();
-        if (UnReady2.size() > 0)
-          min2 = *(UnReady2.begin());
-
-        assert(min1 != std::numeric_limits<size_t>::max() || min2 != std::numeric_limits<size_t>::max());
-
-        if (min1 <= min2) {
-          assert(M1.count(min1) > 0);
-          M2.erase(M1[min1]);
-          M1.erase(min1);
-          UnReady1.erase(min1);
-          Ready1.emplace(min1);
-        } else {
-          assert(M2.count(min2) > 0);
-          M1.erase(M2[min2]);
-          M2.erase(min2);
-          UnReady2.erase(min2);
-          Ready2.emplace(min2);
         }
       }
+      state++;
     }
 
     Result.Data.reverse();
