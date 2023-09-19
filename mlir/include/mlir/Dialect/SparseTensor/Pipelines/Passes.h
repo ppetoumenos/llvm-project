@@ -13,7 +13,7 @@
 #ifndef MLIR_DIALECT_SPARSETENSOR_PIPELINES_PASSES_H_
 #define MLIR_DIALECT_SPARSETENSOR_PIPELINES_PASSES_H_
 
-#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
+#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.h"
 #include "mlir/Dialect/SparseTensor/Transforms/Passes.h"
 #include "mlir/Pass/PassOptions.h"
 
@@ -52,6 +52,28 @@ struct SparseCompilerOptions
               mlir::SparseParallelizationStrategy::kAnyStorageAnyLoop,
               "any-storage-any-loop",
               "Enable sparse parallelization for any storage and loop."))};
+  PassOptions::Option<mlir::GPUDataTransferStrategy> gpuDataTransfer{
+      *this, "gpu-data-transfer-strategy",
+      ::llvm::cl::desc(
+          "Set the data transfer strategy between the host and the GPUs"),
+      ::llvm::cl::init(mlir::GPUDataTransferStrategy::kRegularDMA),
+      llvm::cl::values(
+          clEnumValN(mlir::GPUDataTransferStrategy::kRegularDMA, "regular-dma",
+                     "Default option: malloc on host without additional "
+                     "options or care and then use DMA to copy the data"),
+          clEnumValN(mlir::GPUDataTransferStrategy::kPinnedDMA, "pinned-dma",
+                     "Based on the default option, pin the host memory to "
+                     "accelerate the data transfer"),
+          clEnumValN(mlir::GPUDataTransferStrategy::kZeroCopy, "zero-copy",
+                     "Use zero-copy to perform the data transfer from the host "
+                     "to the GPU"))};
+
+  PassOptions::Option<bool> enableIndexReduction{
+      *this, "enable-index-reduction",
+      desc("Enable dependent index reduction based algorithm to handle "
+           "non-trivial index expressions on sparse inputs (experimental "
+           "features)"),
+      init(false)};
 
   PassOptions::Option<bool> enableRuntimeLibrary{
       *this, "enable-runtime-library",
@@ -65,6 +87,14 @@ struct SparseCompilerOptions
   PassOptions::Option<bool> enableBufferInitialization{
       *this, "enable-buffer-initialization",
       desc("Enable zero-initialization of memory buffers"), init(false)};
+
+  PassOptions::Option<bool> createSparseDeallocs{
+      *this, "create-sparse-deallocs",
+      desc("Specify if the temporary buffers created by the sparse "
+           "compiler should be deallocated. For compatibility with core "
+           "bufferization passes. "
+           "This option is only used when enable-runtime-library=false."),
+      init(true)};
 
   PassOptions::Option<int32_t> vectorLength{
       *this, "vl", desc("Set the vector length (0 disables vectorization)"),
@@ -106,9 +136,42 @@ struct SparseCompilerOptions
            "dialect"),
       init(false)};
 
+  /// These options are used to enable GPU code generation.
+  PassOptions::Option<std::string> gpuTriple{*this, "gpu-triple",
+                                             desc("GPU target triple")};
+  PassOptions::Option<std::string> gpuChip{*this, "gpu-chip",
+                                           desc("GPU target architecture")};
+  PassOptions::Option<std::string> gpuFeatures{*this, "gpu-features",
+                                               desc("GPU target features")};
+  /// For NVIDIA GPUs there are 3 compilation format options:
+  /// 1. `isa`: the compiler generates PTX and the driver JITs the PTX.
+  /// 2. `bin`: generates a CUBIN object for `chip=gpuChip`.
+  /// 3. `fatbin`: generates a fat binary with a CUBIN object for `gpuChip` and
+  /// also embeds the PTX in the fat binary.
+  /// Notes:
+  /// Option 1 adds a significant runtime performance hit, however, tests are
+  /// more likely to pass with this option.
+  /// Option 2 is better for execution time as there is no JIT; however, the
+  /// program will fail if there's an architecture mismatch between `gpuChip`
+  /// and the GPU running the program.
+  /// Option 3 is the best compromise between options 1 and 2 as it can JIT in
+  /// case of an architecture mismatch between `gpuChip` and the running
+  /// architecture. However, it's only possible to JIT to a higher CC than
+  /// `gpuChip`.
+  PassOptions::Option<std::string> gpuFormat{
+      *this, "gpu-format", desc("GPU compilation format"), init("fatbin")};
+
+  /// This option is used to enable GPU library generation.
+  PassOptions::Option<bool> enableGPULibgen{
+      *this, "enable-gpu-libgen",
+      desc("Enables GPU acceleration by means of direct library calls (like "
+           "cuSPARSE)")};
+
   /// Projects out the options for `createSparsificationPass`.
   SparsificationOptions sparsificationOptions() const {
-    return SparsificationOptions(parallelization);
+    return SparsificationOptions(parallelization, gpuDataTransfer,
+                                 enableIndexReduction, enableGPULibgen,
+                                 enableRuntimeLibrary);
   }
 
   /// Projects out the options for `createSparseTensorConversionPass`.

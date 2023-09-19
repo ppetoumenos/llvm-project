@@ -402,7 +402,7 @@ public:
     // The map with which Exp should be interpreted.
     Context Ctx;
 
-    bool isReference() { return !Exp; }
+    bool isReference() const { return !Exp; }
 
   private:
     // Create ordinary variable definition
@@ -502,9 +502,8 @@ public:
     for (Context::iterator I = C.begin(), E = C.end(); I != E; ++I) {
       const NamedDecl *D = I.getKey();
       D->printName(llvm::errs());
-      const unsigned *i = C.lookup(D);
       llvm::errs() << " -> ";
-      dumpVarDefinitionName(*i);
+      dumpVarDefinitionName(I.getData());
       llvm::errs() << "\n";
     }
   }
@@ -1009,7 +1008,7 @@ class ThreadSafetyAnalyzer {
   threadSafety::SExprBuilder SxBuilder;
 
   ThreadSafetyHandler &Handler;
-  const CXXMethodDecl *CurrentMethod;
+  const CXXMethodDecl *CurrentMethod = nullptr;
   LocalVariableMap LocalVarMap;
   FactManager FactMan;
   std::vector<CFGBlockInfo> BlockInfo;
@@ -1163,7 +1162,7 @@ void BeforeSet::checkBeforeAfter(const ValueDecl* StartVd,
       }
       // Transitively search other before sets, and warn on cycles.
       if (traverse(Vdb)) {
-        if (CycMap.find(Vd) == CycMap.end()) {
+        if (!CycMap.contains(Vd)) {
           CycMap.insert(std::make_pair(Vd, true));
           StringRef L1 = Vd->getName();
           Analyzer.Handler.handleBeforeAfterCycle(L1, Vd->getLocation());
@@ -2266,8 +2265,11 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   const PostOrderCFGView *SortedGraph = walker.getSortedGraph();
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
+  CFGBlockInfo &Initial = BlockInfo[CFGraph->getEntry().getBlockID()];
+  CFGBlockInfo &Final   = BlockInfo[CFGraph->getExit().getBlockID()];
+
   // Mark entry block as reachable
-  BlockInfo[CFGraph->getEntry().getBlockID()].Reachable = true;
+  Initial.Reachable = true;
 
   // Compute SSA names for local variables
   LocalVarMap.traverseCFG(CFGraph, SortedGraph, BlockInfo);
@@ -2283,8 +2285,8 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // to initial lockset. Also turn off checking for lock and unlock functions.
   // FIXME: is there a more intelligent way to check lock/unlock functions?
   if (!SortedGraph->empty() && D->hasAttrs()) {
-    const CFGBlock *FirstBlock = *SortedGraph->begin();
-    FactSet &InitialLockset = BlockInfo[FirstBlock->getBlockID()].EntrySet;
+    assert(*SortedGraph->begin() == &CFGraph->getEntry());
+    FactSet &InitialLockset = Initial.EntrySet;
 
     CapExprSet ExclusiveLocksToAdd;
     CapExprSet SharedLocksToAdd;
@@ -2456,15 +2458,12 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     }
   }
 
-  CFGBlockInfo *Initial = &BlockInfo[CFGraph->getEntry().getBlockID()];
-  CFGBlockInfo *Final   = &BlockInfo[CFGraph->getExit().getBlockID()];
-
   // Skip the final check if the exit block is unreachable.
-  if (!Final->Reachable)
+  if (!Final.Reachable)
     return;
 
   // By default, we expect all locks held on entry to be held on exit.
-  FactSet ExpectedExitSet = Initial->EntrySet;
+  FactSet ExpectedExitSet = Initial.EntrySet;
 
   // Adjust the expected exit set by adding or removing locks, as declared
   // by *-LOCK_FUNCTION and UNLOCK_FUNCTION.  The intersect below will then
@@ -2480,7 +2479,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     ExpectedExitSet.removeLock(FactMan, Lock);
 
   // FIXME: Should we call this function for all blocks which exit the function?
-  intersectAndWarn(ExpectedExitSet, Final->ExitSet, Final->ExitLoc,
+  intersectAndWarn(ExpectedExitSet, Final.ExitSet, Final.ExitLoc,
                    LEK_LockedAtEndOfFunction, LEK_NotLockedAtEndOfFunction);
 
   Handler.leaveFunction(CurrentFunction);

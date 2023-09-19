@@ -18,10 +18,10 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCTargetOptionsCommandFlags.h"
-#include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 #include "llvm/TargetParser/Triple.h"
 #include <optional>
 
@@ -58,6 +58,7 @@ CGLIST(std::string, MAttrs)
 CGOPT_EXP(Reloc::Model, RelocModel)
 CGOPT(ThreadModel::Model, ThreadModel)
 CGOPT_EXP(CodeModel::Model, CodeModel)
+CGOPT_EXP(uint64_t, LargeDataThreshold)
 CGOPT(ExceptionHandling, ExceptionModel)
 CGOPT_EXP(CodeGenFileType, FileType)
 CGOPT(FramePointerKind, FramePointerUsage)
@@ -81,7 +82,7 @@ CGOPT(bool, StackSymbolOrdering)
 CGOPT(bool, StackRealign)
 CGOPT(std::string, TrapFuncName)
 CGOPT(bool, UseCtors)
-CGOPT(bool, LowerGlobalDtorsViaCxaAtExit)
+CGOPT(bool, DisableIntegratedAS)
 CGOPT(bool, RelaxELFRelocations)
 CGOPT_EXP(bool, DataSections)
 CGOPT_EXP(bool, FunctionSections)
@@ -89,7 +90,7 @@ CGOPT(bool, IgnoreXCOFFVisibility)
 CGOPT(bool, XCOFFTracebackTable)
 CGOPT(std::string, BBSections)
 CGOPT(unsigned, TLSSize)
-CGOPT(bool, EmulatedTLS)
+CGOPT_EXP(bool, EmulatedTLS)
 CGOPT(bool, UniqueSectionNames)
 CGOPT(bool, UniqueBasicBlockSectionNames)
 CGOPT(EABI, EABIVersion)
@@ -100,10 +101,11 @@ CGOPT(bool, EmitCallSiteInfo)
 CGOPT(bool, EnableMachineFunctionSplitter)
 CGOPT(bool, EnableDebugEntryValues)
 CGOPT(bool, ForceDwarfFrameSection)
-CGOPT(bool, XRayOmitFunctionIndex)
+CGOPT(bool, XRayFunctionIndex)
 CGOPT(bool, DebugStrictDwarf)
 CGOPT(unsigned, AlignLoops)
 CGOPT(bool, JMCInstrument)
+CGOPT(bool, XCOFFReadOnlyPointers)
 
 codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
 #define CGBINDOPT(NAME)                                                        \
@@ -161,6 +163,12 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
                  clEnumValN(CodeModel::Large, "large", "Large code model")));
   CGBINDOPT(CodeModel);
 
+  static cl::opt<uint64_t> LargeDataThreshold(
+      "large-data-threshold",
+      cl::desc("Choose large data threshold for x86_64 medium code model"),
+      cl::init(0));
+  CGBINDOPT(LargeDataThreshold);
+
   static cl::opt<ExceptionHandling> ExceptionModel(
       "exception-model", cl::desc("exception model"),
       cl::init(ExceptionHandling::None),
@@ -179,15 +187,15 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
   CGBINDOPT(ExceptionModel);
 
   static cl::opt<CodeGenFileType> FileType(
-      "filetype", cl::init(CGFT_AssemblyFile),
+      "filetype", cl::init(CodeGenFileType::AssemblyFile),
       cl::desc(
           "Choose a file type (not all types are supported by all targets):"),
-      cl::values(
-          clEnumValN(CGFT_AssemblyFile, "asm", "Emit an assembly ('.s') file"),
-          clEnumValN(CGFT_ObjectFile, "obj",
-                     "Emit a native object ('.o') file"),
-          clEnumValN(CGFT_Null, "null",
-                     "Emit nothing, for performance testing")));
+      cl::values(clEnumValN(CodeGenFileType::AssemblyFile, "asm",
+                            "Emit an assembly ('.s') file"),
+                 clEnumValN(CodeGenFileType::ObjectFile, "obj",
+                            "Emit a native object ('.o') file"),
+                 clEnumValN(CodeGenFileType::Null, "null",
+                            "Emit nothing, for performance testing")));
   CGBINDOPT(FileType);
 
   static cl::opt<FramePointerKind> FramePointerUsage(
@@ -241,14 +249,15 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
       cl::init(false));
   CGBINDOPT(EnableNoTrappingFPMath);
 
-  static const auto DenormFlagEnumOptions =
-  cl::values(clEnumValN(DenormalMode::IEEE, "ieee",
-                        "IEEE 754 denormal numbers"),
-             clEnumValN(DenormalMode::PreserveSign, "preserve-sign",
-                        "the sign of a  flushed-to-zero number is preserved "
-                        "in the sign of 0"),
-             clEnumValN(DenormalMode::PositiveZero, "positive-zero",
-                        "denormals are flushed to positive zero"));
+  static const auto DenormFlagEnumOptions = cl::values(
+      clEnumValN(DenormalMode::IEEE, "ieee", "IEEE 754 denormal numbers"),
+      clEnumValN(DenormalMode::PreserveSign, "preserve-sign",
+                 "the sign of a  flushed-to-zero number is preserved "
+                 "in the sign of 0"),
+      clEnumValN(DenormalMode::PositiveZero, "positive-zero",
+                 "denormals are flushed to positive zero"),
+      clEnumValN(DenormalMode::Dynamic, "dynamic",
+                 "denormals have unknown treatment"));
 
   // FIXME: Doesn't have way to specify separate input and output modes.
   static cl::opt<DenormalMode::DenormalModeKind> DenormalFPMath(
@@ -348,12 +357,6 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
                                 cl::desc("Use .ctors instead of .init_array."),
                                 cl::init(false));
   CGBINDOPT(UseCtors);
-
-  static cl::opt<bool> LowerGlobalDtorsViaCxaAtExit(
-      "lower-global-dtors-via-cxa-atexit",
-      cl::desc("Lower llvm.global_dtors (global destructors) via __cxa_atexit"),
-      cl::init(true));
-  CGBINDOPT(LowerGlobalDtorsViaCxaAtExit);
 
   static cl::opt<bool> RelaxELFRelocations(
       "relax-elf-relocations",
@@ -466,10 +469,10 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
       cl::desc("Always emit a debug frame section."), cl::init(false));
   CGBINDOPT(ForceDwarfFrameSection);
 
-  static cl::opt<bool> XRayOmitFunctionIndex(
-      "no-xray-index", cl::desc("Don't emit xray_fn_idx section"),
-      cl::init(false));
-  CGBINDOPT(XRayOmitFunctionIndex);
+  static cl::opt<bool> XRayFunctionIndex("xray-function-index",
+                                         cl::desc("Emit xray_fn_idx section"),
+                                         cl::init(true));
+  CGBINDOPT(XRayFunctionIndex);
 
   static cl::opt<bool> DebugStrictDwarf(
       "strict-dwarf", cl::desc("use strict dwarf"), cl::init(false));
@@ -484,6 +487,18 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
       cl::desc("Instrument functions with a call to __CheckForDebuggerJustMyCode"),
       cl::init(false));
   CGBINDOPT(JMCInstrument);
+
+  static cl::opt<bool> XCOFFReadOnlyPointers(
+      "mxcoff-roptr",
+      cl::desc("When set to true, const objects with relocatable address "
+               "values are put into the RO data section."),
+      cl::init(false));
+  CGBINDOPT(XCOFFReadOnlyPointers);
+
+  static cl::opt<bool> DisableIntegratedAS(
+      "no-integrated-as", cl::desc("Disable integrated assembler"),
+      cl::init(false));
+  CGBINDOPT(DisableIntegratedAS);
 
 #undef CGBINDOPT
 
@@ -538,7 +553,7 @@ codegen::InitTargetOptionsFromCodeGenFlags(const Triple &TheTriple) {
   Options.GuaranteedTailCallOpt = getEnableGuaranteedTailCallOpt();
   Options.StackSymbolOrdering = getStackSymbolOrdering();
   Options.UseInitArray = !getUseCtors();
-  Options.LowerGlobalDtorsViaCxaAtExit = getLowerGlobalDtorsViaCxaAtExit();
+  Options.DisableIntegratedAS = getDisableIntegratedAS();
   Options.RelaxELFRelocations = getRelaxELFRelocations();
   Options.DataSections =
       getExplicitDataSections().value_or(TheTriple.hasDefaultDataSections());
@@ -549,8 +564,8 @@ codegen::InitTargetOptionsFromCodeGenFlags(const Triple &TheTriple) {
   Options.UniqueSectionNames = getUniqueSectionNames();
   Options.UniqueBasicBlockSectionNames = getUniqueBasicBlockSectionNames();
   Options.TLSSize = getTLSSize();
-  Options.EmulatedTLS = getEmulatedTLS();
-  Options.ExplicitEmulatedTLS = EmulatedTLSView->getNumOccurrences() > 0;
+  Options.EmulatedTLS =
+      getExplicitEmulatedTLS().value_or(TheTriple.hasDefaultEmulatedTLS());
   Options.ExceptionModel = getExceptionModel();
   Options.EmitStackSizeSection = getEnableStackSizeSection();
   Options.EnableMachineFunctionSplitter = getEnableMachineFunctionSplitter();
@@ -558,10 +573,11 @@ codegen::InitTargetOptionsFromCodeGenFlags(const Triple &TheTriple) {
   Options.EmitCallSiteInfo = getEmitCallSiteInfo();
   Options.EnableDebugEntryValues = getEnableDebugEntryValues();
   Options.ForceDwarfFrameSection = getForceDwarfFrameSection();
-  Options.XRayOmitFunctionIndex = getXRayOmitFunctionIndex();
+  Options.XRayFunctionIndex = getXRayFunctionIndex();
   Options.DebugStrictDwarf = getDebugStrictDwarf();
   Options.LoopAlignment = getAlignLoops();
   Options.JMCInstrument = getJMCInstrument();
+  Options.XCOFFReadOnlyPointers = getXCOFFReadOnlyPointers();
 
   Options.MCOptions = mc::InitMCTargetOptionsFromFlags();
 

@@ -3,7 +3,16 @@ add_header_library(
   HDRS
     FEnvImpl.h
   DEPENDS
-    libc.include.errno
+    libc.include.fenv
+    libc.include.math
+    libc.src.__support.macros.attributes
+)
+
+add_header_library(
+  rounding_mode
+  HDRS
+    rounding_mode.h
+  DEPENDS
     libc.include.fenv
     libc.include.math
     libc.src.__support.macros.attributes
@@ -43,16 +52,30 @@ add_header_library(
 )
 
 add_header_library(
+  fpbits_str
+  HDRS
+    fpbits_str.h
+  DEPENDS
+    .float_properties
+    .fp_bits
+    libc.src.__support.CPP.bit
+    libc.src.__support.CPP.type_traits
+    libc.src.__support.macros.attributes
+    libc.src.__support.common
+    libc.src.__support.integer_to_string
+)
+
+add_header_library(
   nearest_integer_operations
   HDRS
     NearestIntegerOperations.h
   DEPENDS
     .fp_bits
     .fenv_impl
+    .rounding_mode
     libc.src.__support.CPP.type_traits
     libc.src.__support.common
     libc.include.math
-    libc.include.errno
     libc.src.errno.errno
 )
 
@@ -80,7 +103,6 @@ add_header_library(
     libc.src.__support.common
     libc.src.__support.macros.optimization
     libc.include.math
-    libc.include.errno
     libc.src.errno.errno
 )
 
@@ -113,6 +135,7 @@ add_header_library(
   DEPENDS
     .fp_bits
     .fenv_impl
+    .rounding_mode
     libc.src.__support.CPP.optional
     libc.src.__support.macros.optimization
 )
@@ -126,6 +149,7 @@ add_header_library(
     .basic_operations
     .fenv_impl
     .fp_bits
+    .rounding_mode
     libc.src.__support.builtin_wrappers
     libc.src.__support.CPP.bit
     libc.src.__support.CPP.type_traits
@@ -201,6 +225,12 @@ add_header_library(
     libc.src.__support.common
     libc.src.__support.number_pair
     .multiply_add
+)
+
+add_header_library(
+  triple_double
+  HDRS
+    triple_double.h
 )
 
 add_header_library(

@@ -58,7 +58,7 @@ resolveUsesInRepetitiveRegions(Operation *op,
     for (OpOperand &opOperand : bufferizableOp->getOpOperands()) {
       Value operand = opOperand.get();
       // Skip non-tensor operands.
-      if (!operand.getType().isa<TensorType>())
+      if (!isa<TensorType>(operand.getType()))
         continue;
       // Skip operands that do not bufferize to memory writes.
       if (!bufferizableOp.bufferizesToMemoryWrite(opOperand, state))
@@ -85,7 +85,7 @@ resolveUsesInRepetitiveRegions(Operation *op,
       // Insert a tensor copy and replace all uses inside of repetitive regions.
       rewriter.setInsertionPoint(bufferizableOp);
       auto tensorCopy = rewriter.create<AllocTensorOp>(
-          bufferizableOp->getLoc(), operand.getType().cast<TensorType>(),
+          bufferizableOp->getLoc(), cast<TensorType>(operand.getType()),
           /*dynamicSizes=*/ValueRange(),
           /*copy=*/operand, /*memory_space=*/IntegerAttr());
       for (OpOperand *use : usesInsideRegion)
@@ -124,32 +124,11 @@ LogicalResult
 mlir::bufferization::insertTensorCopies(Operation *op,
                                         const AnalysisState &state) {
   IRRewriter rewriter(op->getContext());
-  StringRef escapeAttrName = BufferizationDialect::kEscapeAttrName;
 
   WalkResult result = op->walk([&](Operation *op) {
     auto bufferizableOp = state.getOptions().dynCastBufferizableOp(op);
     if (!bufferizableOp)
       return WalkResult::skip();
-
-    // Find allocations without an `escape` attribute and add the attribute
-    // based on analysis results.
-    if (!op->hasAttr(escapeAttrName)) {
-      SmallVector<bool> escapeAttrValue;
-      bool foundTensorResult = false;
-      for (OpResult opResult : op->getOpResults()) {
-        if (!opResult.getType().isa<TensorType>() ||
-            !bufferizableOp.bufferizesToAllocation(opResult)) {
-          escapeAttrValue.push_back(false);
-          continue;
-        }
-        foundTensorResult = true;
-        bool escape = !state.getOptions().createDeallocs ||
-                      state.isTensorYielded(opResult);
-        escapeAttrValue.push_back(escape);
-      }
-      if (foundTensorResult)
-        op->setAttr(escapeAttrName, rewriter.getBoolArrayAttr(escapeAttrValue));
-    }
 
     // Find inplacability conflicts and resolve them. (Typically with explicit
     // tensor copies in the form of AllocTensorOps.)

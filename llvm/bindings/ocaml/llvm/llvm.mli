@@ -1125,16 +1125,6 @@ val const_nsw_mul : llvalue -> llvalue -> llvalue
     See the method [llvm::ConstantExpr::getNSWMul]. *)
 val const_nuw_mul : llvalue -> llvalue -> llvalue
 
-(** [const_and c1 c2] returns the constant bitwise [AND] of two integer
-    constants.
-    See the method [llvm::ConstantExpr::getAnd]. *)
-val const_and : llvalue -> llvalue -> llvalue
-
-(** [const_or c1 c2] returns the constant bitwise [OR] of two integer
-    constants.
-    See the method [llvm::ConstantExpr::getOr]. *)
-val const_or : llvalue -> llvalue -> llvalue
-
 (** [const_xor c1 c2] returns the constant bitwise [XOR] of two integer
     constants.
     See the method [llvm::ConstantExpr::getXor]. *)
@@ -1267,11 +1257,6 @@ val const_intcast : llvalue -> lltype -> is_signed:bool -> llvalue
     fp casts of constant [c] to type [ty].
     See the method [llvm::ConstantExpr::getFPCast]. *)
 val const_fpcast : llvalue -> lltype -> llvalue
-
-(** [const_select cond t f] returns the constant conditional which returns value
-    [t] if the boolean constant [cond] is true and the value [f] otherwise.
-    See the method [llvm::ConstantExpr::getSelect]. *)
-val const_select : llvalue -> llvalue -> llvalue -> llvalue
 
 (** [const_extractelement vec i] returns the constant [i]th element of
     constant vector [vec]. [i] must be a constant [i32] value unsigned less than
@@ -2049,7 +2034,7 @@ val build_switch : llvalue -> llbasicblock -> int -> llbuilder -> llvalue
 
 (** [build_malloc ty name b] creates an [malloc]
     instruction at the position specified by the instruction builder [b].
-    See the method [llvm::CallInst::CreateMalloc]. *)
+    See the method [llvm::IRBuilderBase::CreateMalloc]. *)
 val build_malloc : lltype -> string -> llbuilder -> llvalue
 
 (** [build_array_malloc ty val name b] creates an [array malloc]

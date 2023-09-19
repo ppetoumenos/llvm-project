@@ -89,10 +89,11 @@ public:
 
   Status SetBreakpointCommandCallback(BreakpointOptions &bp_options,
                                       const char *command_body_text,
-                                      const bool is_callback) override;
+                                      bool is_callback) override;
 
   void SetWatchpointCommandCallback(WatchpointOptions *wp_options,
-                                    const char *command_body_text) override;
+                                    const char *command_body_text,
+                                    bool is_callback) override;
 
   Status SetBreakpointCommandCallbackFunction(
       BreakpointOptions &bp_options, const char *function_name,

@@ -31,6 +31,10 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSparcTarget() {
   initializeSparcDAGToDAGISelPass(PR);
 }
 
+static cl::opt<bool>
+    BranchRelaxation("sparc-enable-branch-relax", cl::Hidden, cl::init(true),
+                     cl::desc("Relax out of range conditional branches"));
+
 static std::string computeDataLayout(const Triple &T, bool is64Bit) {
   // Sparc is typically big endian, but some are little.
   std::string Ret = T.getArch() == Triple::sparcel ? "e" : "E";
@@ -96,7 +100,7 @@ SparcTargetMachine::SparcTargetMachine(const Target &T, const Triple &TT,
                                        const TargetOptions &Options,
                                        std::optional<Reloc::Model> RM,
                                        std::optional<CodeModel::Model> CM,
-                                       CodeGenOpt::Level OL, bool JIT,
+                                       CodeGenOptLevel OL, bool JIT,
                                        bool is64bit)
     : LLVMTargetMachine(T, computeDataLayout(TT, is64bit), TT, CPU, FS, Options,
                         getEffectiveRelocModel(RM),
@@ -181,6 +185,9 @@ bool SparcPassConfig::addInstSelector() {
 }
 
 void SparcPassConfig::addPreEmitPass(){
+  if (BranchRelaxation)
+    addPass(&BranchRelaxationPassID);
+
   addPass(createSparcDelaySlotFillerPass());
 
   if (this->getSparcTargetMachine().getSubtargetImpl()->insertNOPLoad())
@@ -203,7 +210,7 @@ SparcV8TargetMachine::SparcV8TargetMachine(const Target &T, const Triple &TT,
                                            const TargetOptions &Options,
                                            std::optional<Reloc::Model> RM,
                                            std::optional<CodeModel::Model> CM,
-                                           CodeGenOpt::Level OL, bool JIT)
+                                           CodeGenOptLevel OL, bool JIT)
     : SparcTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL, JIT, false) {}
 
 void SparcV9TargetMachine::anchor() { }
@@ -213,7 +220,7 @@ SparcV9TargetMachine::SparcV9TargetMachine(const Target &T, const Triple &TT,
                                            const TargetOptions &Options,
                                            std::optional<Reloc::Model> RM,
                                            std::optional<CodeModel::Model> CM,
-                                           CodeGenOpt::Level OL, bool JIT)
+                                           CodeGenOptLevel OL, bool JIT)
     : SparcTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL, JIT, true) {}
 
 void SparcelTargetMachine::anchor() {}
@@ -223,5 +230,5 @@ SparcelTargetMachine::SparcelTargetMachine(const Target &T, const Triple &TT,
                                            const TargetOptions &Options,
                                            std::optional<Reloc::Model> RM,
                                            std::optional<CodeModel::Model> CM,
-                                           CodeGenOpt::Level OL, bool JIT)
+                                           CodeGenOptLevel OL, bool JIT)
     : SparcTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL, JIT, false) {}

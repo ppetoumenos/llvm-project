@@ -12,7 +12,7 @@
 #include "stat.h"
 #include "terminator.h"
 #include "type-info.h"
-#include "flang/ISO_Fortran_binding.h"
+#include "flang/ISO_Fortran_binding_wrapper.h"
 #include "flang/Runtime/assign.h"
 #include "flang/Runtime/descriptor.h"
 
@@ -41,7 +41,32 @@ void RTNAME(AllocatableInitDerived)(Descriptor &descriptor,
       derivedType, nullptr, rank, nullptr, CFI_attribute_allocatable);
 }
 
-std::int32_t RTNAME(MoveAlloc)(Descriptor &to, Descriptor &from, bool hasStat,
+void RTNAME(AllocatableInitIntrinsicForAllocate)(Descriptor &descriptor,
+    TypeCategory category, int kind, int rank, int corank) {
+  if (descriptor.IsAllocated()) {
+    return;
+  }
+  RTNAME(AllocatableInitIntrinsic)(descriptor, category, kind, rank, corank);
+}
+
+void RTNAME(AllocatableInitCharacterForAllocate)(Descriptor &descriptor,
+    SubscriptValue length, int kind, int rank, int corank) {
+  if (descriptor.IsAllocated()) {
+    return;
+  }
+  RTNAME(AllocatableInitCharacter)(descriptor, length, kind, rank, corank);
+}
+
+void RTNAME(AllocatableInitDerivedForAllocate)(Descriptor &descriptor,
+    const typeInfo::DerivedType &derivedType, int rank, int corank) {
+  if (descriptor.IsAllocated()) {
+    return;
+  }
+  RTNAME(AllocatableInitDerived)(descriptor, derivedType, rank, corank);
+}
+
+std::int32_t RTNAME(MoveAlloc)(Descriptor &to, Descriptor &from,
+    const typeInfo::DerivedType *derivedType, bool hasStat,
     const Descriptor *errMsg, const char *sourceFile, int sourceLine) {
   Terminator terminator{sourceFile, sourceLine};
 
@@ -53,7 +78,8 @@ std::int32_t RTNAME(MoveAlloc)(Descriptor &to, Descriptor &from, bool hasStat,
   }
 
   if (to.IsAllocated()) {
-    int stat{to.Destroy(/*finalize=*/true)};
+    int stat{
+        to.Destroy(/*finalize=*/true, /*destroyPointers=*/false, &terminator)};
     if (stat != StatOk) {
       return ReturnError(terminator, stat, errMsg, hasStat);
     }
@@ -63,7 +89,24 @@ std::int32_t RTNAME(MoveAlloc)(Descriptor &to, Descriptor &from, bool hasStat,
   if (from.IsAllocated()) {
     to = from;
     from.raw().base_addr = nullptr;
+
+    // Carry over the dynamic type.
+    if (auto *toAddendum{to.Addendum()}) {
+      if (const auto *fromAddendum{from.Addendum()}) {
+        if (const auto *derived{fromAddendum->derivedType()}) {
+          toAddendum->set_derivedType(derived);
+        }
+      }
+    }
+
+    // Reset from dynamic type if needed.
+    if (auto *fromAddendum{from.Addendum()}) {
+      if (derivedType) {
+        fromAddendum->set_derivedType(derivedType);
+      }
+    }
   }
+
   return StatOk;
 }
 
@@ -125,9 +168,6 @@ int RTNAME(AllocatableAllocate)(Descriptor &descriptor, bool hasStat,
 int RTNAME(AllocatableAllocateSource)(Descriptor &alloc,
     const Descriptor &source, bool hasStat, const Descriptor *errMsg,
     const char *sourceFile, int sourceLine) {
-  if (alloc.Elements() == 0) {
-    return StatOk;
-  }
   int stat{RTNAME(AllocatableAllocate)(
       alloc, hasStat, errMsg, sourceFile, sourceLine)};
   if (stat == StatOk) {
@@ -146,7 +186,10 @@ int RTNAME(AllocatableDeallocate)(Descriptor &descriptor, bool hasStat,
   if (!descriptor.IsAllocated()) {
     return ReturnError(terminator, StatBaseNull, errMsg, hasStat);
   }
-  return ReturnError(terminator, descriptor.Destroy(true), errMsg, hasStat);
+  return ReturnError(terminator,
+      descriptor.Destroy(
+          /*finalize=*/true, /*destroyPointers=*/false, &terminator),
+      errMsg, hasStat);
 }
 
 int RTNAME(AllocatableDeallocatePolymorphic)(Descriptor &descriptor,
@@ -156,8 +199,7 @@ int RTNAME(AllocatableDeallocatePolymorphic)(Descriptor &descriptor,
       descriptor, hasStat, errMsg, sourceFile, sourceLine)};
   if (stat == StatOk) {
     DescriptorAddendum *addendum{descriptor.Addendum()};
-    if (addendum) { // Unlimited polymorphic allocated from intrinsic type spec
-                    // does not have
+    if (addendum) {
       addendum->set_derivedType(derivedType);
     } else {
       // Unlimited polymorphic descriptors initialized with
@@ -177,7 +219,9 @@ void RTNAME(AllocatableDeallocateNoFinal)(
   } else if (!descriptor.IsAllocated()) {
     ReturnError(terminator, StatBaseNull);
   } else {
-    ReturnError(terminator, descriptor.Destroy(false));
+    ReturnError(terminator,
+        descriptor.Destroy(
+            /*finalize=*/false, /*destroyPointers=*/false, &terminator));
   }
 }
 

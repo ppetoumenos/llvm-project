@@ -73,13 +73,11 @@ static void bindCapturedSymbol(const Fortran::semantics::Symbol &sym,
                                fir::ExtendedValue val,
                                Fortran::lower::AbstractConverter &converter,
                                Fortran::lower::SymMap &symMap) {
-  if (converter.getLoweringOptions().getLowerToHighLevelFIR()) {
-    // TODO: add an indication that this is a host variable in the declare to
-    // allow alias analysis to detect this case.
-    Fortran::lower::genDeclareSymbol(converter, symMap, sym, val);
-  } else {
+  if (converter.getLoweringOptions().getLowerToHighLevelFIR())
+    Fortran::lower::genDeclareSymbol(converter, symMap, sym, val,
+                                     fir::FortranVariableFlagsEnum::host_assoc);
+  else
     symMap.addSymbol(sym, val);
-  }
 }
 
 namespace {
@@ -243,7 +241,9 @@ public:
                                                args.loc);
     std::pair<mlir::Value, mlir::Value> unboxchar =
         charHelp.createUnboxChar(args.valueInTuple);
-    args.symMap.addCharSymbol(sym, unboxchar.first, unboxchar.second);
+    bindCapturedSymbol(sym,
+                       fir::CharBoxValue{unboxchar.first, unboxchar.second},
+                       converter, args.symMap);
   }
 };
 

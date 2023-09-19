@@ -25,11 +25,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Transforms/Vectorize.h"
 #include <numeric>
 
 #define DEBUG_TYPE "vector-combine"
@@ -247,7 +244,7 @@ bool VectorCombine::vectorizeLoadInsert(Instruction &I) {
   // still need a shuffle to change the vector size.
   auto *Ty = cast<FixedVectorType>(I.getType());
   unsigned OutputNumElts = Ty->getNumElements();
-  SmallVector<int, 16> Mask(OutputNumElts, UndefMaskElem);
+  SmallVector<int, 16> Mask(OutputNumElts, PoisonMaskElem);
   assert(OffsetEltIndex < MinVecNumElts && "Address offset too big");
   Mask[0] = OffsetEltIndex;
   if (OffsetEltIndex)
@@ -460,9 +457,9 @@ bool VectorCombine::isExtractExtractCheap(ExtractElementInst *Ext0,
 
     // If we are extracting from 2 different indexes, then one operand must be
     // shuffled before performing the vector operation. The shuffle mask is
-    // undefined except for 1 lane that is being translated to the remaining
+    // poison except for 1 lane that is being translated to the remaining
     // extraction lane. Therefore, it is a splat shuffle. Ex:
-    // ShufMask = { undef, undef, 0, undef }
+    // ShufMask = { poison, poison, 0, poison }
     // TODO: The cost model has an option for a "broadcast" shuffle
     //       (splat-from-element-0), but no option for a more general splat.
     NewCost +=
@@ -479,11 +476,11 @@ bool VectorCombine::isExtractExtractCheap(ExtractElementInst *Ext0,
 /// to a new element location.
 static Value *createShiftShuffle(Value *Vec, unsigned OldIndex,
                                  unsigned NewIndex, IRBuilder<> &Builder) {
-  // The shuffle mask is undefined except for 1 lane that is being translated
+  // The shuffle mask is poison except for 1 lane that is being translated
   // to the new element index. Example for OldIndex == 2 and NewIndex == 0:
-  // ShufMask = { 2, undef, undef, undef }
+  // ShufMask = { 2, poison, poison, poison }
   auto *VecTy = cast<FixedVectorType>(Vec->getType());
-  SmallVector<int, 32> ShufMask(VecTy->getNumElements(), UndefMaskElem);
+  SmallVector<int, 32> ShufMask(VecTy->getNumElements(), PoisonMaskElem);
   ShufMask[NewIndex] = OldIndex;
   return Builder.CreateShuffleVector(Vec, ShufMask, "shift");
 }
@@ -917,7 +914,7 @@ bool VectorCombine::foldExtractedCmps(Instruction &I) {
   auto *CmpTy = cast<FixedVectorType>(CmpInst::makeCmpResultType(X->getType()));
   InstructionCost NewCost = TTI.getCmpSelInstrCost(
       CmpOpcode, X->getType(), CmpInst::makeCmpResultType(X->getType()), Pred);
-  SmallVector<int, 32> ShufMask(VecTy->getNumElements(), UndefMaskElem);
+  SmallVector<int, 32> ShufMask(VecTy->getNumElements(), PoisonMaskElem);
   ShufMask[CheapIndex] = ExpensiveIndex;
   NewCost += TTI.getShuffleCost(TargetTransformInfo::SK_PermuteSingleSrc, CmpTy,
                                 ShufMask);
@@ -932,7 +929,7 @@ bool VectorCombine::foldExtractedCmps(Instruction &I) {
 
   // Create a vector constant from the 2 scalar constants.
   SmallVector<Constant *, 32> CmpC(VecTy->getNumElements(),
-                                   UndefValue::get(VecTy->getElementType()));
+                                   PoisonValue::get(VecTy->getElementType()));
   CmpC[Index0] = C0;
   CmpC[Index1] = C1;
   Value *VCmp = Builder.CreateCmp(Pred, X, ConstantVector::get(CmpC));
@@ -1016,19 +1013,24 @@ public:
 
 /// Check if it is legal to scalarize a memory access to \p VecTy at index \p
 /// Idx. \p Idx must access a valid vector element.
-static ScalarizationResult canScalarizeAccess(FixedVectorType *VecTy,
-                                              Value *Idx, Instruction *CtxI,
+static ScalarizationResult canScalarizeAccess(VectorType *VecTy, Value *Idx,
+                                              Instruction *CtxI,
                                               AssumptionCache &AC,
                                               const DominatorTree &DT) {
+  // We do checks for both fixed vector types and scalable vector types.
+  // This is the number of elements of fixed vector types,
+  // or the minium number of elements of scalable vector types.
+  uint64_t NumElements = VecTy->getElementCount().getKnownMinValue();
+
   if (auto *C = dyn_cast<ConstantInt>(Idx)) {
-    if (C->getValue().ult(VecTy->getNumElements()))
+    if (C->getValue().ult(NumElements))
       return ScalarizationResult::safe();
     return ScalarizationResult::unsafe();
   }
 
   unsigned IntWidth = Idx->getType()->getScalarSizeInBits();
   APInt Zero(IntWidth, 0);
-  APInt MaxElts(IntWidth, VecTy->getNumElements());
+  APInt MaxElts(IntWidth, NumElements);
   ConstantRange ValidIndices(Zero, MaxElts);
   ConstantRange IdxRange(IntWidth, true);
 
@@ -1077,8 +1079,7 @@ static Align computeAlignmentAfterScalarization(Align VectorAlignment,
 //   store i32 %b, i32* %1
 bool VectorCombine::foldSingleElementStore(Instruction &I) {
   auto *SI = cast<StoreInst>(&I);
-  if (!SI->isSimple() ||
-      !isa<FixedVectorType>(SI->getValueOperand()->getType()))
+  if (!SI->isSimple() || !isa<VectorType>(SI->getValueOperand()->getType()))
     return false;
 
   // TODO: Combine more complicated patterns (multiple insert) by referencing
@@ -1092,7 +1093,7 @@ bool VectorCombine::foldSingleElementStore(Instruction &I) {
     return false;
 
   if (auto *Load = dyn_cast<LoadInst>(Source)) {
-    auto VecTy = cast<FixedVectorType>(SI->getValueOperand()->getType());
+    auto VecTy = cast<VectorType>(SI->getValueOperand()->getType());
     const DataLayout &DL = I.getModule()->getDataLayout();
     Value *SrcAddr = Load->getPointerOperand()->stripPointerCasts();
     // Don't optimize for atomic/volatile load or store. Ensure memory is not
@@ -1133,14 +1134,14 @@ bool VectorCombine::scalarizeLoadExtract(Instruction &I) {
   if (!match(&I, m_Load(m_Value(Ptr))))
     return false;
 
-  auto *FixedVT = cast<FixedVectorType>(I.getType());
+  auto *VecTy = cast<VectorType>(I.getType());
   auto *LI = cast<LoadInst>(&I);
   const DataLayout &DL = I.getModule()->getDataLayout();
-  if (LI->isVolatile() || !DL.typeSizeEqualsStoreSize(FixedVT))
+  if (LI->isVolatile() || !DL.typeSizeEqualsStoreSize(VecTy))
     return false;
 
   InstructionCost OriginalCost =
-      TTI.getMemoryOpCost(Instruction::Load, FixedVT, LI->getAlign(),
+      TTI.getMemoryOpCost(Instruction::Load, VecTy, LI->getAlign(),
                           LI->getPointerAddressSpace());
   InstructionCost ScalarizedCost = 0;
 
@@ -1171,7 +1172,7 @@ bool VectorCombine::scalarizeLoadExtract(Instruction &I) {
       LastCheckedInst = UI;
     }
 
-    auto ScalarIdx = canScalarizeAccess(FixedVT, UI->getOperand(1), &I, AC, DT);
+    auto ScalarIdx = canScalarizeAccess(VecTy, UI->getOperand(1), &I, AC, DT);
     if (!ScalarIdx.isSafe()) {
       // TODO: Freeze index if it is safe to do so.
       ScalarIdx.discard();
@@ -1181,12 +1182,12 @@ bool VectorCombine::scalarizeLoadExtract(Instruction &I) {
     auto *Index = dyn_cast<ConstantInt>(UI->getOperand(1));
     TTI::TargetCostKind CostKind = TTI::TCK_RecipThroughput;
     OriginalCost +=
-        TTI.getVectorInstrCost(Instruction::ExtractElement, FixedVT, CostKind,
+        TTI.getVectorInstrCost(Instruction::ExtractElement, VecTy, CostKind,
                                Index ? Index->getZExtValue() : -1);
     ScalarizedCost +=
-        TTI.getMemoryOpCost(Instruction::Load, FixedVT->getElementType(),
+        TTI.getMemoryOpCost(Instruction::Load, VecTy->getElementType(),
                             Align(1), LI->getPointerAddressSpace());
-    ScalarizedCost += TTI.getAddressComputationCost(FixedVT->getElementType());
+    ScalarizedCost += TTI.getAddressComputationCost(VecTy->getElementType());
   }
 
   if (ScalarizedCost >= OriginalCost)
@@ -1199,12 +1200,12 @@ bool VectorCombine::scalarizeLoadExtract(Instruction &I) {
 
     Value *Idx = EI->getOperand(1);
     Value *GEP =
-        Builder.CreateInBoundsGEP(FixedVT, Ptr, {Builder.getInt32(0), Idx});
+        Builder.CreateInBoundsGEP(VecTy, Ptr, {Builder.getInt32(0), Idx});
     auto *NewLoad = cast<LoadInst>(Builder.CreateLoad(
-        FixedVT->getElementType(), GEP, EI->getName() + ".scalar"));
+        VecTy->getElementType(), GEP, EI->getName() + ".scalar"));
 
     Align ScalarOpAlignment = computeAlignmentAfterScalarization(
-        LI->getAlign(), FixedVT->getElementType(), Idx, DL);
+        LI->getAlign(), VecTy->getElementType(), Idx, DL);
     NewLoad->setAlignment(ScalarOpAlignment);
 
     replaceValue(*EI, *NewLoad);
@@ -1565,7 +1566,7 @@ bool VectorCombine::foldSelectShuffle(Instruction &I, bool FromReduction) {
   // Calculate our ReconstructMasks from the OrigReconstructMasks and the
   // modified order of the input shuffles.
   SmallVector<SmallVector<int>> ReconstructMasks;
-  for (auto Mask : OrigReconstructMasks) {
+  for (const auto &Mask : OrigReconstructMasks) {
     SmallVector<int> ReconstructMask;
     for (int M : Mask) {
       auto FindIndex = [](const SmallVector<std::pair<int, int>> &V, int M) {
@@ -1596,12 +1597,12 @@ bool VectorCombine::foldSelectShuffle(Instruction &I, bool FromReduction) {
     V2B.push_back(GetBaseMaskValue(SVI1B, V2[I].first));
   }
   while (V1A.size() < NumElts) {
-    V1A.push_back(UndefMaskElem);
-    V1B.push_back(UndefMaskElem);
+    V1A.push_back(PoisonMaskElem);
+    V1B.push_back(PoisonMaskElem);
   }
   while (V2A.size() < NumElts) {
-    V2A.push_back(UndefMaskElem);
-    V2B.push_back(UndefMaskElem);
+    V2A.push_back(PoisonMaskElem);
+    V2B.push_back(PoisonMaskElem);
   }
 
   auto AddShuffleCost = [&](InstructionCost C, Instruction *I) {
@@ -1726,9 +1727,6 @@ bool VectorCombine::run() {
       case Instruction::ShuffleVector:
         MadeChange |= widenSubvectorLoad(I);
         break;
-      case Instruction::Load:
-        MadeChange |= scalarizeLoadExtract(I);
-        break;
       default:
         break;
       }
@@ -1736,12 +1734,13 @@ bool VectorCombine::run() {
 
     // This transform works with scalable and fixed vectors
     // TODO: Identify and allow other scalable transforms
-    if (isa<VectorType>(I.getType()))
+    if (isa<VectorType>(I.getType())) {
       MadeChange |= scalarizeBinopOrCmp(I);
+      MadeChange |= scalarizeLoadExtract(I);
+    }
 
     if (Opcode == Instruction::Store)
       MadeChange |= foldSingleElementStore(I);
-
 
     // If this is an early pipeline invocation of this pass, we are done.
     if (TryEarlyFoldsOnly)

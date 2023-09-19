@@ -25,6 +25,7 @@
 #include "llvm/Support/MemoryBufferRef.h"
 
 #include "llvm/Support/YAMLTraits.h"
+using namespace llvm::ELF;
 
 namespace llvm {
 namespace omp {
@@ -32,19 +33,29 @@ namespace target {
 namespace plugin {
 namespace utils {
 
-// The implicit arguments of AMDGPU kernels.
+// The implicit arguments of COV5 AMDGPU kernels.
 struct AMDGPUImplicitArgsTy {
-  uint64_t OffsetX;
-  uint64_t OffsetY;
-  uint64_t OffsetZ;
-  uint64_t HostcallPtr;
-  uint64_t Unused0;
-  uint64_t Unused1;
-  uint64_t Unused2;
+  uint32_t BlockCountX;
+  uint32_t BlockCountY;
+  uint32_t BlockCountZ;
+  uint16_t GroupSizeX;
+  uint16_t GroupSizeY;
+  uint16_t GroupSizeZ;
+  uint8_t Unused0[46]; // 46 byte offset.
+  uint16_t GridDims;
+  uint8_t Unused1[190]; // 190 byte offset.
 };
 
-static_assert(sizeof(AMDGPUImplicitArgsTy) == 56,
-              "Unexpected size of implicit arguments");
+// Dummy struct for COV4 implicitargs.
+struct AMDGPUImplicitArgsTyCOV4 {
+  uint8_t Unused[56];
+};
+
+uint32_t getImplicitArgsSize(uint16_t Version) {
+  return Version < ELF::ELFABIVERSION_AMDGPU_HSA_V5
+             ? sizeof(AMDGPUImplicitArgsTyCOV4)
+             : sizeof(AMDGPUImplicitArgsTy);
+}
 
 /// Parse a TargetID to get processor arch and feature map.
 /// Returns processor subarch.
@@ -146,6 +157,10 @@ struct KernelMetaDataTy {
   uint32_t KernelSegmentSize;
   uint32_t ExplicitArgumentCount;
   uint32_t ImplicitArgumentCount;
+  uint32_t RequestedWorkgroupSize[3];
+  uint32_t WorkgroupSizeHint[3];
+  uint32_t WavefronSize;
+  uint32_t MaxFlatWorkgroupSize;
 };
 namespace {
 
@@ -156,13 +171,13 @@ public:
 
   /// Process ELF note to read AMDGPU metadata from respective information
   /// fields.
-  Error processNote(const object::ELF64LE::Note &Note) {
+  Error processNote(const object::ELF64LE::Note &Note, size_t Align) {
     if (Note.getName() != "AMDGPU")
       return Error::success(); // We are not interested in other things
 
     assert(Note.getType() == ELF::NT_AMDGPU_METADATA &&
            "Parse AMDGPU MetaData");
-    auto Desc = Note.getDesc();
+    auto Desc = Note.getDesc(Align);
     StringRef MsgPackString =
         StringRef(reinterpret_cast<const char *>(Desc.data()), Desc.size());
     msgpack::Document MsgPackDoc;
@@ -194,6 +209,19 @@ private:
       return DK.getString() == SK;
     };
 
+    const auto getSequenceOfThreeInts = [](msgpack::DocNode &DN,
+                                           uint32_t *Vals) {
+      assert(DN.isArray() && "MsgPack DocNode is an array node");
+      auto DNA = DN.getArray();
+      assert(DNA.size() == 3 && "ArrayNode has at most three elements");
+
+      int i = 0;
+      for (auto DNABegin = DNA.begin(), DNAEnd = DNA.end(); DNABegin != DNAEnd;
+           ++DNABegin) {
+        Vals[i++] = DNABegin->getUInt();
+      }
+    };
+
     if (isKey(V.first, ".name")) {
       KernelName = V.second.toString();
     } else if (isKey(V.first, ".sgpr_count")) {
@@ -208,6 +236,14 @@ private:
       KernelData.PrivateSegmentSize = V.second.getUInt();
     } else if (isKey(V.first, ".group_segement_fixed_size")) {
       KernelData.GroupSegmentList = V.second.getUInt();
+    } else if (isKey(V.first, ".reqd_workgroup_size")) {
+      getSequenceOfThreeInts(V.second, KernelData.RequestedWorkgroupSize);
+    } else if (isKey(V.first, ".workgroup_size_hint")) {
+      getSequenceOfThreeInts(V.second, KernelData.WorkgroupSizeHint);
+    } else if (isKey(V.first, ".wavefront_size")) {
+      KernelData.WavefronSize = V.second.getUInt();
+    } else if (isKey(V.first, ".max_flat_workgroup_size")) {
+      KernelData.MaxFlatWorkgroupSize = V.second.getUInt();
     }
 
     return Error::success();
@@ -270,7 +306,8 @@ private:
 /// Reads the AMDGPU specific metadata from the ELF file and propagates the
 /// KernelInfoMap
 Error readAMDGPUMetaDataFromImage(MemoryBufferRef MemBuffer,
-                                  StringMap<KernelMetaDataTy> &KernelInfoMap) {
+                                  StringMap<KernelMetaDataTy> &KernelInfoMap,
+                                  uint16_t &ELFABIVersion) {
   Error Err = Error::success(); // Used later as out-parameter
 
   auto ELFOrError = object::ELF64LEFile::create(MemBuffer.getBuffer());
@@ -280,6 +317,12 @@ Error readAMDGPUMetaDataFromImage(MemoryBufferRef MemBuffer,
   const object::ELF64LEFile ELFObj = ELFOrError.get();
   ArrayRef<object::ELF64LE::Shdr> Sections = cantFail(ELFObj.sections());
   KernelInfoReader Reader(KernelInfoMap);
+
+  // Read the code object version from ELF image header
+  auto Header = ELFObj.getHeader();
+  ELFABIVersion = (uint8_t)(Header.e_ident[ELF::EI_ABIVERSION]);
+  DP("ELFABIVERSION Version: %u\n", ELFABIVersion);
+
   for (const auto &S : Sections) {
     if (S.sh_type != ELF::SHT_NOTE)
       continue;
@@ -288,13 +331,14 @@ Error readAMDGPUMetaDataFromImage(MemoryBufferRef MemBuffer,
       if (Err)
         return Err;
       // Fills the KernelInfoTabel entries in the reader
-      if ((Err = Reader.processNote(N)))
+      if ((Err = Reader.processNote(N, S.sh_addralign)))
         return Err;
     }
   }
 
   return Error::success();
 }
+
 } // namespace utils
 } // namespace plugin
 } // namespace target

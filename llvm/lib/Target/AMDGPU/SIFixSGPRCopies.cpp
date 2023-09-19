@@ -88,7 +88,7 @@ public:
   // VGPR to SGPR copy being processed
   MachineInstr *Copy;
   // All SALU instructions reachable from this copy in SSA graph
-  DenseSet<MachineInstr *> SChain;
+  SetVector<MachineInstr *> SChain;
   // Number of SGPR to VGPR copies that are used to put the SALU computation
   // results back to VALU.
   unsigned NumSVCopies;
@@ -765,7 +765,7 @@ bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
   for (auto MI : PHINodes) {
     processPHINode(*MI);
   }
-  if (MF.getTarget().getOptLevel() > CodeGenOpt::None && EnableM0Merge)
+  if (MF.getTarget().getOptLevel() > CodeGenOptLevel::None && EnableM0Merge)
     hoistAndMergeSGPRInits(AMDGPU::M0, *MRI, TRI, *MDT, TII);
 
   SiblingPenalty.clear();
@@ -869,7 +869,9 @@ bool SIFixSGPRCopies::lowerSpecialCase(MachineInstr &MI,
     return true;
   }
   if (!SrcReg.isVirtual() || TRI->isAGPR(*MRI, SrcReg)) {
-    TII->moveToVALU(MI, MDT);
+    SIInstrWorklist worklist;
+    worklist.insert(&MI);
+    TII->moveToVALU(worklist, MDT);
     return true;
   }
 
@@ -991,6 +993,10 @@ void SIFixSGPRCopies::lowerVGPR2SGPRCopies(MachineFunction &MF) {
       LoweringWorklist.push_back(C.second.ID);
   }
 
+  // Store all the V2S copy instructions that need to be moved to VALU
+  // in the Copies worklist.
+  SIInstrWorklist Copies;
+
   while (!LoweringWorklist.empty()) {
     unsigned CurID = LoweringWorklist.pop_back_val();
     auto CurInfoIt = V2SCopies.find(CurID);
@@ -1003,7 +1009,7 @@ void SIFixSGPRCopies::lowerVGPR2SGPRCopies(MachineFunction &MF) {
           V2SCopyInfo &SI = SibInfoIt->getSecond();
           LLVM_DEBUG(dbgs() << "Sibling:\n"; SI.dump());
           if (!SI.NeedToBeConvertedToVALU) {
-            set_subtract(SI.SChain, C.SChain);
+            SI.SChain.set_subtract(C.SChain);
             if (needToBeConvertedToVALU(&SI))
               LoweringWorklist.push_back(SI.ID);
           }
@@ -1013,9 +1019,12 @@ void SIFixSGPRCopies::lowerVGPR2SGPRCopies(MachineFunction &MF) {
       LLVM_DEBUG(dbgs() << "V2S copy " << *C.Copy
                         << " is being turned to VALU\n");
       V2SCopies.erase(C.ID);
-      TII->moveToVALU(*C.Copy, MDT);
+      Copies.insert(C.Copy);
     }
   }
+
+  TII->moveToVALU(Copies, MDT);
+  Copies.clear();
 
   // Now do actual lowering
   for (auto C : V2SCopies) {

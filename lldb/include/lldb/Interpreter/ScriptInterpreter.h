@@ -9,15 +9,19 @@
 #ifndef LLDB_INTERPRETER_SCRIPTINTERPRETER_H
 #define LLDB_INTERPRETER_SCRIPTINTERPRETER_H
 
+#include "lldb/API/SBAttachInfo.h"
+#include "lldb/API/SBBreakpoint.h"
 #include "lldb/API/SBData.h"
 #include "lldb/API/SBError.h"
+#include "lldb/API/SBLaunchInfo.h"
 #include "lldb/API/SBMemoryRegionInfo.h"
 #include "lldb/Breakpoint/BreakpointOptions.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Core/SearchFilter.h"
-#include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ThreadedCommunication.h"
 #include "lldb/Host/PseudoTerminal.h"
+#include "lldb/Host/StreamFile.h"
+#include "lldb/Interpreter/ScriptObject.h"
 #include "lldb/Interpreter/ScriptedPlatformInterface.h"
 #include "lldb/Interpreter/ScriptedProcessInterface.h"
 #include "lldb/Utility/Broadcaster.h"
@@ -186,7 +190,7 @@ public:
   virtual Status GenerateBreakpointCommandCallbackData(StringList &input,
                                                        std::string &output,
                                                        bool has_extra_args,
-                                                       const bool is_callback) {
+                                                       bool is_callback) {
     Status error;
     error.SetErrorString("not implemented");
     return error;
@@ -194,7 +198,7 @@ public:
 
   virtual bool GenerateWatchpointCommandCallbackData(StringList &input,
                                                      std::string &output,
-                                                     const bool is_callback) {
+                                                     bool is_callback) {
     return false;
   }
 
@@ -311,6 +315,14 @@ public:
     return lldb::eStateStepping;
   }
 
+  virtual bool
+  ScriptedThreadPlanGetStopDescription(StructuredData::ObjectSP implementor_sp,
+                                       lldb_private::Stream *stream,
+                                       bool &script_error) {
+    script_error = true;
+    return false;
+  }
+
   virtual StructuredData::GenericSP
   CreateScriptedBreakpointResolver(const char *class_name,
                                    const StructuredDataImpl &args_data,
@@ -361,7 +373,7 @@ public:
 
   virtual Status GenerateFunction(const char *signature,
                                   const StringList &input,
-                                  const bool is_callback) {
+                                  bool is_callback) {
     Status error;
     error.SetErrorString("unimplemented");
     return error;
@@ -382,7 +394,7 @@ public:
 
   virtual Status SetBreakpointCommandCallback(BreakpointOptions &bp_options,
                                               const char *callback_text,
-                                              const bool is_callback) {
+                                              bool is_callback) {
     Status error;
     error.SetErrorString("unimplemented");
     return error;
@@ -414,7 +426,7 @@ public:
   /// Set a one-liner as the callback for the watchpoint.
   virtual void SetWatchpointCommandCallback(WatchpointOptions *wp_options,
                                             const char *user_input,
-                                            const bool is_callback) {}
+                                            bool is_callback) {}
 
   virtual bool GetScriptedSummary(const char *function_name,
                                   lldb::ValueObjectSP valobj,
@@ -580,10 +592,24 @@ public:
     return *m_scripted_platform_interface_up;
   }
 
+  virtual StructuredData::ObjectSP
+  CreateStructuredDataFromScriptObject(ScriptObject obj) {
+    return {};
+  }
+
   lldb::DataExtractorSP
   GetDataExtractorFromSBData(const lldb::SBData &data) const;
 
   Status GetStatusFromSBError(const lldb::SBError &error) const;
+
+  lldb::BreakpointSP
+  GetOpaqueTypeFromSBBreakpoint(const lldb::SBBreakpoint &breakpoint) const;
+
+  lldb::ProcessAttachInfoSP
+  GetOpaqueTypeFromSBAttachInfo(const lldb::SBAttachInfo &attach_info) const;
+
+  lldb::ProcessLaunchInfoSP
+  GetOpaqueTypeFromSBLaunchInfo(const lldb::SBLaunchInfo &launch_info) const;
 
   std::optional<MemoryRegionInfo> GetOpaqueTypeFromSBMemoryRegionInfo(
       const lldb::SBMemoryRegionInfo &mem_region) const;

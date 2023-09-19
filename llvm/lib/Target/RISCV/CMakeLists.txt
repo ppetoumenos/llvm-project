@@ -7,7 +7,6 @@ tablegen(LLVM RISCVGenAsmWriter.inc -gen-asm-writer)
 tablegen(LLVM RISCVGenCompressInstEmitter.inc -gen-compress-inst-emitter)
 tablegen(LLVM RISCVGenDAGISel.inc -gen-dag-isel)
 tablegen(LLVM RISCVGenDisassemblerTables.inc -gen-disassembler)
-tablegen(LLVM RISCVGenGlobalISel.inc -gen-global-isel)
 tablegen(LLVM RISCVGenInstrInfo.inc -gen-instr-info)
 tablegen(LLVM RISCVGenMCCodeEmitter.inc -gen-emitter)
 tablegen(LLVM RISCVGenMCPseudoLowering.inc -gen-pseudo-lowering)
@@ -15,6 +14,13 @@ tablegen(LLVM RISCVGenRegisterBank.inc -gen-register-bank)
 tablegen(LLVM RISCVGenRegisterInfo.inc -gen-register-info)
 tablegen(LLVM RISCVGenSearchableTables.inc -gen-searchable-tables)
 tablegen(LLVM RISCVGenSubtargetInfo.inc -gen-subtarget)
+
+set(LLVM_TARGET_DEFINITIONS RISCVGISel.td)
+tablegen(LLVM RISCVGenGlobalISel.inc -gen-global-isel)
+tablegen(LLVM RISCVGenO0PreLegalizeGICombiner.inc -gen-global-isel-combiner
+              -combiners="RISCVO0PreLegalizerCombiner")
+tablegen(LLVM RISCVGenPreLegalizeGICombiner.inc -gen-global-isel-combiner
+              -combiners="RISCVPreLegalizerCombiner")
 
 add_public_tablegen_target(RISCVCommonTableGen)
 
@@ -27,18 +33,19 @@ add_llvm_target(RISCVCodeGen
   RISCVFrameLowering.cpp
   RISCVGatherScatterLowering.cpp
   RISCVInsertVSETVLI.cpp
+  RISCVInsertReadWriteCSR.cpp
   RISCVInstrInfo.cpp
   RISCVISelDAGToDAG.cpp
   RISCVISelLowering.cpp
   RISCVMachineFunctionInfo.cpp
   RISCVMacroFusion.cpp
-  RISCVMCInstLower.cpp
   RISCVMergeBaseOffset.cpp
+  RISCVOptWInstrs.cpp
   RISCVRedundantCopyElimination.cpp
+  RISCVMoveMerger.cpp
+  RISCVPushPopOptimizer.cpp
   RISCVRegisterInfo.cpp
   RISCVRVVInitUndef.cpp
-  RISCVSExtWRemoval.cpp
-  RISCVStripWSuffix.cpp
   RISCVSubtarget.cpp
   RISCVTargetMachine.cpp
   RISCVTargetObjectFile.cpp
@@ -46,14 +53,18 @@ add_llvm_target(RISCVCodeGen
   GISel/RISCVCallLowering.cpp
   GISel/RISCVInstructionSelector.cpp
   GISel/RISCVLegalizerInfo.cpp
+  GISel/RISCVO0PreLegalizerCombiner.cpp
+  GISel/RISCVPreLegalizerCombiner.cpp
   GISel/RISCVRegisterBankInfo.cpp
 
   LINK_COMPONENTS
   Analysis
   AsmPrinter
-  Core
-  IPO
   CodeGen
+  CodeGenTypes
+  Core
+  GlobalISel
+  IPO
   MC
   RISCVDesc
   RISCVInfo
@@ -62,7 +73,6 @@ add_llvm_target(RISCVCodeGen
   Target
   TargetParser
   TransformUtils
-  GlobalISel
 
   ADD_TO_COMPONENT
   RISCV

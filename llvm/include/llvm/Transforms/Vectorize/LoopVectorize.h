@@ -15,7 +15,7 @@
 // 'wide' iteration. After this transformation the index is incremented
 // by the SIMD vector width, and not by one.
 //
-// This pass has three parts:
+// This pass has four parts:
 // 1. The main loop pass that drives the different parts.
 // 2. LoopVectorizationLegality - A unit that checks for the legality
 //    of the vectorization.
@@ -27,7 +27,7 @@
 //
 // There is a development effort going on to migrate loop vectorizer to the
 // VPlan infrastructure and to introduce outer loop vectorization support (see
-// docs/Proposal/VectorizationPlan.rst and
+// docs/VectorizationPlan.rst and
 // http://lists.llvm.org/pipermail/llvm-dev/2017-December/119523.html). For this
 // purpose, we temporarily introduced the VPlan-native vectorization path: an
 // alternative vectorization path that is natively implemented on top of the

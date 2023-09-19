@@ -55,7 +55,7 @@ public:
   // Parse the token stream and return the corresponding Definition object.
   // Returns an empty definition object with a null-Name on error.
   MacroExpander::Definition parse() {
-    if (!Current->is(tok::identifier))
+    if (Current->isNot(tok::identifier))
       return {};
     Def.Name = Current->TokenText;
     nextToken();
@@ -151,18 +151,16 @@ void MacroExpander::parseDefinition(const std::string &Macro) {
 }
 
 bool MacroExpander::defined(llvm::StringRef Name) const {
-  return FunctionLike.find(Name) != FunctionLike.end() ||
-         ObjectLike.find(Name) != ObjectLike.end();
+  return FunctionLike.contains(Name) || ObjectLike.contains(Name);
 }
 
 bool MacroExpander::objectLike(llvm::StringRef Name) const {
-  return ObjectLike.find(Name) != ObjectLike.end();
+  return ObjectLike.contains(Name);
 }
 
 bool MacroExpander::hasArity(llvm::StringRef Name, unsigned Arity) const {
   auto it = FunctionLike.find(Name);
-  return it != FunctionLike.end() &&
-         (it->second.find(Arity) != it->second.end());
+  return it != FunctionLike.end() && it->second.contains(Arity);
 }
 
 llvm::SmallVector<FormatToken *, 8>
@@ -193,7 +191,7 @@ MacroExpander::expand(FormatToken *ID,
   auto expandArgument = [&](FormatToken *Tok) -> bool {
     // If the current token references a parameter, expand the corresponding
     // argument.
-    if (!Tok->is(tok::identifier) || ExpandedArgs.contains(Tok->TokenText))
+    if (Tok->isNot(tok::identifier) || ExpandedArgs.contains(Tok->TokenText))
       return false;
     ExpandedArgs.insert(Tok->TokenText);
     auto I = Def.ArgMap.find(Tok->TokenText);

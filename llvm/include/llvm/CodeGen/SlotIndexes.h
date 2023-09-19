@@ -540,7 +540,7 @@ class raw_ostream;
     SlotIndex insertMachineInstrInMaps(MachineInstr &MI, bool Late = false) {
       assert(!MI.isInsideBundle() &&
              "Instructions inside bundles should use bundle start's slot.");
-      assert(mi2iMap.find(&MI) == mi2iMap.end() && "Instr already indexed.");
+      assert(!mi2iMap.contains(&MI) && "Instr already indexed.");
       // Numbering debug instructions could cause code generation to be
       // affected by debug information.
       assert(!MI.isDebugInstr() && "Cannot number debug instructions.");
@@ -640,6 +640,9 @@ class raw_ostream;
       renumberIndexes(newItr);
       llvm::sort(idx2MBBMap, less_first());
     }
+
+    /// Renumber all indexes using the default instruction distance.
+    void packIndexes();
   };
 
   // Specialize IntervalMapInfo for half-open slot index intervals.

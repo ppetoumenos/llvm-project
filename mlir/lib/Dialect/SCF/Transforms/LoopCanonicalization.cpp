@@ -16,7 +16,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/SCF/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/SCF/Utils/AffineCanonicalizationUtils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
@@ -43,21 +43,20 @@ static bool isShapePreserving(ForOp forOp, int64_t arg) {
   while (value) {
     if (value == forOp.getRegionIterArgs()[arg])
       return true;
-    OpResult opResult = value.dyn_cast<OpResult>();
+    OpResult opResult = dyn_cast<OpResult>(value);
     if (!opResult)
       return false;
 
     using tensor::InsertSliceOp;
-    value =
-        llvm::TypeSwitch<Operation *, Value>(opResult.getOwner())
-            .template Case<InsertSliceOp>(
-                [&](InsertSliceOp op) { return op.getDest(); })
-            .template Case<ForOp>([&](ForOp forOp) {
-              return isShapePreserving(forOp, opResult.getResultNumber())
-                         ? forOp.getIterOperands()[opResult.getResultNumber()]
-                         : Value();
-            })
-            .Default([&](auto op) { return Value(); });
+    value = llvm::TypeSwitch<Operation *, Value>(opResult.getOwner())
+                .template Case<InsertSliceOp>(
+                    [&](InsertSliceOp op) { return op.getDest(); })
+                .template Case<ForOp>([&](ForOp forOp) {
+                  return isShapePreserving(forOp, opResult.getResultNumber())
+                             ? forOp.getInitArgs()[opResult.getResultNumber()]
+                             : Value();
+                })
+                .Default([&](auto op) { return Value(); });
   }
   return false;
 }
@@ -91,7 +90,7 @@ struct DimOfIterArgFolder : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy dimOp,
                                 PatternRewriter &rewriter) const override {
-    auto blockArg = dimOp.getSource().template dyn_cast<BlockArgument>();
+    auto blockArg = dyn_cast<BlockArgument>(dimOp.getSource());
     if (!blockArg)
       return failure();
     auto forOp = dyn_cast<ForOp>(blockArg.getParentBlock()->getParentOp());
@@ -139,12 +138,12 @@ struct DimOfLoopResultFolder : public OpRewritePattern<OpTy> {
     auto forOp = dimOp.getSource().template getDefiningOp<scf::ForOp>();
     if (!forOp)
       return failure();
-    auto opResult = dimOp.getSource().template cast<OpResult>();
+    auto opResult = cast<OpResult>(dimOp.getSource());
     unsigned resultNumber = opResult.getResultNumber();
     if (!isShapePreserving(forOp, resultNumber))
       return failure();
     rewriter.updateRootInPlace(dimOp, [&]() {
-      dimOp.getSourceMutable().assign(forOp.getIterOperands()[resultNumber]);
+      dimOp.getSourceMutable().assign(forOp.getInitArgs()[resultNumber]);
     });
     return success();
   }
@@ -179,8 +178,8 @@ void mlir::scf::populateSCFForLoopCanonicalizationPatterns(
     RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns
-      .add<AffineOpSCFCanonicalizationPattern<AffineMinOp>,
-           AffineOpSCFCanonicalizationPattern<AffineMaxOp>,
+      .add<AffineOpSCFCanonicalizationPattern<affine::AffineMinOp>,
+           AffineOpSCFCanonicalizationPattern<affine::AffineMaxOp>,
            DimOfIterArgFolder<tensor::DimOp>, DimOfIterArgFolder<memref::DimOp>,
            DimOfLoopResultFolder<tensor::DimOp>,
            DimOfLoopResultFolder<memref::DimOp>>(ctx);

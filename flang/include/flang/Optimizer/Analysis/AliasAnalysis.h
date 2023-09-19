@@ -33,6 +33,9 @@ class AliasAnalysis {
              /// Memory allocated outside of a function and passed
              /// to the function as a by-ref argument.
              Argument,
+             /// Represents memory allocated outside of a function
+             /// and passed to the function via host association tuple.
+             HostAssoc,
              /// Represents memory allocated by unknown means and
              /// with the memory address defined by a memory reading
              /// operation (e.g. fir::LoadOp).
@@ -55,6 +58,9 @@ class AliasAnalysis {
     mlir::Type valueType;
     /// Attributes of the memory source object, e.g. Target.
     Attributes attributes;
+    /// Have we lost precision following the source such that
+    /// even an exact match cannot be MustAlias?
+    bool approximateSource;
 
     /// Print information about the memory source to `os`.
     void print(llvm::raw_ostream &os) const;

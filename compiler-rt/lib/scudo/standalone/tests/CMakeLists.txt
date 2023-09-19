@@ -15,11 +15,15 @@ set(SCUDO_UNITTEST_CFLAGS
   -DGTEST_HAS_RTTI=0
   -g
   # Extra flags for the C++ tests
+  -Wconversion
   # TODO(kostyak): find a way to make -fsized-deallocation work
   -Wno-mismatched-new-delete)
 
 if(COMPILER_RT_DEBUG)
-  list(APPEND SCUDO_UNITTEST_CFLAGS -DSCUDO_DEBUG=1)
+  list(APPEND SCUDO_UNITTEST_CFLAGS -DSCUDO_DEBUG=1 -DSCUDO_ENABLE_HOOKS=1)
+  if (NOT FUCHSIA)
+    list(APPEND SCUDO_UNITTEST_CFLAGS -DSCUDO_ENABLE_HOOKS_TESTS=1)
+  endif()
 endif()
 
 if(ANDROID)
@@ -105,10 +109,17 @@ set(SCUDO_UNIT_TEST_SOURCES
   size_class_map_test.cpp
   stats_test.cpp
   strings_test.cpp
+  timing_test.cpp
   tsd_test.cpp
   vector_test.cpp
   scudo_unit_test_main.cpp
   )
+
+# Temporary hack until LLVM libc supports inttypes.h print format macros
+# See: https://github.com/llvm/llvm-project/issues/63317#issuecomment-1591906241
+if(LLVM_LIBC_INCLUDE_SCUDO)
+  list(REMOVE_ITEM SCUDO_UNIT_TEST_SOURCES timing_test.cpp)
+endif()
 
 add_scudo_unittest(ScudoUnitTest
   SOURCES ${SCUDO_UNIT_TEST_SOURCES})
@@ -130,11 +141,3 @@ set(SCUDO_CXX_UNIT_TEST_SOURCES
 add_scudo_unittest(ScudoCxxUnitTest
   SOURCES ${SCUDO_CXX_UNIT_TEST_SOURCES}
   ADDITIONAL_RTOBJECTS RTScudoStandaloneCWrappers RTScudoStandaloneCxxWrappers)
-
-set(SCUDO_HOOKS_UNIT_TEST_SOURCES
-  scudo_hooks_test.cpp
-  scudo_unit_test_main.cpp
-  )
-
-add_scudo_unittest(ScudoHooksUnitTest
-  SOURCES ${SCUDO_HOOKS_UNIT_TEST_SOURCES})

@@ -1,4 +1,4 @@
-//===-- RISCVTargetMachine.cpp - Define TargetMachine for RISCV -----------===//
+//===-- RISCVTargetMachine.cpp - Define TargetMachine for RISC-V ----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implements the info about RISCV target spec.
+// Implements the info about RISC-V target spec.
 //
 //===----------------------------------------------------------------------===//
 
@@ -66,22 +66,32 @@ static cl::opt<int> RVVVectorBitsMinOpt(
              "autovectorization with fixed width vectors."),
     cl::init(-1), cl::Hidden);
 
+static cl::opt<bool> EnableRISCVCopyPropagation(
+    "riscv-enable-copy-propagation",
+    cl::desc("Enable the copy propagation with RISC-V copy instr"),
+    cl::init(true), cl::Hidden);
+
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   RegisterTargetMachine<RISCVTargetMachine> X(getTheRISCV32Target());
   RegisterTargetMachine<RISCVTargetMachine> Y(getTheRISCV64Target());
   auto *PR = PassRegistry::getPassRegistry();
   initializeGlobalISel(*PR);
+  initializeRISCVO0PreLegalizerCombinerPass(*PR);
+  initializeRISCVPreLegalizerCombinerPass(*PR);
+  initializeKCFIPass(*PR);
   initializeRISCVMakeCompressibleOptPass(*PR);
   initializeRISCVGatherScatterLoweringPass(*PR);
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVMergeBaseOffsetOptPass(*PR);
-  initializeRISCVSExtWRemovalPass(*PR);
-  initializeRISCVStripWSuffixPass(*PR);
+  initializeRISCVOptWInstrsPass(*PR);
   initializeRISCVPreRAExpandPseudoPass(*PR);
   initializeRISCVExpandPseudoPass(*PR);
   initializeRISCVInsertVSETVLIPass(*PR);
+  initializeRISCVInsertReadWriteCSRPass(*PR);
   initializeRISCVDAGToDAGISelPass(*PR);
   initializeRISCVInitUndefPass(*PR);
+  initializeRISCVMoveMergePass(*PR);
+  initializeRISCVPushPopOptPass(*PR);
 }
 
 static StringRef computeDataLayout(const Triple &TT) {
@@ -101,7 +111,7 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
                                        const TargetOptions &Options,
                                        std::optional<Reloc::Model> RM,
                                        std::optional<CodeModel::Model> CM,
-                                       CodeGenOpt::Level OL, bool JIT)
+                                       CodeGenOptLevel OL, bool JIT)
     : LLVMTargetMachine(T, computeDataLayout(TT), TT, CPU, FS, Options,
                         getEffectiveRelocModel(TT, RM),
                         getEffectiveCodeModel(CM, CodeModel::Small), OL),
@@ -111,6 +121,9 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
   // RISC-V supports the MachineOutliner.
   setMachineOutliner(true);
   setSupportsDefaultOutlining(true);
+
+  if (TT.isOSFuchsia() && !TT.isArch64Bit())
+    report_fatal_error("Fuchsia is only supported for 64-bit");
 }
 
 const RISCVSubtarget *
@@ -252,6 +265,7 @@ public:
   bool addPreISel() override;
   bool addInstSelector() override;
   bool addIRTranslator() override;
+  void addPreLegalizeMachineIR() override;
   bool addLegalizeMachineIR() override;
   bool addRegBankSelect() override;
   bool addGlobalInstructionSelect() override;
@@ -262,6 +276,7 @@ public:
   void addPreRegAlloc() override;
   void addPostRegAlloc() override;
   void addOptimizedRegAlloc() override;
+  void addFastRegAlloc() override;
 };
 } // namespace
 
@@ -272,17 +287,17 @@ TargetPassConfig *RISCVTargetMachine::createPassConfig(PassManagerBase &PM) {
 void RISCVPassConfig::addIRPasses() {
   addPass(createAtomicExpandPass());
 
-  if (getOptLevel() != CodeGenOpt::None)
+  if (getOptLevel() != CodeGenOptLevel::None) {
     addPass(createRISCVGatherScatterLoweringPass());
-
-  if (getOptLevel() != CodeGenOpt::None)
+    addPass(createInterleavedAccessPass());
     addPass(createRISCVCodeGenPreparePass());
+  }
 
   TargetPassConfig::addIRPasses();
 }
 
 bool RISCVPassConfig::addPreISel() {
-  if (TM->getOptLevel() != CodeGenOpt::None) {
+  if (TM->getOptLevel() != CodeGenOptLevel::None) {
     // Add a barrier before instruction selection so that we will not get
     // deleted block address after enabling default outlining. See D99707 for
     // more details.
@@ -309,6 +324,14 @@ bool RISCVPassConfig::addIRTranslator() {
   return false;
 }
 
+void RISCVPassConfig::addPreLegalizeMachineIR() {
+  if (getOptLevel() == CodeGenOptLevel::None) {
+    addPass(createRISCVO0PreLegalizerCombiner());
+  } else {
+    addPass(createRISCVPreLegalizerCombiner());
+  }
+}
+
 bool RISCVPassConfig::addLegalizeMachineIR() {
   addPass(new Legalizer());
   return false;
@@ -324,19 +347,43 @@ bool RISCVPassConfig::addGlobalInstructionSelect() {
   return false;
 }
 
-void RISCVPassConfig::addPreSched2() {}
+void RISCVPassConfig::addPreSched2() {
+  // Emit KCFI checks for indirect calls.
+  addPass(createKCFIPass());
+}
 
 void RISCVPassConfig::addPreEmitPass() {
   addPass(&BranchRelaxationPassID);
   addPass(createRISCVMakeCompressibleOptPass());
+
+  // TODO: It would potentially be better to schedule copy propagation after
+  // expanding pseudos (in addPreEmitPass2). However, performing copy
+  // propagation after the machine outliner (which runs after addPreEmitPass)
+  // currently leads to incorrect code-gen, where copies to registers within
+  // outlined functions are removed erroneously.
+  if (TM->getOptLevel() >= CodeGenOptLevel::Default &&
+      EnableRISCVCopyPropagation)
+    addPass(createMachineCopyPropagationPass(true));
 }
 
 void RISCVPassConfig::addPreEmitPass2() {
+  if (TM->getOptLevel() != CodeGenOptLevel::None) {
+    addPass(createRISCVMoveMergePass());
+    // Schedule PushPop Optimization before expansion of Pseudo instruction,
+    // ensuring return instruction is detected correctly.
+    addPass(createRISCVPushPopOptimizationPass());
+  }
   addPass(createRISCVExpandPseudoPass());
+
   // Schedule the expansion of AMOs at the last possible moment, avoiding the
   // possibility for other passes to break the requirements for forward
   // progress in the LR/SC block.
   addPass(createRISCVExpandAtomicPseudoPass());
+
+  // KCFI indirect call checks are lowered to a bundle.
+  addPass(createUnpackMachineBundles([&](const MachineFunction &MF) {
+    return MF.getFunction().getParent()->getModuleFlag("kcfi");
+  }));
 }
 
 void RISCVPassConfig::addMachineSSAOptimization() {
@@ -345,27 +392,33 @@ void RISCVPassConfig::addMachineSSAOptimization() {
     addPass(&MachineCombinerID);
 
   if (TM->getTargetTriple().getArch() == Triple::riscv64) {
-    addPass(createRISCVSExtWRemovalPass());
-    addPass(createRISCVStripWSuffixPass());
+    addPass(createRISCVOptWInstrsPass());
   }
 }
 
 void RISCVPassConfig::addPreRegAlloc() {
   addPass(createRISCVPreRAExpandPseudoPass());
-  if (TM->getOptLevel() != CodeGenOpt::None)
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
     addPass(createRISCVMergeBaseOffsetOptPass());
   addPass(createRISCVInsertVSETVLIPass());
+  addPass(createRISCVInsertReadWriteCSRPass());
 }
 
 void RISCVPassConfig::addOptimizedRegAlloc() {
-  if (getOptimizeRegAlloc())
-    insertPass(&DetectDeadLanesID, &RISCVInitUndefID);
+  insertPass(&DetectDeadLanesID, &RISCVInitUndefID);
 
   TargetPassConfig::addOptimizedRegAlloc();
 }
 
+void RISCVPassConfig::addFastRegAlloc() {
+  addPass(createRISCVInitUndefPass());
+  TargetPassConfig::addFastRegAlloc();
+}
+
+
 void RISCVPassConfig::addPostRegAlloc() {
-  if (TM->getOptLevel() != CodeGenOpt::None && EnableRedundantCopyElimination)
+  if (TM->getOptLevel() != CodeGenOptLevel::None &&
+      EnableRedundantCopyElimination)
     addPass(createRISCVRedundantCopyEliminationPass());
 }
 

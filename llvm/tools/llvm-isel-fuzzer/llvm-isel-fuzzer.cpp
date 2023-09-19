@@ -45,7 +45,7 @@ static cl::opt<char>
              cl::Prefix, cl::init('2'));
 
 static cl::opt<std::string>
-TargetTriple("mtriple", cl::desc("Override target triple for module"));
+    TargetTriple("mtriple", cl::desc("Override target triple for module"));
 
 static std::unique_ptr<TargetMachine> TM;
 static std::unique_ptr<IRMutator> Mutator;
@@ -73,7 +73,7 @@ extern "C" LLVM_ATTRIBUTE_USED size_t LLVMFuzzerCustomMutator(
   else
     M = parseModule(Data, Size, Context);
 
-  Mutator->mutateModule(*M, Seed, Size, MaxSize);
+  Mutator->mutateModule(*M, Seed, MaxSize); // use max bitcode size as a guide
 
   return writeModule(*M, Data, MaxSize);
 }
@@ -99,7 +99,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
   TargetLibraryInfoImpl TLII(TM->getTargetTriple());
   PM.add(new TargetLibraryInfoWrapperPass(TLII));
   raw_null_ostream OS;
-  TM->addPassesToEmitFile(PM, OS, nullptr, CGFT_Null);
+  TM->addPassesToEmitFile(PM, OS, nullptr, CodeGenFileType::Null);
   PM.run(*M);
 
   return 0;
@@ -144,7 +144,7 @@ extern "C" LLVM_ATTRIBUTE_USED int LLVMFuzzerInitialize(int *argc,
   std::string CPUStr = codegen::getCPUStr(),
               FeaturesStr = codegen::getFeaturesStr();
 
-  CodeGenOpt::Level OLvl;
+  CodeGenOptLevel OLvl;
   if (auto Level = CodeGenOpt::parseLevel(OptLevel)) {
     OLvl = *Level;
   } else {

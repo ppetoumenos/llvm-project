@@ -93,17 +93,17 @@ FailureOr<AffineMap>
 getLaneIdToLdMatrixMatrixCoord(OpBuilder &builder, Location loc,
                                const LdMatrixParams &params);
 
-/// Transform `vector.contract` into (m,k)x(n,k)x(m,n) form so that it can be
-/// converted to `nvgpu.mma.sync`. This specific form is meant to indicate that
-/// the vector operands are organized such that the reduction dimension is
-/// contiguous.
-struct PrepareContractToGPUMMASync
-    : public OpRewritePattern<vector::ContractionOp> {
-  using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
+/// Returns whether the `vector.transfer_read` instruction can be interpreted
+/// as a warp-level cooperative matrix load operation. This function is meant to
+/// be used to establish whether `op` is part of a chain of such warp-level
+/// operations.
+bool canLowerToWarpMatrixOperation(vector::TransferReadOp op);
 
-  LogicalResult matchAndRewrite(vector::ContractionOp op,
-                                PatternRewriter &rewriter) const override;
-};
+/// Returns whether the `vector.transfer_write` instruction can be interpreted
+/// as a warp-level cooperative matrix store operation. This function is meant
+/// to be used to establish whether `op` is part of a chain of such warp-level
+/// operations.
+bool canLowerToWarpMatrixOperation(vector::TransferWriteOp op);
 
 } // namespace nvgpu
 } // namespace mlir

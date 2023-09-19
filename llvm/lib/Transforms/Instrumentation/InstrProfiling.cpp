@@ -421,6 +421,9 @@ bool InstrProfiling::lowerIntrinsics(Function *F) {
       } else if (auto *IPI = dyn_cast<InstrProfIncrementInst>(&Instr)) {
         lowerIncrement(IPI);
         MadeChange = true;
+      } else if (auto *IPC = dyn_cast<InstrProfTimestampInst>(&Instr)) {
+        lowerTimestamp(IPC);
+        MadeChange = true;
       } else if (auto *IPC = dyn_cast<InstrProfCoverInst>(&Instr)) {
         lowerCover(IPC);
         MadeChange = true;
@@ -510,6 +513,7 @@ static bool containsProfilingIntrinsics(Module &M) {
   return containsIntrinsic(llvm::Intrinsic::instrprof_cover) ||
          containsIntrinsic(llvm::Intrinsic::instrprof_increment) ||
          containsIntrinsic(llvm::Intrinsic::instrprof_increment_step) ||
+         containsIntrinsic(llvm::Intrinsic::instrprof_timestamp) ||
          containsIntrinsic(llvm::Intrinsic::instrprof_value_profile);
 }
 
@@ -540,18 +544,19 @@ bool InstrProfiling::run(
   // the instrumented function. This is counting the number of instrumented
   // target value sites to enter it as field in the profile data variable.
   for (Function &F : M) {
-    InstrProfIncrementInst *FirstProfIncInst = nullptr;
+    InstrProfInstBase *FirstProfInst = nullptr;
     for (BasicBlock &BB : F)
       for (auto I = BB.begin(), E = BB.end(); I != E; I++)
         if (auto *Ind = dyn_cast<InstrProfValueProfileInst>(I))
           computeNumValueSiteCounts(Ind);
-        else if (FirstProfIncInst == nullptr)
-          FirstProfIncInst = dyn_cast<InstrProfIncrementInst>(I);
+        else if (FirstProfInst == nullptr &&
+                 (isa<InstrProfIncrementInst>(I) || isa<InstrProfCoverInst>(I)))
+          FirstProfInst = dyn_cast<InstrProfInstBase>(I);
 
     // Value profiling intrinsic lowering requires per-function profile data
     // variable to be created first.
-    if (FirstProfIncInst != nullptr)
-      static_cast<void>(getOrCreateRegionCounters(FirstProfIncInst));
+    if (FirstProfInst != nullptr)
+      static_cast<void>(getOrCreateRegionCounters(FirstProfInst));
   }
 
   for (Function &F : M)
@@ -669,6 +674,9 @@ Value *InstrProfiling::getCounterAddress(InstrProfInstBase *I) {
   auto *Counters = getOrCreateRegionCounters(I);
   IRBuilder<> Builder(I);
 
+  if (isa<InstrProfTimestampInst>(I))
+    Counters->setAlignment(Align(8));
+
   auto *Addr = Builder.CreateConstInBoundsGEP2_32(
       Counters->getValueType(), Counters, 0, I->getIndex()->getZExtValue());
 
@@ -710,6 +718,21 @@ void InstrProfiling::lowerCover(InstrProfCoverInst *CoverInstruction) {
   CoverInstruction->eraseFromParent();
 }
 
+void InstrProfiling::lowerTimestamp(
+    InstrProfTimestampInst *TimestampInstruction) {
+  assert(TimestampInstruction->getIndex()->isZeroValue() &&
+         "timestamp probes are always the first probe for a function");
+  auto &Ctx = M->getContext();
+  auto *TimestampAddr = getCounterAddress(TimestampInstruction);
+  IRBuilder<> Builder(TimestampInstruction);
+  auto *CalleeTy =
+      FunctionType::get(Type::getVoidTy(Ctx), TimestampAddr->getType(), false);
+  auto Callee = M->getOrInsertFunction(
+      INSTR_PROF_QUOTE(INSTR_PROF_PROFILE_SET_TIMESTAMP), CalleeTy);
+  Builder.CreateCall(Callee, {TimestampAddr});
+  TimestampInstruction->eraseFromParent();
+}
+
 void InstrProfiling::lowerIncrement(InstrProfIncrementInst *Inc) {
   auto *Addr = getCounterAddress(Inc);
 
@@ -743,6 +766,34 @@ void InstrProfiling::lowerCoverageData(GlobalVariable *CoverageNamesVar) {
     if (isa<ConstantExpr>(NC))
       NC->dropAllReferences();
   }
+  if (DebugInfoCorrelate && !ReferencedNames.empty()) {
+    MDNode *Node = *M->debug_compile_units_begin();
+    DICompileUnit *CU = cast<DICompileUnit>(Node);
+    DIBuilder DB(*M, true, CU);
+    LLVMContext &Ctx = M->getContext();
+    SmallVector<llvm::Metadata *> Annots;
+    for (auto *NameVar: ReferencedNames) {
+      Metadata *CovFunctionNameAnnotation[] = {
+          MDString::get(Ctx, InstrProfCorrelator::CovFunctionNameAttributeName),
+          MDString::get(Ctx,
+                        std::string(getPGOFuncNameVarInitializer(NameVar))),
+      };
+      Annots.push_back(MDNode::get(Ctx, CovFunctionNameAnnotation));
+    }
+    auto Annotations = DB.getOrCreateArray(Annots);
+    auto *DICovName = DB.createGlobalVariableExpression(
+        CU, CoverageNamesVar->getName(), /*LinkageName=*/StringRef(),
+        CU->getFile(),
+        /*LineNo=*/0, DB.createUnspecifiedType("Coverage Type"),
+        /*IsLocalToUnit=*/true, /*IsDefined=*/true, /*Expr=*/nullptr,
+        /*Decl=*/nullptr, /*TemplateParams=*/nullptr, /*AlignInBits=*/0,
+        Annotations);
+    CoverageNamesVar->addDebugInfo(DICovName);
+    DB.finalize();
+    ReferencedNames.clear();
+    return;
+  }
+
   CoverageNamesVar->eraseFromParent();
 }
 
@@ -1033,12 +1084,6 @@ InstrProfiling::getOrCreateRegionCounters(InstrProfInstBase *Inc) {
           Annotations);
       CounterPtr->addDebugInfo(DICounter);
       DB.finalize();
-    } else {
-      std::string Msg = ("Missing debug info for function " + Fn->getName() +
-                         "; required for profile correlation.")
-                            .str();
-      Ctx.diagnose(
-          DiagnosticInfoPGOProfile(M->getName().data(), Msg, DS_Warning));
     }
   }
 

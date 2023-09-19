@@ -28,9 +28,12 @@ struct OneShotBufferizationOptions : public BufferizationOptions {
 
   OneShotBufferizationOptions() = default;
 
-  /// Specifies whether returning newly allocated memrefs should be allowed.
-  /// Otherwise, a pass failure is triggered.
-  bool allowReturnAllocs = false;
+  /// Specifies whether returning newly allocated memrefs from loops should be
+  /// allowed.  Otherwise, a pass failure is triggered.
+  bool allowReturnAllocsFromLoops = false;
+
+  /// Specifies whether the tensor IR should be annotated with alias sets.
+  bool dumpAliasSets = false;
 
   /// The heuristic controls the order in which ops are traversed during the
   /// analysis.
@@ -127,7 +130,7 @@ public:
   const SetVector<Value> &findDefinitionsCached(Value value);
 
   /// Reset cached data structures.
-  void resetCache();
+  void resetCache() override;
 
   /// Union the alias sets of `v1` and `v2`.
   void unionAliasSets(Value v1, Value v2);
