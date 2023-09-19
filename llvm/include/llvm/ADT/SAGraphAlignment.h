@@ -12,8 +12,12 @@
 
 #include "llvm/Analysis/ValueTracking.h"
 
-//#define ENABLE_GA_DEBUG
+#define ENABLE_GA_DEBUG
 #define EDIT_DISTANCE
+#define CLUSTER_MATCHES
+#define ALIGN_WITH_PREVIOUS_SOLUTION 
+
+constexpr int Exhaustive_Thr = 40;
 
 template<typename Ty>
 class TriangularMatrix {
@@ -172,15 +176,49 @@ public:
     return Dep[Idx].none();
   }
 
+  bool hasDependents(size_t Idx) {
+    for (size_t Idx2 = Idx + 1; Idx2 < Dep.size(); ++Idx2)
+      if (Dep[Idx2][Idx])
+        return true;
+    return false;
+  }
+
   bool removeDependency(const size_t Idx, const size_t Jdx) {
 #ifdef ENABLE_GA_DEBUG
-  //llvm::errs() << "BEFOR: " << (Dep[Jdx][Idx] ? "Y" : "N") << "\n";
+    //llvm::errs() << "BEFOR: " << (Dep[Jdx][Idx] ? "Y" : "N") << "\t";
+    //for (int i = 0; i < Dep[Jdx].size(); ++i)
+    //  llvm::errs() << (Dep[Jdx][i] ? "1" : "0");
+    //llvm::errs() << "\n";
 #endif
     if (!Dep[Jdx][Idx])
       return false;
 
     Dep[Jdx].reset(Idx);
     return Dep[Jdx].none();
+  }
+
+  llvm::SmallVector<size_t> removeDependencies(const size_t Idx) {
+    llvm::SmallVector<size_t> Result;
+    llvm::SmallBitVector Cpy = Dep[Idx];
+#ifdef ENABLE_GA_DEBUG
+    llvm::errs() << "RemoveDeps\n";
+    for (int i = 0; i < Dep[Idx].size(); ++i)
+      llvm::errs() << (Dep[Idx][i] ? "1" : "0");
+    llvm::errs() << "\n";
+#endif
+
+    Dep[Idx].clear();
+    for (size_t Jdx: Cpy.set_bits())
+      if (!hasDependents(Jdx))
+        Result.push_back(Jdx);
+
+#ifdef ENABLE_GA_DEBUG
+    for (size_t i: Result)
+      llvm::errs() << i << " ";
+    llvm::errs() << "\n";
+#endif
+
+    return Result;
   }
 
   Relation getRelation(size_t Idx, size_t Jdx) {
@@ -269,6 +307,14 @@ class ConflictsInfo {
     return _isConflict(MatchIdx1, MatchIdx2);
   }
 
+  bool isClusterConflict(std::vector<size_t>& Cluster1, std::vector<size_t>& Cluster2) {
+    for (size_t MatchIdx1: Cluster1) 
+      for (size_t MatchIdx2: Cluster2) 
+        if (isConflict(MatchIdx1, MatchIdx2))
+          return true;
+    return false;
+  }
+
   private:
   bool _isConflict(size_t MatchIdx1, size_t MatchIdx2) {
     size_t element1a = Matches[MatchIdx1].first;
@@ -319,32 +365,334 @@ private:
     }
   }
 
-  std::unordered_map<size_t, size_t> EagerSolver(
+  llvm::Instruction *GetSingleUserInBlk(llvm::Instruction *I) {
+    size_t UsersInBlock = 0;
+    llvm::Instruction *Retval = nullptr;
+    for (auto *U: I->users()) {
+      auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
+      if (UI == nullptr)
+        continue;
+      if (UI->isTerminator()) // doesn't count as a user because terminators are handled separately
+        continue;
+      if (llvm::isa<llvm::PHINode>(UI))
+        continue;
+      if (UI->getParent() == I->getParent())
+        ++UsersInBlock;
+      Retval = UI;
+    }
+    if (UsersInBlock != 1)
+      return nullptr;
+    return Retval;
+  }
+
+  void EagerClusterSolver(
+      std::unordered_map<size_t, size_t> &Solution,
       std::vector<std::pair<size_t, size_t>> &Matches,
+      std::map<std::pair<llvm::Instruction *, llvm::Instruction *>, size_t> &RMatches,
+      ContainerType &Seq1, ContainerType &Seq2,
       DependencyInfo<ContainerType, Ty> &D1,
       DependencyInfo<ContainerType, Ty> &D2) {
 
-    std::unordered_map<size_t, size_t> Selected;
+    size_t mcount = Matches.size();
+    size_t Size1 = D1.size();
+    size_t Size2 = D2.size();
+    ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
+
+    std::vector<std::vector<size_t>> Clusters;
+    std::vector<int> ClusterScores;
+    llvm::SmallBitVector IsRootMatch(mcount);
+
+    // Find root nodes of potential clusters of matching tree-like subgraphs
+    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
+      auto [NodeIdx1, NodeIdx2] = Matches[MatchIdx];
+
+      auto *I1 = llvm::dyn_cast<llvm::Instruction>(Seq1[NodeIdx1]);
+      if (I1 == nullptr)
+        continue;
+
+      auto *I2 = llvm::dyn_cast<llvm::Instruction>(Seq2[NodeIdx2]);
+      if (I2 == nullptr)
+        continue;
+
+      // Multiple users means that this match is not
+      // part of a different cluster
+      auto *UI1 = GetSingleUserInBlk(I1);
+      auto *UI2 = GetSingleUserInBlk(I2);
+      if ((UI1 == nullptr) || (UI2 == nullptr)) {
+        IsRootMatch.set(MatchIdx);
+        continue;
+      }
+
+      // Single user, but is that user a match?
+      if (RMatches.count({UI1, UI2}) > 0)
+        continue;
+
+      IsRootMatch.set(MatchIdx);
+    }
+
+    // For each Root node, construct its tree and estimate our benefit
+    for (size_t MatchIdx: IsRootMatch.set_bits()) {
+      auto [NodeIdx1, NodeIdx2] = Matches[MatchIdx];
+
+      // Selected Matches should be exclusively between Instructions at this point
+      auto *I1 = llvm::cast<llvm::Instruction>(Seq1[NodeIdx1]);
+      auto *I2 = llvm::cast<llvm::Instruction>(Seq2[NodeIdx2]);
+
+      Clusters.emplace_back(0);
+      Clusters.back().push_back(MatchIdx);
+
+      std::stack<std::tuple<llvm::Instruction *, llvm::Instruction *, size_t>> stk;
+      stk.push({I1, I2, 0});
+
+      int score = 1;
+
+      // Estimate the secondary gains of merging this root node on its users (that are not part of this tree)
+      for (auto it1 = I1->user_begin(), it2 = I2->user_begin(); it1 != I1->user_end() && it2 != I2->user_end(); ++it1, ++it2) {
+        auto *UUI1 = llvm::dyn_cast<llvm::Instruction>(*it1);
+        auto *UUI2 = llvm::dyn_cast<llvm::Instruction>(*it2);
+        if (UUI1 == nullptr || UUI2 == nullptr)
+          continue;
+        if (UUI1->isTerminator() && UUI2->isTerminator() && UUI1->getParent() == I1->getParent() && UUI2->getParent() == I2->getParent() && BaseType::match(UUI1, UUI2))
+          ++score;
+        if (UUI1->getParent() != I1->getParent() && UUI2->getParent() != I2->getParent() && BaseType::match(UUI1, UUI2))
+          ++score;
+      }
+
+      // Depth-first traversal of the tree
+      while (!stk.empty()) {
+        auto [I1, I2, OpIdx] = stk.top();
+        stk.pop();
+        if (OpIdx >= I1->getNumOperands() || OpIdx >= I2->getNumOperands())
+          continue;
+
+        stk.push({I1, I2, OpIdx + 1});
+
+        llvm::Value *UV1 = I1->getOperand(OpIdx);
+        llvm::Value *UV2 = I2->getOperand(OpIdx);
+
+        // If PHI or an Argument, they are not part of the tree but they might not cost anything
+        if (llvm::isa<llvm::PHINode>(UV1) && llvm::isa<llvm::PHINode>(UV2))
+          continue;
+
+        if (llvm::isa<llvm::Argument>(UV1) && llvm::isa<llvm::Argument>(UV2)) {
+          // This will force us to choose solutions where the matches use arguments with the same name
+          if (UV1->getName() == UV2->getName())
+            ++score;
+          continue;
+        }
+
+        // If Constant, they are not part of the tree. If ConstantInt or ConstantFP,
+        //   there is a cost if using mismatching constant operands
+        auto *UCI1 = llvm::dyn_cast<llvm::ConstantInt>(UV1);
+        auto *UCI2 = llvm::dyn_cast<llvm::ConstantInt>(UV2);
+        if (UCI1 != nullptr && UCI2 != nullptr) {
+          if (UCI1->getValue() != UCI2->getValue())
+            --score;
+          continue;
+        }
+
+        auto *UCFP1 = llvm::dyn_cast<llvm::ConstantFP>(UV1);
+        auto *UCFP2 = llvm::dyn_cast<llvm::ConstantFP>(UV2);
+        if (UCFP1 != nullptr && UCFP2 != nullptr) {
+          if (UCFP1->getValue() != UCFP2->getValue())
+            --score;
+          continue;
+        }
+
+        if (llvm::isa<llvm::Constant>(UV1) && llvm::isa<llvm::Constant>(UV2))
+          continue;
+
+        // If they are a non-instruction type, then we assume some cost in merging the data flows
+        auto *UI1 = llvm::dyn_cast<llvm::Instruction>(UV1);
+        auto *UI2 = llvm::dyn_cast<llvm::Instruction>(UV2);
+        if (UI1 == nullptr || UI2 == nullptr) {
+          --score;
+          continue;
+        }
+
+        // Matches in other basic blocks increase the score, mismatches decrease it
+        if (UI1->getParent() != I1->getParent() || UI2->getParent() != I2->getParent()) {
+          --score;
+          if (UI1->getParent() != I1->getParent() && UI2->getParent() != I2->getParent()) {
+            if (BaseType::match(UI1, UI2))
+              score += 2;
+          }
+          continue;
+        }
+
+        auto It = RMatches.find({UI1, UI2});
+
+        // Mismatching nodes are not part of the tree and cost us a unit
+        if (It == RMatches.end()) {
+          --score;
+          continue;
+        }
+
+        size_t MatchIdx1 = It->second;
+
+        // Root of a different tree
+        if (IsRootMatch[MatchIdx1])
+          continue;
+
+        // Cannot add match if it is conflicting with matches already in the node
+        // This shouldn't happen but better safe than sorry
+        if (std::any_of(Clusters.back().begin(), Clusters.back().end(), [&] (auto& MatchIdx2) {return CI.isConflict(MatchIdx1, MatchIdx2);}))
+          return;
+
+        // Congrats, we just added a match. Score increases by a unit
+        ++score;
+        stk.push({UI1, UI2, 0});
+        Clusters.back().push_back(MatchIdx1);
+
+        // Increase the score for potential user matches in other basic blocks
+        for (auto it1 = UI1->user_begin(), it2 = UI2->user_begin(); it1 != UI1->user_end() && it2 != UI2->user_end(); ++it1, ++it2) {
+          auto *UUI1 = llvm::dyn_cast<llvm::Instruction>(*it1);
+          auto *UUI2 = llvm::dyn_cast<llvm::Instruction>(*it2);
+          if (UUI1 == nullptr || UUI2 == nullptr)
+            continue;
+          if (UUI1->getParent() != UI1->getParent() && UUI2->getParent() != UI2->getParent() && BaseType::match(UUI1, UUI2))
+            ++score;
+        }
+      }
+      if (score < 3)
+        Clusters.pop_back();
+      else
+        ClusterScores.push_back(score);
+    }
+
+    std::vector<int> ClusterConflictScore(Clusters.size());
+    llvm::SmallBitVector ClusterConflicts(Clusters.size() * Clusters.size());
+    for (size_t i = 0; i < Clusters.size(); ++i) {
+      for (size_t j = i + 1; j < Clusters.size(); ++j) {
+        if (CI.isClusterConflict(Clusters[i], Clusters[j])) {
+          ClusterConflictScore[i] += ClusterScores[j];
+          ClusterConflictScore[j] += ClusterScores[i];
+          ClusterConflicts.set(i * Clusters.size() + j);
+          ClusterConflicts.set(j * Clusters.size() + i);
+        }
+      }
+    }
+
+#ifdef ENABLE_GA_DEBUG
+    for (size_t i = 0; i < Clusters.size(); ++i) {
+      llvm::errs() << "Cluster " << i << " Size: " << Clusters[i].size() << " Score: " << ClusterScores[i] << " ConflictScore: " << ClusterConflictScore[i] << "\n";
+      for (auto MatchIdxK: Clusters[i]) {
+        llvm::errs() << "    " << Matches[MatchIdxK].first << " -> " << Matches[MatchIdxK].second << "\n";
+      }
+    }
+#endif
+
+    for (size_t ClusterIdx = 0; ClusterIdx < Clusters.size(); ++ClusterIdx)
+      ClusterScores[ClusterIdx] -= ClusterConflictScore[ClusterIdx];
+
+    // Rank match cluster by decreasing score
+    llvm::SmallVector<int> idxs(Clusters.size());
+    std::iota(idxs.begin(), idxs.end(), 0);
+    std::sort(idxs.begin(), idxs.end(), [&] (int ClusterIdx1, int ClusterIdx2) {return ClusterScores[ClusterIdx1] > ClusterScores[ClusterIdx2];});
+    EagerSelection(idxs, [&] (int Idx1, int Idx2) {return ClusterConflicts[Idx1 * Clusters.size() + Idx2];});
+
+    // Update Solution
+    llvm::SmallBitVector Selected(Matches.size());
+    for (int ClusterIdx: idxs) {
+      if (ClusterIdx < 0)
+        continue;
+
+      for (size_t MatchIdx: Clusters[ClusterIdx]) {
+        Selected.set(MatchIdx);
+        Solution[Matches[MatchIdx].first] = Matches[MatchIdx].second;
+      }
+    }
+
+    // Mark conflicting matches
+    llvm::SmallBitVector Conflicting(Selected);
+    for (size_t MatchIdx: Selected.set_bits()) {
+      for (size_t MatchIdx2 = 0; MatchIdx2 < mcount; ++MatchIdx2) {
+        if (MatchIdx != MatchIdx2 && CI.isConflict(MatchIdx, MatchIdx2)) {
+          Conflicting.set(MatchIdx2);
+#ifdef ENABLE_GA_DEBUG
+          llvm::errs() << "Conflict between Match " << Matches[MatchIdx].first << "->" << Matches[MatchIdx].second << " and Match " << Matches[MatchIdx2].first << "->" << Matches[MatchIdx2].second << "\n";
+#endif
+        }
+      }
+    }
+
+    // Remove conflicts from Matches
+    size_t InsertIdx = 0;
+    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
+      if (Conflicting[MatchIdx])
+        continue;
+
+      if (MatchIdx != InsertIdx)
+        Matches[InsertIdx] = Matches[MatchIdx];
+
+      ++InsertIdx;
+    }
+    if (InsertIdx != mcount)
+      Matches.resize(InsertIdx);
+
+  }
+
+  void EagerSolver(
+      std::unordered_map<size_t, size_t> &Solution,
+      std::vector<std::pair<size_t, size_t>> &Matches,
+      ContainerType &Seq1, ContainerType &Seq2,
+      DependencyInfo<ContainerType, Ty> &D1,
+      DependencyInfo<ContainerType, Ty> &D2) {
+
     size_t mcount = Matches.size();
     size_t Size1 = D1.size();
     size_t Size2 = D2.size();
 
     if (mcount == 0)
-      return Selected;
+      return;
 
     // Register conflicts
     ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
 
+    llvm::SmallVector<int> Cost(mcount);
+
+#ifdef ALIGN_WITH_PREVIOUS_SOLUTION
+    std::set<std::pair<llvm::Instruction *, llvm::Instruction *>> RPrevMatches;
+    for (auto [NodeIdx1, NodeIdx2]: Solution) {
+      auto I1 = llvm::dyn_cast<llvm::Instruction>(Seq1[NodeIdx1]);
+      auto I2 = llvm::dyn_cast<llvm::Instruction>(Seq2[NodeIdx2]);
+      if (I1 == nullptr || I2 == nullptr)
+        continue;
+      RPrevMatches.emplace(I1, I2);
+    }
+
+    for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
+      auto [NodeIdx1, NodeIdx2] = Matches[MatchIdx];
+      auto *I1 = llvm::dyn_cast<llvm::Instruction>(Seq1[NodeIdx1]);
+      auto *I2 = llvm::dyn_cast<llvm::Instruction>(Seq2[NodeIdx2]);
+      if (I1 == nullptr || I2 == nullptr)
+        continue;
+      for (auto it1 = I1->user_begin(), it2 = I2->user_begin(); it1 != I1->user_end() && it2 != I2->user_end(); ++it1, ++it2) {
+        auto *UI1 = llvm::dyn_cast<llvm::Instruction>(*it1);
+        auto *UI2 = llvm::dyn_cast<llvm::Instruction>(*it2);
+        if (UI1 == nullptr || UI2 == nullptr)
+          continue;
+        if (UI1->isTerminator() && UI2->isTerminator() && UI1->getParent() == I1->getParent() && UI2->getParent() == I2->getParent() && BaseType::match(UI1, UI2))
+          --Cost[MatchIdx];
+        else if (UI1->getParent() != I1->getParent() && UI2->getParent() != I2->getParent() && BaseType::match(UI1, UI2))
+          --Cost[MatchIdx];
+        else if (RPrevMatches.count({UI1, UI2}) > 0)
+          Cost[MatchIdx] -= 2;
+      }
+      
+      llvm::Value *V2 = Seq2[NodeIdx2];
+    }
+#endif
+
 #ifdef EDIT_DISTANCE
     llvm::SmallBitVector GoodMatches = GetAdvantageousMatches(Matches, D1, D2);
 
-    llvm::SmallVector<size_t> EditDistances(mcount);
     for (size_t MatchIdx = 0; MatchIdx < mcount; ++MatchIdx) {
       auto conns1 = D1.getConnections(Matches[MatchIdx].first);
       auto conns2 = D2.getConnections(Matches[MatchIdx].second);
-      EditDistances[MatchIdx] = MinimalED(Matches, CI, MatchIdx, conns1, conns2);
+      Cost[MatchIdx] = MinimalED(Matches, CI, MatchIdx, conns1, conns2);
       if (!GoodMatches[MatchIdx])
-        EditDistances[MatchIdx] += 2;
+        Cost[MatchIdx] += 2;
     }
 #endif
 
@@ -361,16 +709,16 @@ private:
 
 #ifdef ENABLE_GA_DEBUG
     for (size_t i = 0; i < mcount; ++i)
-      llvm::errs() << i << " : " << Matches[i].first << " -> " << Matches[i].second << "\t" << num_conflicts[i] << "\t" << EditDistances[i] << "\n";
+      llvm::errs() << i << " : " << Matches[i].first << " -> " << Matches[i].second << "\t" << num_conflicts[i] << "\t" << Cost[i] << "\n";
 #endif
 
 #ifdef EDIT_DISTANCE
-	auto Comp = [&](int idx1, int idx2) {
-      return (EditDistances[idx1] < EditDistances[idx2]) || 
-            ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] < num_conflicts[idx2])) || 
-          ((EditDistances[idx1] == EditDistances[idx2]) && (num_conflicts[idx1] == num_conflicts[idx2]) && (std::abs((int)Matches[idx1].first - (int)Matches[idx1].second) < std::abs((int)Matches[idx2].first - (int)Matches[idx2].second)));};
+    auto Comp = [&](int idx1, int idx2) {
+        return (Cost[idx1] < Cost[idx2]) || 
+              ((Cost[idx1] == Cost[idx2]) && (num_conflicts[idx1] < num_conflicts[idx2])) || 
+            ((Cost[idx1] == Cost[idx2]) && (num_conflicts[idx1] == num_conflicts[idx2]) && (std::abs((int)Matches[idx1].first - (int)Matches[idx1].second) < std::abs((int)Matches[idx2].first - (int)Matches[idx2].second)));};
 #else
-	auto Comp = [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];};
+    auto Comp = [&](int idx1, int idx2) {return num_conflicts[idx1] < num_conflicts[idx2];};
 #endif
 
     // Rank matches by ascending numbers of conflicts
@@ -382,9 +730,9 @@ private:
     EagerSelection(idxs, [&] (int Idx1, int Idx2) {return CI.isConflict(Idx1, Idx2);});
     for (int MatchIdx: idxs)
       if (MatchIdx >= 0)
-        Selected[Matches[MatchIdx].first] = Matches[MatchIdx].second;
+        Solution[Matches[MatchIdx].first] = Matches[MatchIdx].second;
 
-    return Selected;
+    return;
   }
 
   size_t MinimalED(std::vector<std::pair<size_t, size_t>> &Matches,
@@ -464,7 +812,7 @@ private:
     // Sort the possible matches of input arguments by decreasing number of matching users
     llvm::SmallVector<int> idxs(Groups.size());
     std::iota(idxs.begin(), idxs.end(), 0);
-    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return Groups[idx1].size() > Groups[idx2].size();});
+    std::sort(idxs.begin(), idxs.end(), [&](int idx1, int idx2) {return Groups[idx1].count() > Groups[idx2].count();});
 
     size_t Dim1 = D1.getNumGroups();
     EagerSelection(idxs, [=] (int Idx1, int Idx2) {return ((Idx1 / Dim1) == (Idx2 / Dim1)) || ((Idx1 % Dim1) == (Idx2 % Dim1));});
@@ -480,18 +828,18 @@ private:
 
   static constexpr bool count_matches = false;
 
-  std::unordered_map<size_t, size_t> ExhaustiveSolver(
+  void ExhaustiveSolver(
+      std::unordered_map<size_t, size_t> &Solution,
       std::vector<std::pair<size_t, size_t>> &Matches,
       DependencyInfo<ContainerType, Ty> &D1,
       DependencyInfo<ContainerType, Ty> &D2) {
 
-    std::unordered_map<size_t, size_t> Selected;
     size_t mcount = Matches.size();
     size_t Size1 = D1.size();
     size_t Size2 = D2.size();
 
     if (mcount == 0)
-      return Selected;
+      return;
 
     // Register conflicts
     ConflictsInfo<ContainerType, Ty> CI(Matches, D1, D2, (mcount * mcount < Size1 * Size2) ? mcount : 0);
@@ -561,10 +909,10 @@ private:
     
     for (size_t Idx: best.set_bits()) {
       auto Match = Matches[Idx];
-      Selected[Match.first] = Match.second;
+      Solution[Match.first] = Match.second;
     }
 
-    return Selected;
+    return;
   }
 
 public:
@@ -623,10 +971,37 @@ public:
 
     // Get a solution in the form of map from Seq1 indexes to Seq2 indexes
     std::unordered_map<size_t, size_t> M1;
-    if (Matches.size() > 30)
-      M1 = EagerSolver(Matches, Dependent1, Dependent2);
+
+#ifdef CLUSTER_MATCHES
+    std::map<std::pair<llvm::Instruction *, llvm::Instruction *>, size_t> RMatches;
+    for (size_t MatchIdx = 0; MatchIdx < Matches.size(); ++MatchIdx) {
+      auto [Idx1, Idx2] = Matches[MatchIdx];
+      auto I1 = llvm::dyn_cast<llvm::Instruction>(Seq1[Idx1]);
+      auto I2 = llvm::dyn_cast<llvm::Instruction>(Seq2[Idx2]);
+      if (I1 == nullptr || I2 == nullptr)
+        continue;
+      RMatches[{I1, I2}] = MatchIdx;
+    }
+    EagerClusterSolver(M1, Matches, RMatches, Seq1, Seq2, Dependent1, Dependent2);
+
+#ifdef ENABLE_GA_DEBUG
+    llvm::errs() << "Clustered selection: \n";
+    for (auto [Idx1, Idx2]: M1)
+      llvm::errs() << Idx1  << "\t" << Idx2 << "\n";
+    llvm::errs() << "=================== \n";
+
+    for (auto Match: Matches) 
+      llvm::errs() <<  Match.first << "\t" << Match.second << "\n";
+    llvm::errs() << "Number of Remaining Matches: " << Matches.size() << "\n";
+#endif
+
+#endif
+
+
+    if (Matches.size() > Exhaustive_Thr)
+      EagerSolver(M1, Matches, Seq1, Seq2, Dependent1, Dependent2);
     else
-      M1 = ExhaustiveSolver(Matches, Dependent1, Dependent2);
+      ExhaustiveSolver(M1, Matches, Dependent1, Dependent2);
 
     // Terminators can only match with each other. Add them to the solution if matching.
     if (BaseType::match(Seq1.back(), Seq2.back()))
@@ -643,6 +1018,173 @@ public:
       llvm::errs() << "--->\t" << p.first << "\t" << p.second << "\n";
 #endif
 
+
+
+#if 1 // Insert starting from the end
+    // Construct the aligned Sequence
+    AlignedSequence<Ty, Blank> Result;
+
+    llvm::PriorityQueue<size_t, std::vector<size_t>, std::less<size_t>> Ready1, Ready2, ReadyMatches;
+    std::set<size_t> UnReady1, UnReady2;
+
+    for (size_t i = 1; i < Size1; ++i) {
+      if (!Dependent1.hasDependents(i)) {
+        auto it = M1.find(i);
+        if (it == M1.end()) 
+          Ready1.emplace(i);
+        else if (!Dependent2.hasDependents(it->second))
+          ReadyMatches.emplace(i);
+        else 
+          UnReady1.emplace(i);
+      }
+    }
+
+    for (size_t i = 1; i < Size2; ++i) {
+      if (!Dependent2.hasDependents(i)) {
+        auto it = M2.find(i);
+        if (it == M2.end()) 
+          Ready2.emplace(i);
+        else if (Dependent1.hasDependents(it->second))
+          UnReady2.emplace(i);
+      }
+    }
+
+    int state = 0;
+    bool Progress = false;
+    while (!Ready1.empty() || !Ready2.empty() || !ReadyMatches.empty() || !UnReady1.empty() || !UnReady2.empty()) {
+      // state == 0 -> Try to insert matches
+      // state == 1 -> Try to insert unmatched entries from Seq1
+      // state == 2 -> Try to insert unmatched entries from Seq2
+      // state == 3 -> Check whether we failed to insert any entries in the other three states
+      
+      if (state == 3) {
+        if (!Progress) {
+          // If we get here, we went through a whole cycle of states without
+          // adding any instructions to the Result. This will only happen, if
+          // all ready instructions are matched with unready instructions.
+          // This should not happen but it does because we might have selected
+          // some matches that conflict with the other ones. 1-to-1 conflicts
+          // are forbidden by design, but a cycle of conflicts is still possible. A better
+          // match selection algorithm could avoid this, but it's more convenient
+          // to just remove matches when this happens.
+
+          // Remove the match for the numerically smallest ready instruction
+          
+          size_t min1 = std::numeric_limits<size_t>::max();
+          if (UnReady1.size() > 0)
+            min1 = *(UnReady1.begin());
+
+          size_t min2 = std::numeric_limits<size_t>::max();
+          if (UnReady2.size() > 0)
+            min2 = *(UnReady2.begin());
+
+          assert(min1 != std::numeric_limits<size_t>::max() || min2 != std::numeric_limits<size_t>::max());
+
+          if (min1 <= min2) {
+            assert(M1.count(min1) > 0);
+            M2.erase(M1[min1]);
+            M1.erase(min1);
+            UnReady1.erase(min1);
+            Ready1.emplace(min1);
+          } else {
+            assert(M2.count(min2) > 0);
+            M1.erase(M2[min2]);
+            M2.erase(min2);
+            UnReady2.erase(min2);
+            Ready2.emplace(min2);
+          }
+        }
+        state = 0;
+        continue;
+      }
+
+      // Reset Progress if we're starting the cycle
+      if (state == 0)
+        Progress = false;
+
+      // Choose the Queue to draw matches from based on the state
+      auto& MatchesQ = (state == 0) ? ReadyMatches : ((state == 1) ? Ready1 : Ready2);
+
+      while (!MatchesQ.empty()) {
+        Progress = true;
+
+        size_t Idx1 = 0, Idx2 = 0;
+        Ty Entry1 = Blank, Entry2 = Blank;
+
+        if (state == 0) {
+          Idx1 = MatchesQ.top();
+          Idx2 = M1[Idx1];
+          Entry1 = Seq1[Idx1];
+          Entry2 = Seq2[Idx2];
+        } else if (state == 1) {
+          Idx1 = MatchesQ.top();
+          Entry1 = Seq1[Idx1];
+        } else if (state == 2) {
+          Idx2 = MatchesQ.top();
+          Entry2 = Seq2[Idx2];
+        }
+
+        MatchesQ.pop();
+        Result.Data.push_front(typename BaseType::EntryType(Entry1, Entry2, state == 0));
+
+        if ((state == 0) || (state == 1)) {
+          for (size_t Jdx: Dependent1.removeDependencies(Idx1)) {
+#ifdef ENABLE_GA_DEBUG
+            llvm::errs() << "REMOVE 1: " << Jdx << " -> " << Idx1 << "\n";
+#endif
+            auto it = M1.find(Jdx);
+            if (it == M1.end()) {
+              Ready1.emplace(Jdx);
+              llvm::errs() << "Ready 1: " << Jdx << "\n";
+            } else {
+              auto it_other = UnReady2.find(it->second);
+              if (it_other != UnReady2.end()) {
+                ReadyMatches.emplace(Jdx);
+                UnReady2.erase(it_other);
+              llvm::errs() << "ReadyMatches: " << Jdx << "\n";
+              } else {
+                UnReady1.emplace(Jdx);
+              llvm::errs() << "UnReady 1: " << Jdx << "\n";
+              }
+            }
+          }
+        }
+
+        if ((state == 0) || (state == 2)) {
+          for (size_t Jdx: Dependent2.removeDependencies(Idx2)) {
+#ifdef ENABLE_GA_DEBUG
+            llvm::errs() << "REMOVE 2: " << Jdx << " -> " << Idx2 << "\n";
+#endif
+            auto it = M2.find(Jdx);
+            if (it == M2.end()) {
+              Ready2.emplace(Jdx);
+              llvm::errs() << "Ready 2: " << Jdx << "\n";
+            } else {
+              auto it_other = UnReady1.find(it->second);
+              if (it_other != UnReady1.end()) {
+                ReadyMatches.emplace(it->second);
+                UnReady1.erase(it_other);
+              llvm::errs() << "ReadyMatches: " << Jdx << "\n";
+              } else {
+                UnReady2.emplace(Jdx);
+              llvm::errs() << "UnReady 2: " << Jdx << "\n";
+              }
+            }
+          }
+        }
+      }
+      state++;
+    }
+
+    // Process BB entries
+    if (BaseType::match(Seq1[0], Seq2[0])) {
+      Result.Data.push_front(typename BaseType::EntryType(Seq1[0], Seq2[0], true));
+    } else {
+      Result.Data.push_front(typename BaseType::EntryType(Seq1[0], Blank, false));
+      Result.Data.push_front(typename BaseType::EntryType(Blank, Seq2[0], false));
+    }
+
+#else
     // Construct the aligned Sequence
     AlignedSequence<Ty, Blank> Result;
 
@@ -681,7 +1223,7 @@ public:
 
     int state = 0;
     bool Progress = false;
-    while (!Ready1.empty() || !Ready2.empty() || !ReadyMatches.empty()) {
+    while (!Ready1.empty() || !Ready2.empty() || !ReadyMatches.empty() || !UnReady1.empty() || !UnReady2.empty()) {
       // state == 0 -> Try to insert matches
       // state == 1 -> Try to insert unmatched entries from Seq1
       // state == 2 -> Try to insert unmatched entries from Seq2
@@ -694,9 +1236,9 @@ public:
           // all ready instructions are matched with unready instructions.
           // This should not happen but it does because we might have selected
           // some matches that conflict with the other ones. 1-to-1 conflicts
-          // are forbidden by design, but 1-to-many are still possible. A better
+          // are forbidden by design, but a cycle of conflicts is still possible. A better
           // match selection algorithm could avoid this, but it's more convenient
-          // to just remove matches when it happens.
+          // to just remove matches when this happens.
 
           // Remove the match for the numerically smallest ready instruction
           
@@ -805,6 +1347,7 @@ public:
     }
 
     Result.Data.reverse();
+#endif
 
 #ifdef ENABLE_GA_DEBUG
     for (auto &Entry : Result.Data) {
