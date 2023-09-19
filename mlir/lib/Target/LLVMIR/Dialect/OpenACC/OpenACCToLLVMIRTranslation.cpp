@@ -12,12 +12,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Target/LLVMIR/Dialect/OpenACC/OpenACCToLLVMIRTranslation.h"
-#include "mlir/Conversion/OpenACCToLLVM/ConvertOpenACCToLLVM.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/OpenACC/OpenACC.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Target/LLVMIR/Dialect/OpenMPCommon.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
 #include "llvm/ADT/TypeSwitch.h"
@@ -37,29 +37,13 @@ using OpenACCIRBuilder = llvm::OpenMPIRBuilder;
 static constexpr uint64_t kCreateFlag = 0x000;
 static constexpr uint64_t kDeviceCopyinFlag = 0x001;
 static constexpr uint64_t kHostCopyoutFlag = 0x002;
-static constexpr uint64_t kCopyFlag = kDeviceCopyinFlag | kHostCopyoutFlag;
 static constexpr uint64_t kPresentFlag = 0x1000;
 static constexpr uint64_t kDeleteFlag = 0x008;
+// Runtime extension to implement the OpenACC second reference counter.
+static constexpr uint64_t kHoldFlag = 0x2000;
 
 /// Default value for the device id
 static constexpr int64_t kDefaultDevice = -1;
-
-/// Create a constant string location from the MLIR Location information.
-static llvm::Constant *createSourceLocStrFromLocation(Location loc,
-                                                      OpenACCIRBuilder &builder,
-                                                      StringRef name) {
-  if (auto fileLoc = loc.dyn_cast<FileLineColLoc>()) {
-    StringRef fileName = fileLoc.getFilename();
-    unsigned lineNo = fileLoc.getLine();
-    unsigned colNo = fileLoc.getColumn();
-    return builder.getOrCreateSrcLocStr(name, fileName, lineNo, colNo);
-  } else {
-    std::string locStr;
-    llvm::raw_string_ostream locOS(locStr);
-    locOS << loc;
-    return builder.getOrCreateSrcLocStr(locOS.str());
-  }
-}
 
 /// Create the location struct from the operation location information.
 static llvm::Value *createSourceLocationInfo(OpenACCIRBuilder &builder,
@@ -67,21 +51,10 @@ static llvm::Value *createSourceLocationInfo(OpenACCIRBuilder &builder,
   auto loc = op->getLoc();
   auto funcOp = op->getParentOfType<LLVM::LLVMFuncOp>();
   StringRef funcName = funcOp ? funcOp.getName() : "unknown";
-  llvm::Constant *locStr =
-      createSourceLocStrFromLocation(loc, builder, funcName);
-  return builder.getOrCreateIdent(locStr);
-}
-
-/// Create a constant string representing the mapping information extracted from
-/// the MLIR location information.
-static llvm::Constant *createMappingInformation(Location loc,
-                                                OpenACCIRBuilder &builder) {
-  if (auto nameLoc = loc.dyn_cast<NameLoc>()) {
-    StringRef name = nameLoc.getName();
-    return createSourceLocStrFromLocation(nameLoc.getChildLoc(), builder, name);
-  } else {
-    return createSourceLocStrFromLocation(loc, builder, "unknown");
-  }
+  uint32_t strLen;
+  llvm::Constant *locStr = mlir::LLVM::createSourceLocStrFromLocation(
+      loc, builder, funcName, strLen);
+  return builder.getOrCreateIdent(locStr, strLen);
 }
 
 /// Return the runtime function used to lower the given operation.
@@ -101,19 +74,6 @@ static llvm::Function *getAssociatedFunction(OpenACCIRBuilder &builder,
             llvm::omp::OMPRTL___tgt_target_data_update_mapper);
       });
   llvm_unreachable("Unknown OpenACC operation");
-}
-
-/// Computes the size of type in bytes.
-static llvm::Value *getSizeInBytes(llvm::IRBuilderBase &builder,
-                                   llvm::Value *basePtr) {
-  llvm::LLVMContext &ctx = builder.getContext();
-  llvm::Value *null =
-      llvm::Constant::getNullValue(basePtr->getType()->getPointerTo());
-  llvm::Value *sizeGep =
-      builder.CreateGEP(basePtr->getType(), null, builder.getInt32(1));
-  llvm::Value *sizePtrToInt =
-      builder.CreatePtrToInt(sizeGep, llvm::Type::getInt64Ty(ctx));
-  return sizePtrToInt;
 }
 
 /// Extract pointer, size and mapping information from operands
@@ -139,17 +99,10 @@ processOperands(llvm::IRBuilderBase &builder,
     llvm::Value *dataPtr;
     llvm::Value *dataSize;
 
-    // Handle operands that were converted to DataDescriptor.
-    if (DataDescriptor::isValid(data)) {
-      dataPtrBase =
-          builder.CreateExtractValue(dataValue, kPtrBasePosInDataDescriptor);
-      dataPtr = builder.CreateExtractValue(dataValue, kPtrPosInDataDescriptor);
-      dataSize =
-          builder.CreateExtractValue(dataValue, kSizePosInDataDescriptor);
-    } else if (data.getType().isa<LLVM::LLVMPointerType>()) {
+    if (isa<LLVM::LLVMPointerType>(data.getType())) {
       dataPtrBase = dataValue;
       dataPtr = dataValue;
-      dataSize = getSizeInBytes(builder, dataValue);
+      dataSize = accBuilder->getSizeInBytes(dataValue);
     } else {
       return op->emitOpError()
              << "Data operand must be legalized before translation."
@@ -181,7 +134,7 @@ processOperands(llvm::IRBuilderBase &builder,
 
     flags.push_back(operandFlag);
     llvm::Constant *mapName =
-        createMappingInformation(data.getLoc(), *accBuilder);
+        mlir::LLVM::createMappingInformation(data.getLoc(), *accBuilder);
     names.push_back(mapName);
     ++index;
   }
@@ -200,16 +153,30 @@ processDataOperands(llvm::IRBuilderBase &builder,
   unsigned index = 0;
 
   // Create operands are handled as `alloc` call.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.createOperands(), op.getNumDataOperands(),
-                             kCreateFlag, flags, names, index, mapperAllocas)))
+  // Copyin operands are handled as `to` call.
+  llvm::SmallVector<mlir::Value> create, copyin;
+  for (mlir::Value dataOp : op.getDataClauseOperands()) {
+    if (auto createOp =
+            mlir::dyn_cast_or_null<acc::CreateOp>(dataOp.getDefiningOp())) {
+      create.push_back(createOp.getVarPtr());
+    } else if (auto copyinOp = mlir::dyn_cast_or_null<acc::CopyinOp>(
+                   dataOp.getDefiningOp())) {
+      copyin.push_back(copyinOp.getVarPtr());
+    }
+  }
+
+  auto nbTotalOperands = create.size() + copyin.size();
+
+  // Create operands are handled as `alloc` call.
+  if (failed(processOperands(builder, moduleTranslation, op, create,
+                             nbTotalOperands, kCreateFlag, flags, names, index,
+                             mapperAllocas)))
     return failure();
 
   // Copyin operands are handled as `to` call.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.copyinOperands(), op.getNumDataOperands(),
-                             kDeviceCopyinFlag, flags, names, index,
-                             mapperAllocas)))
+  if (failed(processOperands(builder, moduleTranslation, op, copyin,
+                             nbTotalOperands, kDeviceCopyinFlag, flags, names,
+                             index, mapperAllocas)))
     return failure();
 
   return success();
@@ -226,17 +193,31 @@ processDataOperands(llvm::IRBuilderBase &builder,
 
   unsigned index = 0;
 
+  llvm::SmallVector<mlir::Value> deleteOperands, copyoutOperands;
+  for (mlir::Value dataOp : op.getDataClauseOperands()) {
+    if (auto devicePtrOp = mlir::dyn_cast_or_null<acc::GetDevicePtrOp>(
+            dataOp.getDefiningOp())) {
+      for (auto &u : devicePtrOp.getAccPtr().getUses()) {
+        if (mlir::dyn_cast_or_null<acc::DeleteOp>(u.getOwner()))
+          deleteOperands.push_back(devicePtrOp.getVarPtr());
+        else if (mlir::dyn_cast_or_null<acc::CopyoutOp>(u.getOwner()))
+          copyoutOperands.push_back(devicePtrOp.getVarPtr());
+      }
+    }
+  }
+
+  auto nbTotalOperands = deleteOperands.size() + copyoutOperands.size();
+
   // Delete operands are handled as `delete` call.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.deleteOperands(), op.getNumDataOperands(),
-                             kDeleteFlag, flags, names, index, mapperAllocas)))
+  if (failed(processOperands(builder, moduleTranslation, op, deleteOperands,
+                             nbTotalOperands, kDeleteFlag, flags, names, index,
+                             mapperAllocas)))
     return failure();
 
   // Copyout operands are handled as `from` call.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.copyoutOperands(), op.getNumDataOperands(),
-                             kHostCopyoutFlag, flags, names, index,
-                             mapperAllocas)))
+  if (failed(processOperands(builder, moduleTranslation, op, copyoutOperands,
+                             nbTotalOperands, kHostCopyoutFlag, flags, names,
+                             index, mapperAllocas)))
     return failure();
 
   return success();
@@ -252,18 +233,28 @@ processDataOperands(llvm::IRBuilderBase &builder,
   unsigned index = 0;
 
   // Host operands are handled as `from` call.
-  if (failed(processOperands(builder, moduleTranslation, op, op.hostOperands(),
-                             op.getNumDataOperands(), kHostCopyoutFlag, flags,
-                             names, index, mapperAllocas)))
-    return failure();
-
   // Device operands are handled as `to` call.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.deviceOperands(), op.getNumDataOperands(),
-                             kDeviceCopyinFlag, flags, names, index,
+  llvm::SmallVector<mlir::Value> from, to;
+  for (mlir::Value dataOp : op.getDataClauseOperands()) {
+    if (auto getDevicePtrOp = mlir::dyn_cast_or_null<acc::GetDevicePtrOp>(
+            dataOp.getDefiningOp())) {
+      from.push_back(getDevicePtrOp.getVarPtr());
+    } else if (auto updateDeviceOp =
+                   mlir::dyn_cast_or_null<acc::UpdateDeviceOp>(
+                       dataOp.getDefiningOp())) {
+      to.push_back(updateDeviceOp.getVarPtr());
+    }
+  }
+
+  if (failed(processOperands(builder, moduleTranslation, op, from, from.size(),
+                             kHostCopyoutFlag, flags, names, index,
                              mapperAllocas)))
     return failure();
 
+  if (failed(processOperands(builder, moduleTranslation, op, to, to.size(),
+                             kDeviceCopyinFlag, flags, names, index,
+                             mapperAllocas)))
+    return failure();
   return success();
 }
 
@@ -306,52 +297,66 @@ static LogicalResult convertDataOp(acc::DataOp &op,
 
   // TODO handle no_create, deviceptr and attach operands.
 
-  if (failed(processOperands(builder, moduleTranslation, op, op.copyOperands(),
-                             totalNbOperand, kCopyFlag, flags, names, index,
-                             mapperAllocas)))
-    return failure();
+  llvm::SmallVector<mlir::Value> copyin, copyout, create, present,
+      deleteOperands;
+  for (mlir::Value dataOp : op.getDataClauseOperands()) {
+    if (auto devicePtrOp = mlir::dyn_cast_or_null<acc::GetDevicePtrOp>(
+            dataOp.getDefiningOp())) {
+      for (auto &u : devicePtrOp.getAccPtr().getUses()) {
+        if (mlir::dyn_cast_or_null<acc::DeleteOp>(u.getOwner())) {
+          deleteOperands.push_back(devicePtrOp.getVarPtr());
+        } else if (mlir::dyn_cast_or_null<acc::CopyoutOp>(u.getOwner())) {
+          // TODO copyout zero currenlty handled as copyout. Update when
+          // extension available.
+          copyout.push_back(devicePtrOp.getVarPtr());
+        }
+      }
+    } else if (auto copyinOp = mlir::dyn_cast_or_null<acc::CopyinOp>(
+                   dataOp.getDefiningOp())) {
+      // TODO copyin readonly currenlty handled as copyin. Update when extension
+      // available.
+      copyin.push_back(copyinOp.getVarPtr());
+    } else if (auto createOp = mlir::dyn_cast_or_null<acc::CreateOp>(
+                   dataOp.getDefiningOp())) {
+      // TODO create zero currenlty handled as create. Update when extension
+      // available.
+      create.push_back(createOp.getVarPtr());
+    } else if (auto presentOp = mlir::dyn_cast_or_null<acc::PresentOp>(
+                   dataOp.getDefiningOp())) {
+      present.push_back(createOp.getVarPtr());
+    }
+  }
 
-  if (failed(processOperands(
-          builder, moduleTranslation, op, op.copyinOperands(), totalNbOperand,
-          kDeviceCopyinFlag, flags, names, index, mapperAllocas)))
-    return failure();
+  auto nbTotalOperands = copyin.size() + copyout.size() + create.size() +
+                         present.size() + deleteOperands.size();
 
-  // TODO copyin readonly currenlty handled as copyin. Update when extension
-  // available.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.copyinReadonlyOperands(), totalNbOperand,
-                             kDeviceCopyinFlag, flags, names, index,
-                             mapperAllocas)))
-    return failure();
-
-  if (failed(processOperands(
-          builder, moduleTranslation, op, op.copyoutOperands(), totalNbOperand,
-          kHostCopyoutFlag, flags, names, index, mapperAllocas)))
-    return failure();
-
-  // TODO copyout zero currenlty handled as copyout. Update when extension
-  // available.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.copyoutZeroOperands(), totalNbOperand,
-                             kHostCopyoutFlag, flags, names, index,
-                             mapperAllocas)))
-    return failure();
-
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.createOperands(), totalNbOperand, kCreateFlag,
+  // Copyin operands are handled as `to` call.
+  if (failed(processOperands(builder, moduleTranslation, op, copyin,
+                             nbTotalOperands, kDeviceCopyinFlag | kHoldFlag,
                              flags, names, index, mapperAllocas)))
     return failure();
 
-  // TODO create zero currenlty handled as create. Update when extension
-  // available.
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.createZeroOperands(), totalNbOperand,
-                             kCreateFlag, flags, names, index, mapperAllocas)))
+  // Delete operands are handled as `delete` call.
+  if (failed(processOperands(builder, moduleTranslation, op, deleteOperands,
+                             nbTotalOperands, kDeleteFlag, flags, names, index,
+                             mapperAllocas)))
     return failure();
 
-  if (failed(processOperands(builder, moduleTranslation, op,
-                             op.presentOperands(), totalNbOperand, kPresentFlag,
+  // Copyout operands are handled as `from` call.
+  if (failed(processOperands(builder, moduleTranslation, op, copyout,
+                             nbTotalOperands, kHostCopyoutFlag | kHoldFlag,
                              flags, names, index, mapperAllocas)))
+    return failure();
+
+  // Create operands are handled as `alloc` call.
+  if (failed(processOperands(builder, moduleTranslation, op, create,
+                             nbTotalOperands, kCreateFlag | kHoldFlag, flags,
+                             names, index, mapperAllocas)))
+    return failure();
+
+  if (failed(processOperands(builder, moduleTranslation, op, present,
+                             nbTotalOperands, kPresentFlag | kHoldFlag, flags,
+                             names, index, mapperAllocas)))
     return failure();
 
   llvm::GlobalVariable *maptypes =
@@ -374,7 +379,7 @@ static LogicalResult convertDataOp(acc::DataOp &op,
   // Convert the region.
   llvm::BasicBlock *entryBlock = nullptr;
 
-  for (Block &bb : op.region()) {
+  for (Block &bb : op.getRegion()) {
     llvm::BasicBlock *llvmBB = llvm::BasicBlock::Create(
         ctx, "acc.data", builder.GetInsertBlock()->getParent());
     if (entryBlock == nullptr)
@@ -391,7 +396,7 @@ static LogicalResult convertDataOp(acc::DataOp &op,
       ctx, "acc.end_data", builder.GetInsertBlock()->getParent());
 
   SetVector<Block *> blocks =
-      LLVM::detail::getTopologicallySortedBlocks(op.region());
+      LLVM::detail::getTopologicallySortedBlocks(op.getRegion());
   for (Block *bb : blocks) {
     llvm::BasicBlock *llvmBB = moduleTranslation.lookupBlock(bb);
     if (bb->isEntryBlock()) {
@@ -487,7 +492,7 @@ public:
                    LLVM::ModuleTranslation &moduleTranslation) const final;
 };
 
-} // end namespace
+} // namespace
 
 /// Given an OpenACC MLIR operation, create the corresponding LLVM IR
 /// (including OpenACC runtime calls).
@@ -518,6 +523,11 @@ LogicalResult OpenACCDialectLLVMIRTranslationInterface::convertOperation(
                "unexpected OpenACC terminator with operands");
         return success();
       })
+      .Case<acc::CreateOp, acc::CopyinOp, acc::CopyoutOp, acc::DeleteOp,
+            acc::UpdateDeviceOp, acc::GetDevicePtrOp>([](auto op) {
+        // NOP
+        return success();
+      })
       .Default([&](Operation *op) {
         return op->emitError("unsupported OpenACC operation: ")
                << op->getName();
@@ -526,8 +536,9 @@ LogicalResult OpenACCDialectLLVMIRTranslationInterface::convertOperation(
 
 void mlir::registerOpenACCDialectTranslation(DialectRegistry &registry) {
   registry.insert<acc::OpenACCDialect>();
-  registry.addDialectInterface<acc::OpenACCDialect,
-                               OpenACCDialectLLVMIRTranslationInterface>();
+  registry.addExtension(+[](MLIRContext *ctx, acc::OpenACCDialect *dialect) {
+    dialect->addInterfaces<OpenACCDialectLLVMIRTranslationInterface>();
+  });
 }
 
 void mlir::registerOpenACCDialectTranslation(MLIRContext &context) {

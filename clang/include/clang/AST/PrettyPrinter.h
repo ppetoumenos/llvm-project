@@ -20,9 +20,7 @@ namespace clang {
 
 class DeclContext;
 class LangOptions;
-class SourceManager;
 class Stmt;
-class TagDecl;
 
 class PrinterHelper {
 public:
@@ -62,19 +60,24 @@ struct PrintingPolicy {
       : Indentation(2), SuppressSpecifiers(false),
         SuppressTagKeyword(LO.CPlusPlus), IncludeTagDefinition(false),
         SuppressScope(false), SuppressUnwrittenScope(false),
-        SuppressInlineNamespace(true), SuppressInitializers(false),
-        ConstantArraySizeAsWritten(false), AnonymousTagLocations(true),
-        SuppressStrongLifetime(false), SuppressLifetimeQualifiers(false),
+        SuppressInlineNamespace(true), SuppressElaboration(false),
+        SuppressInitializers(false), ConstantArraySizeAsWritten(false),
+        AnonymousTagLocations(true), SuppressStrongLifetime(false),
+        SuppressLifetimeQualifiers(false),
         SuppressTemplateArgsInCXXConstructors(false),
         SuppressDefaultTemplateArgs(true), Bool(LO.Bool),
-        Nullptr(LO.CPlusPlus11), Restrict(LO.C99), Alignof(LO.CPlusPlus11),
-        UnderscoreAlignof(LO.C11), UseVoidForZeroParams(!LO.CPlusPlus),
+        Nullptr(LO.CPlusPlus11 || LO.C23), NullptrTypeInNamespace(LO.CPlusPlus),
+        Restrict(LO.C99), Alignof(LO.CPlusPlus11), UnderscoreAlignof(LO.C11),
+        UseVoidForZeroParams(!LO.CPlusPlus),
         SplitTemplateClosers(!LO.CPlusPlus11), TerseOutput(false),
         PolishForDeclaration(false), Half(LO.Half),
         MSWChar(LO.MicrosoftExt && !LO.WChar), IncludeNewlines(true),
         MSVCFormatting(false), ConstantsAsWritten(false),
         SuppressImplicitBase(false), FullyQualifiedName(false),
-        PrintCanonicalTypes(false), PrintInjectedClassNameWithArguments(true) {}
+        PrintCanonicalTypes(false), PrintInjectedClassNameWithArguments(true),
+        UsePreferredNames(true), AlwaysIncludeTypeForTemplateArgument(false),
+        CleanUglifiedParameters(false), EntireContentsOfLargeArray(true),
+        UseEnumerators(true) {}
 
   /// Adjust this printing policy for cases where it's known that we're
   /// printing C++ code (for instance, if AST dumping reaches a C++-only
@@ -137,6 +140,10 @@ struct PrintingPolicy {
   /// removed.
   unsigned SuppressInlineNamespace : 1;
 
+  /// Ignore qualifiers and tag keywords as specified by elaborated type sugar,
+  /// instead letting the underlying type print as normal.
+  unsigned SuppressElaboration : 1;
+
   /// Suppress printing of variable initializers.
   ///
   /// This flag is used when printing the loop variable in a for-range
@@ -194,6 +201,9 @@ struct PrintingPolicy {
   /// Whether we should use 'nullptr' rather than '0' as a null pointer
   /// constant.
   unsigned Nullptr : 1;
+
+  /// Whether 'nullptr_t' is in namespace 'std' or not.
+  unsigned NullptrTypeInNamespace : 1;
 
   /// Whether we can use 'restrict' rather than '__restrict'.
   unsigned Restrict : 1;
@@ -272,6 +282,27 @@ struct PrintingPolicy {
   /// written. When a template argument is unnamed, printing it results in
   /// invalid C++ code.
   unsigned PrintInjectedClassNameWithArguments : 1;
+
+  /// Whether to use C++ template preferred_name attributes when printing
+  /// templates.
+  unsigned UsePreferredNames : 1;
+
+  /// Whether to use type suffixes (eg: 1U) on integral non-type template
+  /// parameters.
+  unsigned AlwaysIncludeTypeForTemplateArgument : 1;
+
+  /// Whether to strip underscores when printing reserved parameter names.
+  /// e.g. std::vector<class _Tp> becomes std::vector<class Tp>.
+  /// This only affects parameter names, and so describes a compatible API.
+  unsigned CleanUglifiedParameters : 1;
+
+  /// Whether to print the entire array initializers, especially on non-type
+  /// template parameters, no matter how many elements there are.
+  unsigned EntireContentsOfLargeArray : 1;
+
+  /// Whether to print enumerator non-type template parameters with a matching
+  /// enumerator name or via cast of an integer.
+  unsigned UseEnumerators : 1;
 
   /// Callbacks to use to allow the behavior of printing to be customized.
   const PrintingCallbacks *Callbacks = nullptr;

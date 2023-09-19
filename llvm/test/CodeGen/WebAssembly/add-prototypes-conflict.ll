@@ -8,10 +8,10 @@ target triple = "wasm32-unknown-unknown"
 
 ; CHECK-LABEL: @call_with_conflicting_prototypes
 ; CHECK: %call1 = call i64 @foo(i32 42)
-; CHECK: %call2 = call i64 bitcast (i64 (i32)* @foo to i64 (i32, i32)*)(i32 42, i32 43)
+; CHECK: %call2 = call i64 @foo(i32 42, i32 43)
 define void @call_with_conflicting_prototypes() {
-  %call1 = call i64 bitcast (i64 (...)* @foo to i64 (i32)*)(i32 42)
-  %call2 = call i64 bitcast (i64 (...)* @foo to i64 (i32, i32)*)(i32 42, i32 43)
+  %call1 = call i64 @foo(i32 42)
+  %call2 = call i64 @foo(i32 42, i32 43)
   ret void
 }
 

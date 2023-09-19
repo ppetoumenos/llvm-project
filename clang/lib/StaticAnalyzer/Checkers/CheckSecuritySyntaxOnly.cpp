@@ -27,7 +27,6 @@ using namespace ento;
 static bool isArc4RandomAvailable(const ASTContext &Ctx) {
   const llvm::Triple &T = Ctx.getTargetInfo().getTriple();
   return T.getVendor() == llvm::Triple::Apple ||
-         T.getOS() == llvm::Triple::CloudABI ||
          T.isOSFreeBSD() ||
          T.isOSNetBSD() ||
          T.isOSOpenBSD() ||
@@ -36,20 +35,20 @@ static bool isArc4RandomAvailable(const ASTContext &Ctx) {
 
 namespace {
 struct ChecksFilter {
-  DefaultBool check_bcmp;
-  DefaultBool check_bcopy;
-  DefaultBool check_bzero;
-  DefaultBool check_gets;
-  DefaultBool check_getpw;
-  DefaultBool check_mktemp;
-  DefaultBool check_mkstemp;
-  DefaultBool check_strcpy;
-  DefaultBool check_DeprecatedOrUnsafeBufferHandling;
-  DefaultBool check_rand;
-  DefaultBool check_vfork;
-  DefaultBool check_FloatLoopCounter;
-  DefaultBool check_UncheckedReturn;
-  DefaultBool check_decodeValueOfObjCType;
+  bool check_bcmp = false;
+  bool check_bcopy = false;
+  bool check_bzero = false;
+  bool check_gets = false;
+  bool check_getpw = false;
+  bool check_mktemp = false;
+  bool check_mkstemp = false;
+  bool check_strcpy = false;
+  bool check_DeprecatedOrUnsafeBufferHandling = false;
+  bool check_rand = false;
+  bool check_vfork = false;
+  bool check_FloatLoopCounter = false;
+  bool check_UncheckedReturn = false;
+  bool check_decodeValueOfObjCType = false;
 
   CheckerNameRef checkName_bcmp;
   CheckerNameRef checkName_bcopy;
@@ -219,7 +218,6 @@ void WalkAST::VisitForStmt(ForStmt *FS) {
 
 //===----------------------------------------------------------------------===//
 // Check: floating point variable used as loop counter.
-// Originally: <rdar://problem/6336718>
 // Implements: CERT security coding advisory FLP-30.
 //===----------------------------------------------------------------------===//
 
@@ -325,7 +323,7 @@ void WalkAST::checkLoopConditionForFloat(const ForStmt *FS) {
   llvm::raw_svector_ostream os(sbuf);
 
   os << "Variable '" << drCond->getDecl()->getName()
-     << "' with floating point type '" << drCond->getType().getAsString()
+     << "' with floating point type '" << drCond->getType()
      << "' should not be used as a loop counter";
 
   ranges.push_back(drCond->getSourceRange());
@@ -467,8 +465,8 @@ void WalkAST::checkCall_bzero(const CallExpr *CE, const FunctionDecl *FD) {
 
 
 //===----------------------------------------------------------------------===//
-// Check: Any use of 'gets' is insecure.
-// Originally: <rdar://problem/6335715>
+// Check: Any use of 'gets' is insecure. Most man pages literally says this.
+//
 // Implements (part of): 300-BSI (buildsecurityin.us-cert.gov)
 // CWE-242: Use of Inherently Dangerous Function
 //===----------------------------------------------------------------------===//
@@ -785,9 +783,8 @@ void WalkAST::checkDeprecatedOrUnsafeBufferHandling(const CallExpr *CE,
     // real flow analysis.
     auto FormatString =
         dyn_cast<StringLiteral>(CE->getArg(ArgIndex)->IgnoreParenImpCasts());
-    if (FormatString &&
-        FormatString->getString().find("%s") == StringRef::npos &&
-        FormatString->getString().find("%[") == StringRef::npos)
+    if (FormatString && !FormatString->getString().contains("%s") &&
+        !FormatString->getString().contains("%["))
       BoundsProvided = true;
   }
 
@@ -848,8 +845,13 @@ bool WalkAST::checkCall_strCommon(const CallExpr *CE, const FunctionDecl *FD) {
 }
 
 //===----------------------------------------------------------------------===//
-// Check: Linear congruent random number generators should not be used
-// Originally: <rdar://problem/63371000>
+// Check: Linear congruent random number generators should not be used,
+// i.e. rand(), random().
+//
+// E. Bach, "Efficient prediction of Marsaglia-Zaman random number generators,"
+// in IEEE Transactions on Information Theory, vol. 44, no. 3, pp. 1253-1257,
+// May 1998, https://doi.org/10.1109/18.669305
+//
 // CWE-338: Use of cryptographically weak prng
 //===----------------------------------------------------------------------===//
 
@@ -891,11 +893,7 @@ void WalkAST::checkCall_rand(const CallExpr *CE, const FunctionDecl *FD) {
                      CE->getCallee()->getSourceRange());
 }
 
-//===----------------------------------------------------------------------===//
-// Check: 'random' should not be used
-// Originally: <rdar://problem/63371000>
-//===----------------------------------------------------------------------===//
-
+// See justification for rand().
 void WalkAST::checkCall_random(const CallExpr *CE, const FunctionDecl *FD) {
   if (!CheckRand || !filter.check_rand)
     return;
@@ -991,8 +989,18 @@ void WalkAST::checkMsg_decodeValueOfObjCType(const ObjCMessageExpr *ME) {
 }
 
 //===----------------------------------------------------------------------===//
-// Check: Should check whether privileges are dropped successfully.
-// Originally: <rdar://problem/6337132>
+// Check: The caller should always verify that the privileges
+// were dropped successfully.
+//
+// Some library functions, like setuid() and setgid(), should always be used
+// with a check of the return value to verify that the function completed
+// successfully.  If the drop fails, the software will continue to run
+// with the raised privileges, which might provide additional access
+// to unprivileged users.
+//
+// (Note that this check predates __attribute__((warn_unused_result)).
+// Do we still need it now that we have a compiler warning for this?
+// Are these standard functions already annotated this way?)
 //===----------------------------------------------------------------------===//
 
 void WalkAST::checkUncheckedReturnValue(CallExpr *CE) {

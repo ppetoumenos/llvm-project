@@ -10,6 +10,7 @@ static_library("Checkers") {
     "//clang/lib/Lex",
     "//clang/lib/StaticAnalyzer/Core",
     "//llvm/lib/Support",
+    "//llvm/lib/TargetParser",
   ]
   include_dirs = [ "." ]
   sources = [
@@ -18,6 +19,7 @@ static_library("Checkers") {
     "ArrayBoundChecker.cpp",
     "ArrayBoundCheckerV2.cpp",
     "BasicObjCFoundationChecks.cpp",
+    "BitwiseShiftChecker.cpp",
     "BlockInCriticalSectionChecker.cpp",
     "BoolAssignmentChecker.cpp",
     "BuiltinFunctionChecker.cpp",
@@ -49,6 +51,9 @@ static_library("Checkers") {
     "DynamicTypeChecker.cpp",
     "DynamicTypePropagation.cpp",
     "EnumCastOutOfRangeChecker.cpp",
+    "ErrnoChecker.cpp",
+    "ErrnoModeling.cpp",
+    "ErrnoTesterChecker.cpp",
     "ExprInspectionChecker.cpp",
     "FixedAddressChecker.cpp",
     "FuchsiaHandleChecker.cpp",
@@ -112,16 +117,19 @@ static_library("Checkers") {
     "StackAddrEscapeChecker.cpp",
     "StdLibraryFunctionsChecker.cpp",
     "StreamChecker.cpp",
+    "StringChecker.cpp",
     "Taint.cpp",
     "TaintTesterChecker.cpp",
     "TestAfterDivZeroChecker.cpp",
     "TraversalChecker.cpp",
     "TrustNonnullChecker.cpp",
+    "TrustReturnsNonnullChecker.cpp",
     "UndefBranchChecker.cpp",
     "UndefCapturedBlockVarChecker.cpp",
     "UndefResultChecker.cpp",
     "UndefinedArraySubscriptChecker.cpp",
     "UndefinedAssignmentChecker.cpp",
+    "UndefinedNewArraySizeChecker.cpp",
     "UninitializedObject/UninitializedObjectChecker.cpp",
     "UninitializedObject/UninitializedPointee.cpp",
     "UnixAPIChecker.cpp",
@@ -137,6 +145,7 @@ static_library("Checkers") {
     "WebKit/UncountedCallArgsChecker.cpp",
     "WebKit/UncountedLambdaCapturesChecker.cpp",
     "WebKit/UncountedLocalVarsChecker.cpp",
+    "cert/InvalidPtrChecker.cpp",
     "cert/PutenvWithAutoChecker.cpp",
   ]
 }

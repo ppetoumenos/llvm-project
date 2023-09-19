@@ -13,6 +13,9 @@
 
 namespace llvm {
 
+/// Holds target-specific properties for a symbol.
+using TargetFlagsType = uint8_t;
+
 class RuntimeDyldCheckerImpl {
   friend class RuntimeDyldChecker;
   friend class RuntimeDyldCheckerExprEval;
@@ -28,9 +31,8 @@ public:
   RuntimeDyldCheckerImpl(
       IsSymbolValidFunction IsSymbolValid, GetSymbolInfoFunction GetSymbolInfo,
       GetSectionInfoFunction GetSectionInfo, GetStubInfoFunction GetStubInfo,
-      GetGOTInfoFunction GetGOTInfo, support::endianness Endianness,
-      MCDisassembler *Disassembler, MCInstPrinter *InstPrinter,
-      llvm::raw_ostream &ErrStream);
+      GetGOTInfoFunction GetGOTInfo, support::endianness Endianness, Triple TT,
+      StringRef CPU, SubtargetFeatures TF, llvm::raw_ostream &ErrStream);
 
   bool check(StringRef CheckExpr) const;
   bool checkAllRulesInBuffer(StringRef RulePrefix, MemoryBuffer *MemBuf) const;
@@ -49,6 +51,11 @@ private:
 
   StringRef getSymbolContent(StringRef Symbol) const;
 
+  TargetFlagsType getTargetFlag(StringRef Symbol) const;
+  Triple getTripleForSymbol(TargetFlagsType Flag) const;
+  StringRef getCPU() const { return CPU; }
+  SubtargetFeatures getFeatures() const { return TF; }
+
   std::pair<uint64_t, std::string> getSectionAddr(StringRef FileName,
                                                   StringRef SectionName,
                                                   bool IsInsideLoad) const;
@@ -57,7 +64,7 @@ private:
   getStubOrGOTAddrFor(StringRef StubContainerName, StringRef Symbol,
                       bool IsInsideLoad, bool IsStubAddr) const;
 
-  Optional<uint64_t> getSectionLoadAddress(void *LocalAddr) const;
+  std::optional<uint64_t> getSectionLoadAddress(void *LocalAddr) const;
 
   IsSymbolValidFunction IsSymbolValid;
   GetSymbolInfoFunction GetSymbolInfo;
@@ -65,8 +72,9 @@ private:
   GetStubInfoFunction GetStubInfo;
   GetGOTInfoFunction GetGOTInfo;
   support::endianness Endianness;
-  MCDisassembler *Disassembler;
-  MCInstPrinter *InstPrinter;
+  Triple TT;
+  std::string CPU;
+  SubtargetFeatures TF;
   llvm::raw_ostream &ErrStream;
 };
 }

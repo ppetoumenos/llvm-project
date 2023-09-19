@@ -24,6 +24,7 @@
 
 extern template class llvm::DominatorTreeBase<mlir::Block, false>;
 extern template class llvm::DominatorTreeBase<mlir::Block, true>;
+extern template class llvm::DomTreeNodeBase<mlir::Block>;
 
 namespace mlir {
 using DominanceInfoNode = llvm::DomTreeNodeBase<Block>;
@@ -45,8 +46,8 @@ public:
 
   /// Invalidate dominance info. This can be used by clients that make major
   /// changes to the CFG and don't have a good way to update it.
-  void invalidate() { dominanceInfos.clear(); }
-  void invalidate(Region *region) { dominanceInfos.erase(region); }
+  void invalidate();
+  void invalidate(Region *region);
 
   /// Finds the nearest common dominator block for the two given blocks a
   /// and b. If no common dominator can be found, this function will return
@@ -109,7 +110,10 @@ protected:
   mutable DenseMap<Region *, llvm::PointerIntPair<DomTree *, 1, bool>>
       dominanceInfos;
 };
-} // end namespace detail
+
+extern template class DominanceInfoBase</*IsPostDom=*/true>;
+extern template class DominanceInfoBase</*IsPostDom=*/false>;
+} // namespace detail
 
 /// A class for computing basic dominance information. Note that this
 /// class is aware of different types of regions and returns a
@@ -124,8 +128,12 @@ public:
   /// an SSACFG region, Operation A dominates Operation B in the same block if A
   /// preceeds B. In a Graph region, all operations in a block dominate all
   /// other operations in the same block.
-  bool properlyDominates(Operation *a, Operation *b) const {
-    return properlyDominatesImpl(a, b, /*enclosingOpOk=*/true);
+  ///
+  /// The `enclosingOpOk` flag says whether we should return true if the B op
+  /// is enclosed by a region on A.
+  bool properlyDominates(Operation *a, Operation *b,
+                         bool enclosingOpOk = true) const {
+    return properlyDominatesImpl(a, b, enclosingOpOk);
   }
 
   /// Return true if operation A dominates operation B, i.e. if A and B are the
@@ -192,7 +200,7 @@ public:
   }
 };
 
-} //  end namespace mlir
+} // namespace mlir
 
 namespace llvm {
 
@@ -218,5 +226,5 @@ struct GraphTraits<const mlir::DominanceInfoNode *> {
   static inline ChildIteratorType child_end(NodeRef N) { return N->end(); }
 };
 
-} // end namespace llvm
+} // namespace llvm
 #endif

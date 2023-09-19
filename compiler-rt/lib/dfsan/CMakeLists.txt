@@ -26,6 +26,9 @@ append_rtti_flag(OFF DFSAN_COMMON_CFLAGS)
 # Prevent clang from generating libc calls.
 append_list_if(COMPILER_RT_HAS_FFREESTANDING_FLAG -ffreestanding DFSAN_COMMON_CFLAGS)
 
+# Too many existing bugs, needs cleanup.
+append_list_if(COMPILER_RT_HAS_WNO_FORMAT -Wno-format DFSAN_COMMON_CFLAGS)
+
 # Static runtime library.
 add_compiler_rt_component(dfsan)
 
@@ -40,6 +43,7 @@ foreach(arch ${DFSAN_SUPPORTED_ARCH})
             $<TARGET_OBJECTS:RTSanitizerCommon.${arch}>
             $<TARGET_OBJECTS:RTSanitizerCommonLibc.${arch}>
             $<TARGET_OBJECTS:RTSanitizerCommonSymbolizer.${arch}>
+            $<TARGET_OBJECTS:RTSanitizerCommonSymbolizerInternal.${arch}>
     ADDITIONAL_HEADERS ${DFSAN_RTL_HEADERS}
     CFLAGS ${DFSAN_CFLAGS}
     PARENT_TARGET dfsan)

@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC restruction in branch in and out of some construct
 !
@@ -54,6 +53,7 @@ program openacc_clause_validity
   ! Exit branches out of parallel construct, attached to an OpenACC parallel construct.
   thisblk: BLOCK
     fortname: if (.true.) then
+      !PORTABILITY: The construct name 'name1' should be distinct at the subprogram level
       name1: do k = 1, N
         !$acc parallel
         !ERROR: EXIT to construct 'fortname' outside of PARALLEL construct is not allowed
@@ -94,8 +94,7 @@ program openacc_clause_validity
   do i = 1, N
     a(i) = 3.14
     if(i == N-1) THEN
-      !ERROR: STOP statement is not allowed in a PARALLEL construct
-      stop 999
+      stop 999 ! no error
     end if
   end do
   !$acc end parallel
@@ -121,8 +120,7 @@ program openacc_clause_validity
   do i = 1, N
     a(i) = 3.14
     if(i == N-1) THEN
-      !ERROR: STOP statement is not allowed in a KERNELS construct
-      stop 999
+      stop 999 ! no error
     end if
   end do
   !$acc end kernels
@@ -164,10 +162,17 @@ program openacc_clause_validity
   do i = 1, N
     a(i) = 3.14
     if(i == N-1) THEN
-      !ERROR: STOP statement is not allowed in a SERIAL construct
-      stop 999
+      stop 999 ! no error
     end if
   end do
   !$acc end serial
+
+
+  !$acc data create(a)
+
+  !ERROR: RETURN statement is not allowed in a DATA construct
+  if (size(a) == 10) return
+
+  !$acc end data
 
 end program openacc_clause_validity

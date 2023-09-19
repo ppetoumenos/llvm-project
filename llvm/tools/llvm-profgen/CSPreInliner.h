@@ -9,6 +9,7 @@
 #ifndef LLVM_TOOLS_LLVM_PROFGEN_PGOINLINEADVISOR_H
 #define LLVM_TOOLS_LLVM_PROFGEN_PGOINLINEADVISOR_H
 
+#include "ProfiledBinary.h"
 #include "llvm/ADT/PriorityQueue.h"
 #include "llvm/ProfileData/ProfileCommon.h"
 #include "llvm/ProfileData/SampleProf.h"
@@ -23,9 +24,9 @@ namespace sampleprof {
 
 // Inline candidate seen from profile
 struct ProfiledInlineCandidate {
-  ProfiledInlineCandidate(const FunctionSamples *Samples, uint64_t Count)
-      : CalleeSamples(Samples), CallsiteCount(Count),
-        SizeCost(Samples->getBodySamples().size()) {}
+  ProfiledInlineCandidate(const FunctionSamples *Samples, uint64_t Count,
+                          uint32_t Size)
+      : CalleeSamples(Samples), CallsiteCount(Count), SizeCost(Size) {}
   // Context-sensitive function profile for inline candidate
   const FunctionSamples *CalleeSamples;
   // Call site count for an inline candidate
@@ -33,7 +34,6 @@ struct ProfiledInlineCandidate {
   // target count for corresponding call are consistent.
   uint64_t CallsiteCount;
   // Size proxy for function under particular call context.
-  // TODO: use post-inline callee size from debug info.
   uint64_t SizeCost;
 };
 
@@ -41,6 +41,13 @@ struct ProfiledInlineCandidate {
 struct ProfiledCandidateComparer {
   bool operator()(const ProfiledInlineCandidate &LHS,
                   const ProfiledInlineCandidate &RHS) {
+    // Always prioritize inlining zero-sized functions as they do not affect the
+    // size budget. This could happen when all of the callee's code is gone and
+    // only pseudo probes are left.
+    if ((LHS.SizeCost == 0 || RHS.SizeCost == 0) &&
+        (LHS.SizeCost != RHS.SizeCost))
+      return RHS.SizeCost == 0;
+
     if (LHS.CallsiteCount != RHS.CallsiteCount)
       return LHS.CallsiteCount < RHS.CallsiteCount;
 
@@ -67,8 +74,8 @@ using ProfiledCandidateQueue =
 // size by only keep context that is estimated to be inlined.
 class CSPreInliner {
 public:
-  CSPreInliner(StringMap<FunctionSamples> &Profiles, uint64_t HotThreshold,
-               uint64_t ColdThreshold);
+  CSPreInliner(SampleContextTracker &Tracker, ProfiledBinary &Binary,
+               ProfileSummary *Summary);
   void run();
 
 private:
@@ -77,13 +84,11 @@ private:
   std::vector<StringRef> buildTopDownOrder();
   void processFunction(StringRef Name);
   bool shouldInline(ProfiledInlineCandidate &Candidate);
-  SampleContextTracker ContextTracker;
-  StringMap<FunctionSamples> &ProfileMap;
-
-  // Count thresholds to answer isHotCount and isColdCount queries.
-  // Mirrors the threshold in ProfileSummaryInfo.
-  uint64_t HotCountThreshold;
-  uint64_t ColdCountThreshold;
+  uint32_t getFuncSize(const ContextTrieNode *ContextNode);
+  bool UseContextCost;
+  SampleContextTracker &ContextTracker;
+  ProfiledBinary &Binary;
+  ProfileSummary *Summary;
 };
 
 } // end namespace sampleprof

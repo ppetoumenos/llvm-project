@@ -112,8 +112,7 @@ auto function1 = invalid1;
 // expected-error@second.h:* {{Types::Attributed::invalid1' has different definitions in different modules; definition in module 'SecondModule' first difference is function body}}
 // expected-note@first.h:* {{but in 'FirstModule' found a different body}}
 auto function2 = invalid2;
-// expected-error@second.h:* {{'Types::Attributed::invalid2' has different definitions in different modules; definition in module 'SecondModule' first difference is function body}}
-// expected-note@first.h:* {{but in 'FirstModule' found a different body}}
+
 auto function3 = valid;
 #endif
 }  // namespace Attributed
@@ -241,12 +240,12 @@ Valid v;
 @end
 @interface Interface5 <T : I1 *> {
 @public
-  T<P1> x;
+  T<P1> y;
 }
 @end
 @interface Interface6 <T1 : I1 *, T2 : I2 *> {
 @public
-  T1 x;
+  T1 z;
 }
 @end
 #elif defined(SECOND)
@@ -257,14 +256,16 @@ Valid v;
 @end
 @interface Interface5 <T : I1 *> {
 @public
-  T<P1, P2> x;
+  T<P1, P2> y;
 }
 @end
 @interface Interface6 <T1 : I1 *, T2 : I2 *> {
 @public
-  T2 x;
+  T2 z;
 }
 @end
+#else
+
 #endif
 
 namespace Types {
@@ -276,22 +277,22 @@ struct Invalid1 {
 };
 struct Invalid2 {
   Interface5 *I;
-  decltype(I->x) x;
+  decltype(I->y) y;
 };
 struct Invalid3 {
   Interface6 *I;
-  decltype(I->x) x;
+  decltype(I->z) z;
 };
 #else
 Invalid1 i1;
-// expected-error@first.h:* {{'Types::ObjCTypeParam::Invalid1::x' from module 'FirstModule' is not present in definition of 'Types::ObjCTypeParam::Invalid1' in module 'SecondModule'}}
-// expected-note@second.h:* {{declaration of 'x' does not match}}
+
 Invalid2 i2;
-// expected-error@first.h:* {{'Types::ObjCTypeParam::Invalid2::x' from module 'FirstModule' is not present in definition of 'Types::ObjCTypeParam::Invalid2' in module 'SecondModule'}}
-// expected-note@second.h:* {{declaration of 'x' does not match}}
+
 Invalid3 i3;
-// expected-error@first.h:* {{'Types::ObjCTypeParam::Invalid3::x' from module 'FirstModule' is not present in definition of 'Types::ObjCTypeParam::Invalid3' in module 'SecondModule'}}
-// expected-note@second.h:* {{declaration of 'x' does not match}}
+
+// FIXME: We should reject to merge these structs and diagnose for the
+// different definitions for Interface4/Interface5/Interface6.
+
 #endif
 
 }  // namespace ObjCTypeParam

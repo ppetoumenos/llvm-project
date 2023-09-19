@@ -42,6 +42,8 @@ Symbols:
 # CHECK64-NEXT:   OptionalHeaderSize: 0x0
 # CHECK64-NEXT:   Flags: 0x0
 # CHECK64-NEXT: }
+# CHECK64-NEXT: AuxiliaryHeader {
+# CHECK64-NEXT: }
 # CHECK64-NEXT: Sections [
 # CHECK64-NEXT:   Section {
 # CHECK64-NEXT:     Index: 1
@@ -135,6 +137,7 @@ Symbols:
 # CHECK64-NEXT:   }
 # CHECK64-NEXT: ]
 # CHECK64-NEXT: StringTable {
+# CHECK64-NEXT:   Length: 28
 # CHECK64-NEXT:   [     4]   .text
 # CHECK64-NEXT:   [     a]   .abs
 # CHECK64-NEXT:   [     f]   .undef

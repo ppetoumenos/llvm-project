@@ -10,14 +10,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PassDetail.h"
-#include "mlir/Dialect/SCF/SCF.h"
-#include "mlir/Dialect/SCF/Transforms.h"
-#include "mlir/Dialect/SCF/Utils.h"
-#include "mlir/Dialect/StandardOps/IR/Ops.h"
-#include "mlir/IR/BlockAndValueMapping.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/Dialect/SCF/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Support/MathExtras.h"
+#include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scf-loop-pipelining"
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
 using namespace mlir::scf;
@@ -40,6 +47,9 @@ protected:
   int64_t ub;
   int64_t lb;
   int64_t step;
+  PipeliningOption::AnnotationlFnType annotateFn = nullptr;
+  bool peelEpilogue;
+  PipeliningOption::PredicateOpFn predicateFn = nullptr;
 
   // When peeling the kernel we generate several version of each value for
   // different stage of the prologue. This map tracks the mapping between
@@ -57,42 +67,55 @@ public:
   bool initializeLoopInfo(ForOp op, const PipeliningOption &options);
   /// Emits the prologue, this creates `maxStage - 1` part which will contain
   /// operations from stages [0; i], where i is the part index.
-  void emitPrologue(PatternRewriter &rewriter);
+  void emitPrologue(RewriterBase &rewriter);
   /// Gather liverange information for Values that are used in a different stage
   /// than its definition.
   llvm::MapVector<Value, LiverangeInfo> analyzeCrossStageValues();
   scf::ForOp createKernelLoop(
       const llvm::MapVector<Value, LiverangeInfo> &crossStageValues,
-      PatternRewriter &rewriter,
+      RewriterBase &rewriter,
       llvm::DenseMap<std::pair<Value, unsigned>, unsigned> &loopArgMap);
   /// Emits the pipelined kernel. This clones loop operations following user
   /// order and remaps operands defined in a different stage as their use.
-  void createKernel(
+  LogicalResult createKernel(
       scf::ForOp newForOp,
       const llvm::MapVector<Value, LiverangeInfo> &crossStageValues,
       const llvm::DenseMap<std::pair<Value, unsigned>, unsigned> &loopArgMap,
-      PatternRewriter &rewriter);
+      RewriterBase &rewriter);
   /// Emits the epilogue, this creates `maxStage - 1` part which will contain
   /// operations from stages [i; maxStage], where i is the part index.
-  llvm::SmallVector<Value> emitEpilogue(PatternRewriter &rewriter);
+  llvm::SmallVector<Value> emitEpilogue(RewriterBase &rewriter);
 };
 
 bool LoopPipelinerInternal::initializeLoopInfo(
     ForOp op, const PipeliningOption &options) {
+  LDBG("Start initializeLoopInfo");
   forOp = op;
-  auto upperBoundCst = forOp.upperBound().getDefiningOp<ConstantIndexOp>();
-  auto lowerBoundCst = forOp.lowerBound().getDefiningOp<ConstantIndexOp>();
-  auto stepCst = forOp.step().getDefiningOp<ConstantIndexOp>();
-  if (!upperBoundCst || !lowerBoundCst || !stepCst)
+  auto upperBoundCst =
+      forOp.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
+  auto lowerBoundCst =
+      forOp.getLowerBound().getDefiningOp<arith::ConstantIndexOp>();
+  auto stepCst = forOp.getStep().getDefiningOp<arith::ConstantIndexOp>();
+  if (!upperBoundCst || !lowerBoundCst || !stepCst) {
+    LDBG("--no constant bounds or step -> BAIL");
     return false;
-  ub = upperBoundCst.getValue();
-  lb = lowerBoundCst.getValue();
-  step = stepCst.getValue();
+  }
+  ub = upperBoundCst.value();
+  lb = lowerBoundCst.value();
+  step = stepCst.value();
+  peelEpilogue = options.peelEpilogue;
+  predicateFn = options.predicateFn;
+  if (!peelEpilogue && predicateFn == nullptr) {
+    LDBG("--no epilogue or predicate set -> BAIL");
+    return false;
+  }
   int64_t numIteration = ceilDiv(ub - lb, step);
   std::vector<std::pair<Operation *, unsigned>> schedule;
   options.getScheduleFn(forOp, schedule);
-  if (schedule.empty())
+  if (schedule.empty()) {
+    LDBG("--empty schedule -> BAIL");
     return false;
+  }
 
   opOrder.reserve(schedule.size());
   for (auto &opSchedule : schedule) {
@@ -100,19 +123,39 @@ bool LoopPipelinerInternal::initializeLoopInfo(
     stages[opSchedule.first] = opSchedule.second;
     opOrder.push_back(opSchedule.first);
   }
-  if (numIteration <= maxStage)
+  if (numIteration <= maxStage) {
+    LDBG("--fewer loop iterations than pipeline stages -> BAIL");
     return false;
+  }
 
   // All operations need to have a stage.
-  if (forOp
-          .walk([this](Operation *op) {
-            if (op != forOp.getOperation() && !isa<scf::YieldOp>(op) &&
-                stages.find(op) == stages.end())
-              return WalkResult::interrupt();
-            return WalkResult::advance();
-          })
-          .wasInterrupted())
-    return false;
+  for (Operation &op : forOp.getBody()->without_terminator()) {
+    if (!stages.contains(&op)) {
+      op.emitOpError("not assigned a pipeline stage");
+      LDBG("--op not assigned a pipeline stage: " << op << " -> BAIL");
+      return false;
+    }
+  }
+
+  // Currently, we do not support assigning stages to ops in nested regions. The
+  // block of all operations assigned a stage should be the single `scf.for`
+  // body block.
+  for (const auto &[op, stageNum] : stages) {
+    (void)stageNum;
+    if (op == forOp.getBody()->getTerminator()) {
+      op->emitError("terminator should not be assigned a stage");
+      LDBG("--terminator should not be assigned stage: " << *op << " -> BAIL");
+      return false;
+    }
+    if (op->getBlock() != forOp.getBody()) {
+      op->emitOpError("the owning Block of all operations assigned a stage "
+                      "should be the loop body block");
+      LDBG("--the owning Block of all operations assigned a stage "
+           "should be the loop body block: "
+           << *op << " -> BAIL");
+      return false;
+    }
+  }
 
   // Only support loop carried dependency with a distance of 1. This means the
   // source of all the scf.yield operands needs to be defined by operations in
@@ -120,13 +163,36 @@ bool LoopPipelinerInternal::initializeLoopInfo(
   if (llvm::any_of(forOp.getBody()->getTerminator()->getOperands(),
                    [this](Value operand) {
                      Operation *def = operand.getDefiningOp();
-                     return !def || stages.find(def) == stages.end();
-                   }))
+                     return !def || !stages.contains(def);
+                   })) {
+    LDBG("--only support loop carried dependency with a distance of 1 -> BAIL");
     return false;
+  }
+  annotateFn = options.annotateFn;
   return true;
 }
 
-void LoopPipelinerInternal::emitPrologue(PatternRewriter &rewriter) {
+/// Clone `op` and call `callback` on the cloned op's oeprands as well as any
+/// operands of nested ops that:
+/// 1) aren't defined within the new op or
+/// 2) are block arguments.
+static Operation *
+cloneAndUpdateOperands(RewriterBase &rewriter, Operation *op,
+                       function_ref<void(OpOperand *newOperand)> callback) {
+  Operation *clone = rewriter.clone(*op);
+  for (OpOperand &operand : clone->getOpOperands())
+    callback(&operand);
+  clone->walk([&](Operation *nested) {
+    for (OpOperand &operand : nested->getOpOperands()) {
+      Operation *def = operand.get().getDefiningOp();
+      if ((def && !clone->isAncestor(def)) || isa<BlockArgument>(operand.get()))
+        callback(&operand);
+    }
+  });
+  return clone;
+}
+
+void LoopPipelinerInternal::emitPrologue(RewriterBase &rewriter) {
   // Initialize the iteration argument to the loop initiale values.
   for (BlockArgument &arg : forOp.getRegionIterArgs()) {
     OpOperand &operand = forOp.getOpOperandForRegionIterArg(arg);
@@ -135,17 +201,22 @@ void LoopPipelinerInternal::emitPrologue(PatternRewriter &rewriter) {
   auto yield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
   for (int64_t i = 0; i < maxStage; i++) {
     // special handling for induction variable as the increment is implicit.
-    Value iv = rewriter.create<ConstantIndexOp>(forOp.getLoc(), lb + i);
+    Value iv =
+        rewriter.create<arith::ConstantIndexOp>(forOp.getLoc(), lb + i * step);
     setValueMapping(forOp.getInductionVar(), iv, i);
     for (Operation *op : opOrder) {
       if (stages[op] > i)
         continue;
-      Operation *newOp = rewriter.clone(*op);
-      for (unsigned opIdx = 0; opIdx < op->getNumOperands(); opIdx++) {
-        auto it = valueMapping.find(op->getOperand(opIdx));
-        if (it != valueMapping.end())
-          newOp->setOperand(opIdx, it->second[i - stages[op]]);
-      }
+      Operation *newOp =
+          cloneAndUpdateOperands(rewriter, op, [&](OpOperand *newOperand) {
+            auto it = valueMapping.find(newOperand->get());
+            if (it != valueMapping.end()) {
+              Value replacement = it->second[i - stages[op]];
+              newOperand->set(replacement);
+            }
+          });
+      if (annotateFn)
+        annotateFn(newOp, PipeliningOption::PipelinerPart::Prologue, i);
       for (unsigned destId : llvm::seq(unsigned(0), op->getNumResults())) {
         setValueMapping(op->getResult(destId), newOp->getResult(destId),
                         i - stages[op]);
@@ -167,18 +238,25 @@ LoopPipelinerInternal::analyzeCrossStageValues() {
   llvm::MapVector<Value, LoopPipelinerInternal::LiverangeInfo> crossStageValues;
   for (Operation *op : opOrder) {
     unsigned stage = stages[op];
-    for (OpOperand &operand : op->getOpOperands()) {
+
+    auto analyzeOperand = [&](OpOperand &operand) {
       Operation *def = operand.get().getDefiningOp();
       if (!def)
-        continue;
+        return;
       auto defStage = stages.find(def);
       if (defStage == stages.end() || defStage->second == stage)
-        continue;
+        return;
       assert(stage > defStage->second);
       LiverangeInfo &info = crossStageValues[operand.get()];
       info.defStage = defStage->second;
       info.lastUseStage = std::max(info.lastUseStage, stage);
-    }
+    };
+
+    for (OpOperand &operand : op->getOpOperands())
+      analyzeOperand(operand);
+    visitUsedValuesDefinedAbove(op->getRegions(), [&](OpOperand *operand) {
+      analyzeOperand(*operand);
+    });
   }
   return crossStageValues;
 }
@@ -186,7 +264,7 @@ LoopPipelinerInternal::analyzeCrossStageValues() {
 scf::ForOp LoopPipelinerInternal::createKernelLoop(
     const llvm::MapVector<Value, LoopPipelinerInternal::LiverangeInfo>
         &crossStageValues,
-    PatternRewriter &rewriter,
+    RewriterBase &rewriter,
     llvm::DenseMap<std::pair<Value, unsigned>, unsigned> &loopArgMap) {
   // Creates the list of initial values associated to values used across
   // stages. The initial values come from the prologue created above.
@@ -195,7 +273,7 @@ scf::ForOp LoopPipelinerInternal::createKernelLoop(
   llvm::SmallVector<Value> newLoopArg;
   // For existing loop argument initialize them with the right version from the
   // prologue.
-  for (auto retVal :
+  for (const auto &retVal :
        llvm::enumerate(forOp.getBody()->getTerminator()->getOperands())) {
     Operation *def = retVal.value().getDefiningOp();
     assert(def && "Only support loop carried dependencies of distance 1");
@@ -219,48 +297,76 @@ scf::ForOp LoopPipelinerInternal::createKernelLoop(
     }
   }
 
-  // Create the new kernel loop. Since we need to peel `numStages - 1`
-  // iteration we change the upper bound to remove those iterations.
-  Value newUb =
-      rewriter.create<ConstantIndexOp>(forOp.getLoc(), ub - maxStage * step);
-  auto newForOp = rewriter.create<scf::ForOp>(
-      forOp.getLoc(), forOp.lowerBound(), newUb, forOp.step(), newLoopArg);
+  // Create the new kernel loop. When we peel the epilgue we need to peel
+  // `numStages - 1` iterations. Then we adjust the upper bound to remove those
+  // iterations.
+  Value newUb = forOp.getUpperBound();
+  if (peelEpilogue)
+    newUb = rewriter.create<arith::ConstantIndexOp>(forOp.getLoc(),
+                                                    ub - maxStage * step);
+  auto newForOp =
+      rewriter.create<scf::ForOp>(forOp.getLoc(), forOp.getLowerBound(), newUb,
+                                  forOp.getStep(), newLoopArg);
+  // When there are no iter args, the loop body terminator will be created.
+  // Since we always create it below, remove the terminator if it was created.
+  if (!newForOp.getBody()->empty())
+    rewriter.eraseOp(newForOp.getBody()->getTerminator());
   return newForOp;
 }
 
-void LoopPipelinerInternal::createKernel(
+LogicalResult LoopPipelinerInternal::createKernel(
     scf::ForOp newForOp,
     const llvm::MapVector<Value, LoopPipelinerInternal::LiverangeInfo>
         &crossStageValues,
     const llvm::DenseMap<std::pair<Value, unsigned>, unsigned> &loopArgMap,
-    PatternRewriter &rewriter) {
+    RewriterBase &rewriter) {
   valueMapping.clear();
 
   // Create the kernel, we clone instruction based on the order given by
   // user and remap operands coming from a previous stages.
   rewriter.setInsertionPoint(newForOp.getBody(), newForOp.getBody()->begin());
-  BlockAndValueMapping mapping;
+  IRMapping mapping;
   mapping.map(forOp.getInductionVar(), newForOp.getInductionVar());
-  for (auto arg : llvm::enumerate(forOp.getRegionIterArgs())) {
+  for (const auto &arg : llvm::enumerate(forOp.getRegionIterArgs())) {
     mapping.map(arg.value(), newForOp.getRegionIterArgs()[arg.index()]);
+  }
+  SmallVector<Value> predicates(maxStage + 1, nullptr);
+  if (!peelEpilogue) {
+    // Create a predicate for each stage except the last stage.
+    for (unsigned i = 0; i < maxStage; i++) {
+      Value c = rewriter.create<arith::ConstantIndexOp>(
+          newForOp.getLoc(), ub - (maxStage - i) * step);
+      Value pred = rewriter.create<arith::CmpIOp>(
+          newForOp.getLoc(), arith::CmpIPredicate::slt,
+          newForOp.getInductionVar(), c);
+      predicates[i] = pred;
+    }
   }
   for (Operation *op : opOrder) {
     int64_t useStage = stages[op];
     auto *newOp = rewriter.clone(*op, mapping);
-    for (OpOperand &operand : op->getOpOperands()) {
+    SmallVector<OpOperand *> operands;
+    // Collect all the operands for the cloned op and its nested ops.
+    op->walk([&operands](Operation *nestedOp) {
+      for (OpOperand &operand : nestedOp->getOpOperands()) {
+        operands.push_back(&operand);
+      }
+    });
+    for (OpOperand *operand : operands) {
+      Operation *nestedNewOp = mapping.lookup(operand->getOwner());
       // Special case for the induction variable uses. We replace it with a
       // version incremented based on the stage where it is used.
-      if (operand.get() == forOp.getInductionVar()) {
+      if (operand->get() == forOp.getInductionVar()) {
         rewriter.setInsertionPoint(newOp);
-        Value offset = rewriter.create<ConstantIndexOp>(
+        Value offset = rewriter.create<arith::ConstantIndexOp>(
             forOp.getLoc(), (maxStage - stages[op]) * step);
-        Value iv = rewriter.create<AddIOp>(forOp.getLoc(),
-                                           newForOp.getInductionVar(), offset);
-        newOp->setOperand(operand.getOperandNumber(), iv);
+        Value iv = rewriter.create<arith::AddIOp>(
+            forOp.getLoc(), newForOp.getInductionVar(), offset);
+        nestedNewOp->setOperand(operand->getOperandNumber(), iv);
         rewriter.setInsertionPointAfter(newOp);
         continue;
       }
-      auto arg = operand.get().dyn_cast<BlockArgument>();
+      auto arg = dyn_cast<BlockArgument>(operand->get());
       if (arg && arg.getOwner() == forOp.getBody()) {
         // If the value is a loop carried value coming from stage N + 1 remap,
         // it will become a direct use.
@@ -273,25 +379,37 @@ void LoopPipelinerInternal::createKernel(
         if (stageDep == stages.end() || stageDep->second == useStage)
           continue;
         assert(stageDep->second == useStage + 1);
-        newOp->setOperand(operand.getOperandNumber(),
-                          mapping.lookupOrDefault(ret));
+        nestedNewOp->setOperand(operand->getOperandNumber(),
+                                mapping.lookupOrDefault(ret));
         continue;
       }
       // For operands defined in a previous stage we need to remap it to use
       // the correct region argument. We look for the right version of the
       // Value based on the stage where it is used.
-      Operation *def = operand.get().getDefiningOp();
+      Operation *def = operand->get().getDefiningOp();
       if (!def)
         continue;
       auto stageDef = stages.find(def);
       if (stageDef == stages.end() || stageDef->second == useStage)
         continue;
       auto remap = loopArgMap.find(
-          std::make_pair(operand.get(), useStage - stageDef->second));
+          std::make_pair(operand->get(), useStage - stageDef->second));
       assert(remap != loopArgMap.end());
-      newOp->setOperand(operand.getOperandNumber(),
-                        newForOp.getRegionIterArgs()[remap->second]);
+      nestedNewOp->setOperand(operand->getOperandNumber(),
+                              newForOp.getRegionIterArgs()[remap->second]);
     }
+
+    if (predicates[useStage]) {
+      newOp = predicateFn(rewriter, newOp, predicates[useStage]);
+      if (!newOp)
+        return failure();
+      // Remap the results to the new predicated one.
+      for (auto values : llvm::zip(op->getResults(), newOp->getResults()))
+        mapping.map(std::get<0>(values), std::get<1>(values));
+    }
+    rewriter.setInsertionPointAfter(newOp);
+    if (annotateFn)
+      annotateFn(newOp, PipeliningOption::PipelinerPart::Kernel, 0);
   }
 
   // Collect the Values that need to be returned by the forOp. For each
@@ -306,9 +424,9 @@ void LoopPipelinerInternal::createKernel(
   for (auto &it : crossStageValues) {
     int64_t version = maxStage - it.second.lastUseStage + 1;
     unsigned numVersionReturned = it.second.lastUseStage - it.second.defStage;
-    // add the original verstion to yield ops.
-    // If there is a liverange spanning across more than 2 stages we need to add
-    // extra arg.
+    // add the original version to yield ops.
+    // If there is a live range spanning across more than 2 stages we need to
+    // add extra arg.
     for (unsigned i = 1; i < numVersionReturned; i++) {
       setValueMapping(it.first, newForOp->getResult(yieldOperands.size()),
                       version++);
@@ -321,7 +439,7 @@ void LoopPipelinerInternal::createKernel(
     yieldOperands.push_back(mapping.lookupOrDefault(it.first));
   }
   // Map the yield operand to the forOp returned value.
-  for (auto retVal :
+  for (const auto &retVal :
        llvm::enumerate(forOp.getBody()->getTerminator()->getOperands())) {
     Operation *def = retVal.value().getDefiningOp();
     assert(def && "Only support loop carried dependencies of distance 1");
@@ -331,33 +449,35 @@ void LoopPipelinerInternal::createKernel(
                     maxStage - defStage + 1);
   }
   rewriter.create<scf::YieldOp>(forOp.getLoc(), yieldOperands);
+  return success();
 }
 
 llvm::SmallVector<Value>
-LoopPipelinerInternal::emitEpilogue(PatternRewriter &rewriter) {
+LoopPipelinerInternal::emitEpilogue(RewriterBase &rewriter) {
   llvm::SmallVector<Value> returnValues(forOp->getNumResults());
   // Emit different versions of the induction variable. They will be
   // removed by dead code if not used.
   for (int64_t i = 0; i < maxStage; i++) {
-    Value newlastIter = rewriter.create<ConstantIndexOp>(
+    Value newlastIter = rewriter.create<arith::ConstantIndexOp>(
         forOp.getLoc(), lb + step * ((((ub - 1) - lb) / step) - i));
     setValueMapping(forOp.getInductionVar(), newlastIter, maxStage - i);
   }
-  // Emit `maxStage - 1` epilogue part that includes operations fro stages
+  // Emit `maxStage - 1` epilogue part that includes operations from stages
   // [i; maxStage].
   for (int64_t i = 1; i <= maxStage; i++) {
     for (Operation *op : opOrder) {
       if (stages[op] < i)
         continue;
-      Operation *newOp = rewriter.clone(*op);
-      for (unsigned opIdx = 0; opIdx < op->getNumOperands(); opIdx++) {
-        auto it = valueMapping.find(op->getOperand(opIdx));
-        if (it != valueMapping.end()) {
-          Value v = it->second[maxStage - stages[op] + i];
-          assert(v);
-          newOp->setOperand(opIdx, v);
-        }
-      }
+      Operation *newOp =
+          cloneAndUpdateOperands(rewriter, op, [&](OpOperand *newOperand) {
+            auto it = valueMapping.find(newOperand->get());
+            if (it != valueMapping.end()) {
+              Value replacement = it->second[maxStage - stages[op] + i];
+              newOperand->set(replacement);
+            }
+          });
+      if (annotateFn)
+        annotateFn(newOp, PipeliningOption::PipelinerPart::Epilogue, i - 1);
       for (unsigned destId : llvm::seq(unsigned(0), op->getNumResults())) {
         setValueMapping(op->getResult(destId), newOp->getResult(destId),
                         maxStage - stages[op] + i);
@@ -396,73 +516,60 @@ void LoopPipelinerInternal::setValueMapping(Value key, Value el, int64_t idx) {
   it->second[idx] = el;
 }
 
-/// Generate a pipelined version of the scf.for loop based on the schedule given
-/// as option. This applies the mechanical transformation of changing the loop
-/// and generating the prologue/epilogue for the pipelining and doesn't make any
-/// decision regarding the schedule.
-/// Based on the option the loop is split into several stages.
-/// The transformation assumes that the scheduling given by user is valid.
-/// For example if we break a loop into 3 stages named S0, S1, S2 we would
-/// generate the following code with the number in parenthesis the iteration
-/// index:
-/// S0(0)                        // Prologue
-/// S0(1) S1(0)                  // Prologue
-/// scf.for %I = %C0 to %N - 2 {
-///  S0(I+2) S1(I+1) S2(I)       // Pipelined kernel
-/// }
-/// S1(N) S2(N-1)                // Epilogue
-/// S2(N)                        // Epilogue
-struct ForLoopPipelining : public OpRewritePattern<ForOp> {
-  ForLoopPipelining(const PipeliningOption &options, MLIRContext *context)
-      : OpRewritePattern<ForOp>(context), options(options) {}
-  LogicalResult matchAndRewrite(ForOp forOp,
-                                PatternRewriter &rewriter) const override {
+} // namespace
 
-    LoopPipelinerInternal pipeliner;
-    if (!pipeliner.initializeLoopInfo(forOp, options))
-      return failure();
+FailureOr<ForOp> mlir::scf::pipelineForLoop(RewriterBase &rewriter, ForOp forOp,
+                                            const PipeliningOption &options,
+                                            bool *modifiedIR) {
+  if (modifiedIR)
+    *modifiedIR = false;
+  LoopPipelinerInternal pipeliner;
+  if (!pipeliner.initializeLoopInfo(forOp, options))
+    return failure();
 
-    // 1. Emit prologue.
-    pipeliner.emitPrologue(rewriter);
+  if (modifiedIR)
+    *modifiedIR = true;
 
-    // 2. Track values used across stages. When a value cross stages it will
-    // need to be passed as loop iteration arguments.
-    // We first collect the values that are used in a different stage than where
-    // they are defined.
-    llvm::MapVector<Value, LoopPipelinerInternal::LiverangeInfo>
-        crossStageValues = pipeliner.analyzeCrossStageValues();
+  // 1. Emit prologue.
+  pipeliner.emitPrologue(rewriter);
 
-    // Mapping between original loop values used cross stage and the block
-    // arguments associated after pipelining. A Value may map to several
-    // arguments if its liverange spans across more than 2 stages.
-    llvm::DenseMap<std::pair<Value, unsigned>, unsigned> loopArgMap;
-    // 3. Create the new kernel loop and return the block arguments mapping.
-    ForOp newForOp =
-        pipeliner.createKernelLoop(crossStageValues, rewriter, loopArgMap);
-    // Create the kernel block, order ops based on user choice and remap
-    // operands.
-    pipeliner.createKernel(newForOp, crossStageValues, loopArgMap, rewriter);
+  // 2. Track values used across stages. When a value cross stages it will
+  // need to be passed as loop iteration arguments.
+  // We first collect the values that are used in a different stage than where
+  // they are defined.
+  llvm::MapVector<Value, LoopPipelinerInternal::LiverangeInfo>
+      crossStageValues = pipeliner.analyzeCrossStageValues();
 
+  // Mapping between original loop values used cross stage and the block
+  // arguments associated after pipelining. A Value may map to several
+  // arguments if its liverange spans across more than 2 stages.
+  llvm::DenseMap<std::pair<Value, unsigned>, unsigned> loopArgMap;
+  // 3. Create the new kernel loop and return the block arguments mapping.
+  ForOp newForOp =
+      pipeliner.createKernelLoop(crossStageValues, rewriter, loopArgMap);
+  // Create the kernel block, order ops based on user choice and remap
+  // operands.
+  if (failed(pipeliner.createKernel(newForOp, crossStageValues, loopArgMap,
+                                    rewriter)))
+    return failure();
+
+  llvm::SmallVector<Value> returnValues =
+      newForOp.getResults().take_front(forOp->getNumResults());
+  if (options.peelEpilogue) {
     // 4. Emit the epilogue after the new forOp.
     rewriter.setInsertionPointAfter(newForOp);
-    llvm::SmallVector<Value> returnValues = pipeliner.emitEpilogue(rewriter);
-
-    // 5. Erase the original loop and replace the uses with the epilogue output.
-    if (forOp->getNumResults() > 0)
-      rewriter.replaceOp(forOp, returnValues);
-    else
-      rewriter.eraseOp(forOp);
-
-    return success();
+    returnValues = pipeliner.emitEpilogue(rewriter);
   }
+  // 5. Erase the original loop and replace the uses with the epilogue output.
+  if (forOp->getNumResults() > 0)
+    rewriter.replaceOp(forOp, returnValues);
+  else
+    rewriter.eraseOp(forOp);
 
-protected:
-  PipeliningOption options;
-};
-
-} // namespace
+  return newForOp;
+}
 
 void mlir::scf::populateSCFLoopPipeliningPatterns(
     RewritePatternSet &patterns, const PipeliningOption &options) {
-  patterns.add<ForLoopPipelining>(options, patterns.getContext());
+  patterns.add<ForLoopPipeliningPattern>(options, patterns.getContext());
 }

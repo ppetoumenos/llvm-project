@@ -13,30 +13,23 @@
 
 module __Fortran_type_info
 
+  use, intrinsic :: __Fortran_builtins, only: __builtin_c_ptr, __builtin_c_funptr
+
   private
 
   integer, parameter :: int64 = selected_int_kind(18)
-
-  type, public :: __builtin_c_ptr
-    integer(kind=int64) :: __address
-  end type
-
-  type, public :: __builtin_c_funptr
-    integer(kind=int64) :: __address
-  end type
 
   type :: DerivedType
     ! "TBP" bindings appear first.  Inherited bindings, with overrides already
     ! applied, appear in the initial entries in the same order as they
     ! appear in the parent type's bindings, if any.  They are followed
-    ! by new local bindings in alphabetic order of theing binding names.
+    ! by new local bindings in alphabetic order of their binding names.
     type(Binding), pointer, contiguous :: binding(:)
     character(len=:), pointer :: name
     integer(kind=int64) :: sizeInBytes
     ! Instances of parameterized derived types use the "uninstantiated"
     ! component to point to the pristine original definition.
     type(DerivedType), pointer :: uninstantiated
-    integer(kind=int64) :: typeHash
     integer(kind=int64), pointer, contiguous :: kindParameter(:) ! values of instance
     integer(1), pointer, contiguous :: lenParameterKind(:) ! INTEGER kinds of LEN types
     ! Data components appear in component order.
@@ -44,11 +37,15 @@ module __Fortran_type_info
     type(Component), pointer, contiguous :: component(:) ! data components
     type(ProcPtrComponent), pointer, contiguous :: procptr(:) ! procedure pointers
     ! Special bindings of the ancestral types are not duplicated here.
+    ! Bindings are in ascending order of their "which" code values.
     type(SpecialBinding), pointer, contiguous :: special(:)
+    ! A little-endian bit set of SpecialBinding::Which codes present in "special"
+    integer(4) :: specialBitSet
     integer(1) :: hasParent
     integer(1) :: noInitializationNeeded ! 1 if no component w/ init
     integer(1) :: noDestructionNeeded ! 1 if no component w/ dealloc/final
-    integer(1) :: __padding0(5)
+    integer(1) :: noFinalizationNeeded ! 1 if nothing finalizeable
+    integer(1) :: __padding0(4)
   end type
 
   type :: Binding
@@ -101,17 +98,19 @@ module __Fortran_type_info
   end type
 
   enum, bind(c) ! SpecialBinding::Which
-    enumerator :: Assignment = 4, ElementalAssignment = 5
-    enumerator :: Final = 8, ElementalFinal = 9, AssumedRankFinal = 10
-    enumerator :: ReadFormatted = 16, ReadUnformatted = 17
-    enumerator :: WriteFormatted = 18, WriteUnformatted = 19
+    enumerator :: ScalarAssignment = 1, ElementalAssignment = 2
+    enumerator :: ReadFormatted = 3, ReadUnformatted = 4
+    enumerator :: WriteFormatted = 5, WriteUnformatted = 6
+    enumerator :: ElementalFinal = 7, AssumedRankFinal = 8
+    enumerator :: ScalarFinal = 9 ! higher-rank final procedures follow
   end enum
 
   type, bind(c) :: SpecialBinding
     integer(1) :: which ! SpecialBinding::Which
-    integer(1) :: rank ! for which == SpecialBinding::Which::Final only
     integer(1) :: isArgDescriptorSet
-    integer(1) :: __padding0(5)
+    integer(1) :: isTypeBound
+    integer(1) :: isArgContiguousSet
+    integer(1) :: __padding0(4)
     type(__builtin_c_funptr) :: proc
   end type
 

@@ -79,6 +79,12 @@ file formats.
  Display the specified section(s) as hexadecimal bytes. ``section`` may be a
  section index or section name.
 
+ .. option:: --memtag
+
+ Display information about memory tagging present in the binary. This includes
+ various memtag-specific dynamic entries, decoded global descriptor sections,
+ and decoded Android-specific ELF notes.
+
 .. option:: --needed-libs
 
  Display the needed libraries.
@@ -106,6 +112,10 @@ file formats.
  When used with :option:`--sections`, display symbols for each section shown.
  This option has no effect for GNU style output.
 
+.. option:: --sort-symbols=<sort_key[,sort_key]>
+
+ Specify the keys to sort symbols before displaying symtab.
+ Valid values for sort_key are ``name`` and ``type``.
 .. option:: --stackmap
 
  Display contents of the stackmap section.
@@ -116,7 +126,7 @@ file formats.
  section index or section name.
 
 .. option:: --string-table
- 
+
  Display contents of the string table.
 
 .. option:: --symbols, --syms, -s
@@ -183,9 +193,10 @@ The following options are implemented only for the ELF file format.
 
 .. option:: --elf-output-style=<value>
 
- Format ELF information in the specified style. Valid options are ``LLVM`` and
- ``GNU``. ``LLVM`` output (the default) is an expanded and structured format,
- whilst ``GNU`` output mimics the equivalent GNU :program:`readelf` output.
+ Format ELF information in the specified style. Valid options are ``LLVM``,
+ ``GNU``, and ``JSON``. ``LLVM`` output (the default) is an expanded and
+ structured format. ``GNU`` output mimics the equivalent GNU :program:`readelf`
+ output. ``JSON`` is JSON formatted output intended for machine consumption.
 
 .. option:: --section-groups, -g
 
@@ -203,9 +214,20 @@ The following options are implemented only for the ELF file format.
 
  Display the hash table for dynamic symbols.
 
+.. option:: --memtag
+
+ Display information about memory tagging present in the binary. This includes
+ various dynamic entries, decoded global descriptor sections, and decoded
+ Android-specific ELF notes.
+
 .. option:: --notes, -n
 
  Display all notes.
+
+.. option:: --pretty-print
+
+ When used with :option:`--elf-output-style`, JSON output will be formatted in
+ a more readable format.
 
 .. option:: --program-headers, --segments, -l
 
@@ -310,6 +332,31 @@ The following options are implemented only for the PE/COFF file format.
 .. option:: --coff-resources
 
  Display the .rsrc section.
+
+XCOFF SPECIFIC OPTIONS
+----------------------
+
+The following options are implemented only for the XCOFF file format.
+
+.. option:: --auxiliary-header
+
+  Display XCOFF Auxiliary header.
+
+.. option:: --exception-section
+
+  Display XCOFF exception section entries.
+
+.. option:: --loader-section-header
+
+  Display XCOFF loader section header.
+
+.. option:: --loader-section-symbols
+
+  Display symbol table of loader section.
+
+.. option:: --loader-section-relocations
+
+  Display relocation entries of loader section.
 
 EXIT STATUS
 -----------

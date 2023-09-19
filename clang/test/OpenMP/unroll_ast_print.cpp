@@ -1,15 +1,15 @@
 // Check no warnings/errors
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fsyntax-only -verify %s
 // expected-no-diagnostics
 
 // Check AST and unparsing
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -ast-dump  %s | FileCheck %s --check-prefix=DUMP
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -ast-print %s | FileCheck %s --check-prefix=PRINT --match-full-lines
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -ast-dump  %s | FileCheck %s --check-prefix=DUMP
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -ast-print %s | FileCheck %s --check-prefix=PRINT --match-full-lines
 
 // Check same results after serialization round-trip
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -emit-pch -o %t %s
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -include-pch %t -ast-dump-all %s | FileCheck %s --check-prefix=DUMP
-// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -fopenmp-version=51 -include-pch %t -ast-print    %s | FileCheck %s --check-prefix=PRINT --match-full-lines
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -emit-pch -o %t %s
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -include-pch %t -ast-dump-all %s | FileCheck %s --check-prefix=DUMP
+// RUN: %clang_cc1 -triple x86_64-pc-linux-gnu -fopenmp -include-pch %t -ast-print    %s | FileCheck %s --check-prefix=PRINT --match-full-lines
 
 #ifndef HEADER
 #define HEADER
@@ -123,5 +123,27 @@ void unroll_templated() {
 void unroll_template() {
   unroll_templated<int,0,1024,1,4>();
 }
+
+
+// PRINT-LABEL: template <int Factor> void unroll_templated_factor(int start, int stop, int step) {
+// DUMP-LABEL:  FunctionTemplateDecl {{.*}} unroll_templated_factor
+template <int Factor>
+void unroll_templated_factor(int start, int stop, int step) {
+  // PRINT: #pragma omp unroll partial(Factor)
+  // DUMP:      OMPUnrollDirective
+  // DUMP-NEXT: OMPPartialClause
+  // DUMP-NEXT:   DeclRefExpr {{.*}} 'Factor' 'int'
+  #pragma omp unroll partial(Factor)
+    // PRINT-NEXT: for (int i = start; i < stop; i += step)
+    // DUMP-NEXT:  ForStmt
+    for (int i = start; i < stop; i += step)
+      // PRINT-NEXT: body(i);
+      // DUMP:  CallExpr
+      body(i);
+}
+void unroll_template_factor() {
+  unroll_templated_factor<4>(0, 42, 2);
+}
+
 
 #endif

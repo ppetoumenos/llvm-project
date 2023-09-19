@@ -12,9 +12,7 @@
 #include "../ClangTidyCheck.h"
 #include "../utils/FileExtensionsUtils.h"
 
-namespace clang {
-namespace tidy {
-namespace utils {
+namespace clang::tidy::utils {
 
 /// Finds and fixes header guards.
 /// The check supports these options:
@@ -27,16 +25,27 @@ namespace utils {
 class HeaderGuardCheck : public ClangTidyCheck {
 public:
   HeaderGuardCheck(StringRef Name, ClangTidyContext *Context)
-      : ClangTidyCheck(Name, Context),
-        RawStringHeaderFileExtensions(Options.getLocalOrGlobal(
-            "HeaderFileExtensions", utils::defaultHeaderFileExtensions())) {
-    utils::parseFileExtensions(RawStringHeaderFileExtensions,
-                               HeaderFileExtensions,
-                               utils::defaultFileExtensionDelimiters());
+      : ClangTidyCheck(Name, Context) {
+    std::optional<StringRef> HeaderFileExtensionsOption =
+        Options.get("HeaderFileExtensions");
+    RawStringHeaderFileExtensions = HeaderFileExtensionsOption.value_or(
+        utils::defaultHeaderFileExtensions());
+    if (HeaderFileExtensionsOption) {
+      if (!utils::parseFileExtensions(
+              RawStringHeaderFileExtensions, HeaderFileExtensions,
+              utils::defaultFileExtensionDelimiters())) {
+        this->configurationDiag("Invalid header file extension: '%0'")
+            << RawStringHeaderFileExtensions;
+      }
+    } else
+      HeaderFileExtensions = Context->getHeaderFileExtensions();
   }
   void storeOptions(ClangTidyOptions::OptionMap &Opts) override;
   void registerPPCallbacks(const SourceManager &SM, Preprocessor *PP,
                            Preprocessor *ModuleExpanderPP) override;
+
+  /// Ensure that the provided header guard is a non-reserved identifier.
+  std::string sanitizeHeaderGuard(StringRef Guard);
 
   /// Returns ``true`` if the check should suggest inserting a trailing comment
   /// on the ``#endif`` of the header guard. It will use the same name as
@@ -57,11 +66,9 @@ public:
 
 private:
   std::string RawStringHeaderFileExtensions;
-  utils::FileExtensionsSet HeaderFileExtensions;
+  FileExtensionsSet HeaderFileExtensions;
 };
 
-} // namespace utils
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::utils
 
 #endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_UTILS_HEADERGUARD_H

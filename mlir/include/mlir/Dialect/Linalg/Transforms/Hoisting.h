@@ -10,11 +10,15 @@
 #define MLIR_DIALECT_LINALG_TRANSFORMS_HOISTING_H_
 
 namespace mlir {
+class RewriterBase;
+namespace func {
 class FuncOp;
-struct LogicalResult;
+} // namespace func
+namespace scf {
+class ForOp;
+} // namespace scf
 
 namespace linalg {
-class PadTensorOp;
 
 /// Hoist vector.transfer_read/vector.transfer_write on buffers pairs out of
 /// immediately enclosing scf::ForOp iteratively, if the following conditions
@@ -28,56 +32,113 @@ class PadTensorOp;
 /// function on the candidate loop above which to hoist. Hoisting the transfers
 /// results in scf::ForOp yielding the value that originally transited through
 /// memory.
-// TODO: generalize on a per-need basis.
-void hoistRedundantVectorTransfers(FuncOp func);
+///
+/// WARNING: This hoisting does not model parallelism and is generally incorrect
+/// when used on distributed loops with memref semantics!
+void hoistRedundantVectorTransfers(func::FuncOp func);
 
-/// Same behavior as `hoistRedundantVectorTransfers` but works on tensors
-/// instead of buffers.
-void hoistRedundantVectorTransfersOnTensor(FuncOp func);
+/// Greedily hoist redundant subset extract/insert operations on tensors outside
+/// of `forOp`. The logic follows:
+///   1. Look for a write walking back from the `forOp` yield.
+///   2. Check the uses of the matching block argument and look for a matching
+///      read (i.e. extract_slice of transfer_read) with matching indices.
+///   3. In the case of a transfer_write, we can bypass other non-conflicting
+///      operations and find more hoisting opportunities.
+///   4. Hoist the read/write pair and update the tensor SSA links.
+///
+/// Return the unmodified `forOp` if no hoisting occured.
+/// Return a new scf::ForOp if hoisting on tensors occured.
+///
+/// After this transformation the returned scf::ForOp may have unused arguments
+/// that can be removed by application of canonicalization patterns.
+///
+/// Example:
+/// ========
+/// IR Resembling:
+///
+/// ```
+/// %0 = scf.for %i = %l to %u step %s iter_args(%a0 = %t0)->(tensor<10xf32>) {
+///  %1 = scf.for %j = %l to %u step %s iter_args(%a6 = %a0)->(tensor<10xf32>) {
+///   %e = tensor.extract_slice %a6[%i][%sz][1]: tensor<10xf32> to tensor<?xf32>
+///   %r = vector.transfer_read %e[%c0], %cst: tensor<?xf32>, vector<4xf32>
+///   %u = "some_use"(%r) : (vector<4xf32>) -> vector<4xf32>
+///   %w = vector.transfer_write %u, %e[%c0] : vector<4xf32>, tensor<?xf32>
+///   %st = tensor.insert_slice %w into %a6[%i][%sz][1]
+///     : tensor<?xf32> into tensor<10xf32>
+///   scf.yield %st: tensor<10xf32>
+///  }
+///  scf.yield %1: tensor<10xf32>
+/// }
+/// ```
+///
+/// Progressively hoists to:
+///
+/// ```
+/// %0 = scf.for %i = %l to %u step %s iter_args(%a0 = %t0) -> (tensor<10xf32>){
+///  %e = tensor.extract_slice %a0[%i][%sz][1]: tensor<10xf32> to tensor<?xf32>
+///  %1:2 = scf.for %j = %l to %u step %s iter_args(%a6 = a0, %a7 = %e)
+///     -> (tensor<10xf32>, tensor<?xf32>) {
+///   %r = vector.transfer_read %a7[%c0], %cst: tensor<?xf32>, vector<4xf32>
+///   %u = "some_use"(%r) : (vector<4xf32>) -> vector<4xf32>
+///   %w = vector.transfer_write %u, %a7[%c0] : vector<4xf32>, tensor<?xf32>
+///   scf.yield %a6, %w: tensor<10xf32>, tensor<?xf32>
+///  }
+///  %st = tensor.insert_slice %1#1 into %1#0[%i][%sz][1]
+///    : tensor<?xf32> into tensor<10xf32>
+///  scf.yield %1: tensor<10xf32>
+/// }
+/// ```
+///
+/// and
+///
+/// ```
+/// %0 = scf.for %i = %l to %u step %s iter_args(%a0 = %t0) -> (tensor<10xf32>){
+///  %e = tensor.extract_slice %a0[%i][%sz][1]: tensor<10xf32> to tensor<?xf32>
+///  %r = vector.transfer_read %a7[%c0], %cst: tensor<?xf32>, vector<4xf32>
+///  %1:3 = scf.for %j = %l to %u step %s iter_args(%a6 = a0, %a7 = %e, %a7 = r)
+///     -> (tensor<10xf32>, tensor<?xf32>, vector<4xf32>) {
+///   %u = "some_use"(%r) : (vector<4xf32>) -> vector<4xf32>
+///   scf.yield %a6, %a7, %u: tensor<10xf32>, tensor<?xf32>, vector<4xf32>
+///  }
+///  %w = vector.transfer_write %1#2, %1#1[%c0] : vector<4xf32>, tensor<?xf32>
+///  %st = tensor.insert_slice %w into %1#0[%i][%sz][1]
+///    : tensor<?xf32> into tensor<10xf32>
+///  scf.yield %1: tensor<10xf32>
+/// }
+/// ```
+///
+/// It can then canonicalize to:
+///
+/// ```
+/// %0 = scf.for %i = %l to %u step %s iter_args(%a0 = %t0) -> (tensor<10xf32>){
+///  %e = tensor.extract_slice %a0[%i][%sz][1]: tensor<10xf32> to tensor<?xf32>
+///  %r = vector.transfer_read %a7[%c0], %cst: tensor<?xf32>, vector<4xf32>
+///  %1 = scf.for %j = %l to %u step %s iter_args(%a7 = r)
+///     -> (tensor<10xf32>, tensor<?xf32>, vector<4xf32>) {
+///   %u = "some_use"(%r) : (vector<4xf32>) -> vector<4xf32>
+///   scf.yield %u: vector<4xf32>
+///  }
+///  %w = vector.transfer_write %1, %e[%c0] : vector<4xf32>, tensor<?xf32>
+///  %st = tensor.insert_slice %w into %a0[%i][%sz][1]
+///    : tensor<?xf32> into tensor<10xf32>
+///  scf.yield %1: tensor<10xf32>
+/// }
+/// ```
+///
+// TODO: This should be further generalized along a few different axes:
+//   - Other loops than scf.ForOp that operate on tensors (both sequential and
+//     parallel loops).
+//   - Other subset extract/insert pairs than tensor.extract/insert_slice and
+//     vector.transfer_read/write.
+//   - More general areSubsetDisjoint analysis/interface to work across all
+//     subset op types and allow bypassing non-WAW-conflicting operations in
+//     more cases.
+scf::ForOp hoistRedundantSubsetExtractInsert(RewriterBase &rewriter,
+                                             scf::ForOp forOp);
 
-/// Mechanically hoist padding operations on tensors by `nLoops` into a new,
-/// generally larger tensor. This achieves packing of multiple padding ops into
-/// a larger tensor. On success, `padTensorOp` is replaced by the cloned version
-/// in the packing loop so the caller can continue reasoning about the padding
-/// operation.
-///
-/// Example in pseudo-mlir:
-/// =======================
-///
-/// If hoistPaddingOnTensors is called with `nLoops` = 2 on the following IR.
-/// ```
-///    scf.for (%i, %j, %k)
-///      %st0 = tensor.extract_slice f(%i, %k) : ... to tensor<?x?xf32>
-///      %0 = linalg.pad_tensor %st0 low[0, 0] high[...] {
-///      ^bb0( ... ):
-///        linalg.yield %pad
-///      } : tensor<?x?xf32> to tensor<4x8xf32>
-///      compute(%0)
-/// ```
-///
-/// IR resembling the following is produced:
-///
-/// ```
-///    scf.for (%i) {
-///      %packed_init = linalg.init_tensor range(%j) : tensor<?x4x8xf32>
-///      %packed = scf.for (%k) iter_args(%p : %packed_init) {
-///        %st0 = tensor.extract_slice f(%i, %k) : ... to tensor<?x?xf32>
-///        %0 = linalg.pad_tensor %st0 low[0, 0] high[...] {
-///        ^bb0( ... ):
-///          linalg.yield %pad
-///        } : tensor<?x?xf32> to tensor<4x8xf32>
-///        %1 = tensor.insert_slice %0 ...
-///            : tensor<4x8xf32> to tensor<?x4x8xf32>
-///        scf.yield %1: tensor<?x4x8xf32>
-///      } -> tensor<?x4x8xf32>
-///      scf.for (%j, %k) {
-///        %st0 = tensor.extract_slice %packed [%k, 0, 0][1, 4, 8][1, 1, 1] :
-///                 tensor<?x4x8xf32> to tensor<4x8xf32>
-///        compute(%st0)
-///      }
-///    }
-/// ```
-LogicalResult hoistPaddingOnTensors(PadTensorOp &padTensorOp, unsigned nLoops);
+/// Call into `hoistRedundantSubsetInsertExtract` without a RewriterBase.
+// TODO: obsolete and should be retired
+void hoistRedundantVectorTransfersOnTensor(func::FuncOp func);
 
 } // namespace linalg
 } // namespace mlir

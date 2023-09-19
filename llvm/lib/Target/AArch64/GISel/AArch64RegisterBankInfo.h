@@ -13,7 +13,7 @@
 #ifndef LLVM_LIB_TARGET_AARCH64_AARCH64REGISTERBANKINFO_H
 #define LLVM_LIB_TARGET_AARCH64_AARCH64REGISTERBANKINFO_H
 
-#include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
+#include "llvm/CodeGen/RegisterBankInfo.h"
 
 #define GET_REGBANK_DECLARATIONS
 #include "AArch64GenRegisterBank.inc"
@@ -103,7 +103,8 @@ protected:
 /// This class provides the information for the target register banks.
 class AArch64RegisterBankInfo final : public AArch64GenRegisterBankInfo {
   /// See RegisterBankInfo::applyMapping.
-  void applyMappingImpl(const OperandsMapper &OpdMapper) const override;
+  void applyMappingImpl(MachineIRBuilder &Builder,
+                        const OperandsMapper &OpdMapper) const override;
 
   /// Get an instruction mapping where all the operands map to
   /// the same register bank and have similar size.

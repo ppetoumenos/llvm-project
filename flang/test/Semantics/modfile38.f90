@@ -1,5 +1,4 @@
-! RUN: %S/test_modfile.sh %s %t %flang_fc1
-! REQUIRES: shell
+! RUN: %python %S/test_modfile.py %s %flang_fc1
 
 ! Ensure that an interface with the same name as a derived type
 ! does not cause that shadowed name to be emitted later than its
@@ -21,14 +20,14 @@ end module
 
 !Expect: m.mod
 !module m
-!interface t
-!procedure::f
-!end interface
 !type::t
 !end type
 !type::t2
 !type(t)::c
 !end type
+!interface t
+!procedure::f
+!end interface
 !contains
 !function f()
 !type(t)::f

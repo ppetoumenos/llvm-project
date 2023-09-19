@@ -12,6 +12,7 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallDescription.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Frontend/AnalysisConsumer.h"
@@ -32,11 +33,11 @@ class InterestingnessTestChecker : public Checker<check::PreCall> {
                                        const CallEvent &, CheckerContext &)>;
 
   CallDescriptionMap<HandlerFn> Handlers = {
-      {{"setInteresting", 1}, &InterestingnessTestChecker::handleInteresting},
-      {{"setNotInteresting", 1},
+      {{{"setInteresting"}, 1}, &InterestingnessTestChecker::handleInteresting},
+      {{{"setNotInteresting"}, 1},
        &InterestingnessTestChecker::handleNotInteresting},
-      {{"check", 1}, &InterestingnessTestChecker::handleCheck},
-      {{"bug", 1}, &InterestingnessTestChecker::handleBug},
+      {{{"check"}, 1}, &InterestingnessTestChecker::handleCheck},
+      {{{"bug"}, 1}, &InterestingnessTestChecker::handleBug},
   };
 
   void handleInteresting(const CallEvent &Call, CheckerContext &C) const;
@@ -117,7 +118,7 @@ public:
       Registry.addChecker<InterestingnessTestChecker>("test.Interestingness",
                                                       "Description", "");
     });
-    Compiler.getAnalyzerOpts()->CheckersAndPackages = {
+    Compiler.getAnalyzerOpts().CheckersAndPackages = {
         {"test.Interestingness", true}};
     return std::move(AnalysisConsumer);
   }

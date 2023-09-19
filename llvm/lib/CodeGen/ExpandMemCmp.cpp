@@ -19,7 +19,6 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Dominators.h"
@@ -29,8 +28,13 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SizeOpts.h"
+#include <optional>
 
 using namespace llvm;
+
+namespace llvm {
+class TargetLowering;
+}
 
 #define DEBUG_TYPE "expandmemcmp"
 
@@ -67,18 +71,18 @@ class MemCmpExpansion {
     ResultBlock() = default;
   };
 
-  CallInst *const CI;
+  CallInst *const CI = nullptr;
   ResultBlock ResBlock;
   const uint64_t Size;
-  unsigned MaxLoadSize;
-  uint64_t NumLoadsNonOneByte;
+  unsigned MaxLoadSize = 0;
+  uint64_t NumLoadsNonOneByte = 0;
   const uint64_t NumLoadsPerBlockForZeroCmp;
   std::vector<BasicBlock *> LoadCmpBlocks;
-  BasicBlock *EndBlock;
-  PHINode *PhiRes;
+  BasicBlock *EndBlock = nullptr;
+  PHINode *PhiRes = nullptr;
   const bool IsUsedForZeroCmp;
   const DataLayout &DL;
-  DomTreeUpdater *DTU;
+  DomTreeUpdater *DTU = nullptr;
   IRBuilder<> Builder;
   // Represents the decomposition in blocks of the expansion. For example,
   // comparing 33 bytes on X86+sse can be done with 2x16-byte loads and
@@ -219,8 +223,7 @@ MemCmpExpansion::MemCmpExpansion(
     const TargetTransformInfo::MemCmpExpansionOptions &Options,
     const bool IsUsedForZeroCmp, const DataLayout &TheDataLayout,
     DomTreeUpdater *DTU)
-    : CI(CI), Size(Size), MaxLoadSize(0), NumLoadsNonOneByte(0),
-      NumLoadsPerBlockForZeroCmp(Options.NumLoadsPerBlock),
+    : CI(CI), Size(Size), NumLoadsPerBlockForZeroCmp(Options.NumLoadsPerBlock),
       IsUsedForZeroCmp(IsUsedForZeroCmp), DL(TheDataLayout), DTU(DTU),
       Builder(CI) {
   assert(Size > 0 && "zero blocks");
@@ -285,17 +288,11 @@ MemCmpExpansion::LoadPair MemCmpExpansion::getLoadPair(Type *LoadSizeType,
   Align RhsAlign = RhsSource->getPointerAlignment(DL);
   if (OffsetBytes > 0) {
     auto *ByteType = Type::getInt8Ty(CI->getContext());
-    LhsSource = Builder.CreateConstGEP1_64(
-        ByteType, Builder.CreateBitCast(LhsSource, ByteType->getPointerTo()),
-        OffsetBytes);
-    RhsSource = Builder.CreateConstGEP1_64(
-        ByteType, Builder.CreateBitCast(RhsSource, ByteType->getPointerTo()),
-        OffsetBytes);
+    LhsSource = Builder.CreateConstGEP1_64(ByteType, LhsSource, OffsetBytes);
+    RhsSource = Builder.CreateConstGEP1_64(ByteType, RhsSource, OffsetBytes);
     LhsAlign = commonAlignment(LhsAlign, OffsetBytes);
     RhsAlign = commonAlignment(RhsAlign, OffsetBytes);
   }
-  LhsSource = Builder.CreateBitCast(LhsSource, LoadSizeType->getPointerTo());
-  RhsSource = Builder.CreateBitCast(RhsSource, LoadSizeType->getPointerTo());
 
   // Create a constant or a load from the source.
   Value *Lhs = nullptr;
@@ -348,17 +345,17 @@ void MemCmpExpansion::emitLoadCompareByteBlock(unsigned BlockIndex,
                                     ConstantInt::get(Diff->getType(), 0));
     BranchInst *CmpBr =
         BranchInst::Create(EndBlock, LoadCmpBlocks[BlockIndex + 1], Cmp);
+    Builder.Insert(CmpBr);
     if (DTU)
       DTU->applyUpdates(
           {{DominatorTree::Insert, BB, EndBlock},
            {DominatorTree::Insert, BB, LoadCmpBlocks[BlockIndex + 1]}});
-    Builder.Insert(CmpBr);
   } else {
     // The last block has an unconditional branch to EndBlock.
     BranchInst *CmpBr = BranchInst::Create(EndBlock);
+    Builder.Insert(CmpBr);
     if (DTU)
       DTU->applyUpdates({{DominatorTree::Insert, BB, EndBlock}});
-    Builder.Insert(CmpBr);
   }
 }
 
@@ -561,7 +558,7 @@ void MemCmpExpansion::setupResultBlockPHINodes() {
 }
 
 void MemCmpExpansion::setupEndBlockPHINodes() {
-  Builder.SetInsertPoint(&EndBlock->front());
+  Builder.SetInsertPoint(EndBlock, EndBlock->begin());
   PhiRes = Builder.CreatePHI(Type::getInt32Ty(CI->getContext()), 2, "phi.res");
 }
 
@@ -738,7 +735,7 @@ Value *MemCmpExpansion::getMemCmpExpansion() {
 static bool expandMemCmp(CallInst *CI, const TargetTransformInfo *TTI,
                          const TargetLowering *TLI, const DataLayout *DL,
                          ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI,
-                         DomTreeUpdater *DTU) {
+                         DomTreeUpdater *DTU, const bool IsBCmp) {
   NumMemCmpCalls++;
 
   // Early exit from expansion if -Oz.
@@ -758,7 +755,8 @@ static bool expandMemCmp(CallInst *CI, const TargetTransformInfo *TTI,
   }
   // TTI call to check if target would like to expand memcmp. Also, get the
   // available load sizes.
-  const bool IsUsedForZeroCmp = isOnlyUsedInZeroEqualityComparison(CI);
+  const bool IsUsedForZeroCmp =
+      IsBCmp || isOnlyUsedInZeroEqualityComparison(CI);
   bool OptForSize = CI->getFunction()->hasOptSize() ||
                     llvm::shouldOptimizeForSize(CI->getParent(), PSI, BFI);
   auto Options = TTI->enableMemCmpExpansion(OptForSize,
@@ -862,7 +860,7 @@ bool ExpandMemCmpPass::runOnBlock(BasicBlock &BB, const TargetLibraryInfo *TLI,
     LibFunc Func;
     if (TLI->getLibFunc(*CI, Func) &&
         (Func == LibFunc_memcmp || Func == LibFunc_bcmp) &&
-        expandMemCmp(CI, TTI, TL, &DL, PSI, BFI, DTU)) {
+        expandMemCmp(CI, TTI, TL, &DL, PSI, BFI, DTU, Func == LibFunc_bcmp)) {
       return true;
     }
   }
@@ -874,15 +872,14 @@ ExpandMemCmpPass::runImpl(Function &F, const TargetLibraryInfo *TLI,
                           const TargetTransformInfo *TTI,
                           const TargetLowering *TL, ProfileSummaryInfo *PSI,
                           BlockFrequencyInfo *BFI, DominatorTree *DT) {
-  Optional<DomTreeUpdater> DTU;
+  std::optional<DomTreeUpdater> DTU;
   if (DT)
     DTU.emplace(DT, DomTreeUpdater::UpdateStrategy::Lazy);
 
   const DataLayout& DL = F.getParent()->getDataLayout();
   bool MadeChanges = false;
   for (auto BBIt = F.begin(); BBIt != F.end();) {
-    if (runOnBlock(*BBIt, TLI, TTI, TL, DL, PSI, BFI,
-                   DTU.hasValue() ? DTU.getPointer() : nullptr)) {
+    if (runOnBlock(*BBIt, TLI, TTI, TL, DL, PSI, BFI, DTU ? &*DTU : nullptr)) {
       MadeChanges = true;
       // If changes were made, restart the function from the beginning, since
       // the structure of the function was changed.

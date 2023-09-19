@@ -7,7 +7,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "src/string/strcpy.h"
-#include "utils/UnitTest/Test.h"
+#include "test/UnitTest/Test.h"
+
+TEST(LlvmLibcStrCpyTest, EmptySrc) {
+  const char *empty = "";
+  char dest[4] = {'a', 'b', 'c', '\0'};
+
+  char *result = __llvm_libc::strcpy(dest, empty);
+  ASSERT_EQ(dest, result);
+  ASSERT_STREQ(dest, result);
+  ASSERT_STREQ(dest, empty);
+}
 
 TEST(LlvmLibcStrCpyTest, EmptyDest) {
   const char *abc = "abc";

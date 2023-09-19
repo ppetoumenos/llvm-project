@@ -43,6 +43,12 @@ parsing options from the command line.  ``LIT_OPTS`` is primarily useful for
 supplementing or overriding the command-line options supplied to :program:`lit`
 by ``check`` targets defined by a project's build system.
 
+:program:`lit` can also read options from response files which are specified as
+inputs using the ``@path/to/file.rsp`` syntax. Arguments read from a file must
+be one per line and are treated as if they were in the same place as the
+original file referencing argument on the command line. A response file can
+reference other response files.
+
 Users interested in the :program:`lit` architecture or designing a
 :program:`lit` testing implementation should see :ref:`lit-infrastructure`.
 
@@ -90,7 +96,7 @@ OUTPUT OPTIONS
 
 .. option:: -vv, --echo-all-commands
 
- Echo all commands to stdout, as they are being executed.
+ On test failure, echo all commands to stdout as they are being executed.
  This can be valuable for debugging test failures, as the last echoed command
  will be the one which has failed.
  :program:`lit` normally inserts a no-op command (``:`` in the case of bash)
@@ -157,18 +163,14 @@ EXECUTION OPTIONS
 
  Exit with status zero even if some tests fail.
 
-.. option:: --no-indirectly-run-check
-
- Do not error if a test would not be run if the user had specified the
- containing directory instead of naming the test directly.
-
 .. _selection-options:
 
 SELECTION OPTIONS
 -----------------
 
 By default, `lit` will run failing tests first, then run tests in descending
-execution time order to optimize concurrency.
+execution time order to optimize concurrency.  The execution order can be
+changed using the :option:`--order` option.
 
 The timing data is stored in the `test_exec_root` in a file named
 `.lit_test_times.txt`. If this file does not exist, then `lit` checks the
@@ -176,7 +178,14 @@ The timing data is stored in the `test_exec_root` in a file named
 
 .. option:: --shuffle
 
- Run the tests in a random order, not failing/slowest first.
+ Run the tests in a random order, not failing/slowest first. Deprecated,
+ use :option:`--order` instead.
+
+.. option:: --per-test-coverage
+
+ Emit the necessary test coverage data, divided per test case (involves
+ setting a unique value to LLVM_PROFILE_FILE for each RUN). The coverage
+ data files will be emitted in the directory specified by `config.test_exec_root`.
 
 .. option:: --max-failures N
 
@@ -203,6 +212,19 @@ The timing data is stored in the `test_exec_root` in a file named
  option. These two options provide a coarse mechanism for partitioning large
  testsuites, for parallel execution on separate machines (say in a large
  testing farm).
+
+.. option:: --order={lexical,random,smart}
+
+ Define the order in which tests are run. The supported values are:
+
+ - lexical - tests will be run in lexical order according to the test file
+   path. This option is useful when predictable test order is desired.
+
+ - random - tests will be run in random order.
+
+ - smart - tests that failed previously will be run first, then the remaining
+   tests, all in descending execution time order. This is the default as it
+   optimizes concurrency.
 
 .. option:: --run-shard=N
 
@@ -437,9 +459,8 @@ executed, two important global variables are predefined:
  tests in the suite.
 
  **standalone_tests** When true, mark a directory with tests expected to be run
- standalone. Test discovery is disabled for that directory and
- *--no-indirectly-run-check* is in effect. *lit.suffixes* and *lit.excludes*
- must be empty when this variable is true.
+ standalone. Test discovery is disabled for that directory. *lit.suffixes* and
+ *lit.excludes* must be empty when this variable is true.
 
  **suffixes** For **lit** test formats which scan directories for tests, this
  variable is a list of suffixes to identify test files.  Used by: *ShTest*.
@@ -508,6 +529,9 @@ TestRunner.py:
  %S                      source dir (directory of the file currently being run)
  %p                      same as %S
  %{pathsep}              path separator
+ %{fs-src-root}          root component of file system paths pointing to the LLVM checkout
+ %{fs-tmp-root}          root component of file system paths pointing to the test's temporary directory
+ %{fs-sep}               file system path separator
  %t                      temporary file name unique to the test
  %basename_t             The last path component of %t but without the ``.tmp`` extension
  %T                      parent directory of %t (not unique, deprecated, do not use)
@@ -517,6 +541,16 @@ TestRunner.py:
  %/p                     %p but ``\`` is replaced by ``/``
  %/t                     %t but ``\`` is replaced by ``/``
  %/T                     %T but ``\`` is replaced by ``/``
+ %{s:real}               %s after expanding all symbolic links and substitute drives
+ %{S:real}               %S after expanding all symbolic links and substitute drives
+ %{p:real}               %p after expanding all symbolic links and substitute drives
+ %{t:real}               %t after expanding all symbolic links and substitute drives
+ %{T:real}               %T after expanding all symbolic links and substitute drives
+ %{/s:real}              %/s after expanding all symbolic links and substitute drives
+ %{/S:real}              %/S after expanding all symbolic links and substitute drives
+ %{/p:real}              %/p after expanding all symbolic links and substitute drives
+ %{/t:real}              %/t after expanding all symbolic links and substitute drives
+ %{/T:real}              %/T after expanding all symbolic links and substitute drives
  %{/s:regex_replacement} %/s but escaped for use in the replacement of a ``s@@@`` command in sed
  %{/S:regex_replacement} %/S but escaped for use in the replacement of a ``s@@@`` command in sed
  %{/p:regex_replacement} %/p but escaped for use in the replacement of a ``s@@@`` command in sed
@@ -537,14 +571,6 @@ TestRunner.py:
 Other substitutions are provided that are variations on this base set and
 further substitution patterns can be defined by each test module. See the
 modules :ref:`local-configuration-files`.
-
-By default, substitutions are expanded exactly once, so that if e.g. a
-substitution ``%build`` is defined in top of another substitution ``%cxx``,
-``%build`` will expand to ``%cxx`` textually, not to what ``%cxx`` expands to.
-However, if the ``recursiveExpansionLimit`` property of the ``TestingConfig``
-is set to a non-negative integer, substitutions will be expanded recursively
-until that limit is reached. It is an error if the limit is reached and
-expanding substitutions again would yield a different result.
 
 More detailed information on substitutions can be found in the
 :doc:`../TestingGuide`.

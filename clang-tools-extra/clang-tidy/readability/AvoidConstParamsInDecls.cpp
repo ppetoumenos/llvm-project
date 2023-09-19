@@ -11,21 +11,21 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Lex/Lexer.h"
-#include "llvm/ADT/Optional.h"
 
 using namespace clang::ast_matchers;
 
-namespace clang {
-namespace tidy {
-namespace readability {
+namespace clang::tidy::readability {
 namespace {
 
 SourceRange getTypeRange(const ParmVarDecl &Param) {
-  return SourceRange(Param.getBeginLoc(),
-                     Param.getLocation().getLocWithOffset(-1));
+  return {Param.getBeginLoc(), Param.getLocation().getLocWithOffset(-1)};
 }
 
 } // namespace
+
+void AvoidConstParamsInDecls::storeOptions(ClangTidyOptions::OptionMap &Opts) {
+  Options.store(Opts, "IgnoreMacros", IgnoreMacros);
+}
 
 void AvoidConstParamsInDecls::registerMatchers(MatchFinder *Finder) {
   const auto ConstParamDecl =
@@ -43,6 +43,12 @@ void AvoidConstParamsInDecls::check(const MatchFinder::MatchResult &Result) {
 
   if (!Param->getType().isLocalConstQualified())
     return;
+
+  if (IgnoreMacros &&
+      (Param->getBeginLoc().isMacroID() || Param->getEndLoc().isMacroID())) {
+    // Suppress the check if macros are involved.
+    return;
+  }
 
   auto Diag = diag(Param->getBeginLoc(),
                    "parameter %0 is const-qualified in the function "
@@ -80,6 +86,4 @@ void AvoidConstParamsInDecls::check(const MatchFinder::MatchResult &Result) {
       CharSourceRange::getTokenRange(Tok->getLocation(), Tok->getLocation()));
 }
 
-} // namespace readability
-} // namespace tidy
-} // namespace clang
+} // namespace clang::tidy::readability

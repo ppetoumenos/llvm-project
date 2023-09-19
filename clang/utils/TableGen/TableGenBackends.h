@@ -39,10 +39,14 @@ void EmitClangAttrSubjectMatchRulesParserStringSwitches(
 void EmitClangAttrClass(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitClangAttrImpl(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitClangAttrList(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitClangAttrPrintList(const std::string &FieldName,
+                            llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitClangAttrSubjectMatchRuleList(llvm::RecordKeeper &Records,
                                        llvm::raw_ostream &OS);
 void EmitClangAttrPCHRead(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitClangAttrPCHWrite(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitClangAttrTokenKinds(llvm::RecordKeeper &Records,
+                             llvm::raw_ostream &OS);
 void EmitClangAttrHasAttrImpl(llvm::RecordKeeper &Records,
                               llvm::raw_ostream &OS);
 void EmitClangAttrSpellingListIndex(llvm::RecordKeeper &Records,
@@ -61,6 +65,7 @@ void EmitClangAttrTextNodeDump(llvm::RecordKeeper &Records,
                                llvm::raw_ostream &OS);
 void EmitClangAttrNodeTraverse(llvm::RecordKeeper &Records,
                                llvm::raw_ostream &OS);
+void EmitClangAttrDocTable(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 
 void EmitClangDiagsDefs(llvm::RecordKeeper &Records, llvm::raw_ostream &OS,
                         const std::string &Component);
@@ -100,6 +105,11 @@ void EmitSveBuiltinCG(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitSveTypeFlags(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitSveRangeChecks(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 
+void EmitSmeHeader(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitSmeBuiltins(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitSmeBuiltinCG(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitSmeRangeChecks(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+
 void EmitMveHeader(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitMveBuiltinDef(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitMveBuiltinSema(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
@@ -109,6 +119,7 @@ void EmitMveBuiltinAliases(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitRVVHeader(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitRVVBuiltins(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitRVVBuiltinCG(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
+void EmitRVVBuiltinSema(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 
 void EmitCdeHeader(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 void EmitCdeBuiltinDef(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
@@ -122,6 +133,8 @@ void EmitClangOptDocs(llvm::RecordKeeper &Records, llvm::raw_ostream &OS);
 
 void EmitClangOpenCLBuiltins(llvm::RecordKeeper &Records,
                              llvm::raw_ostream &OS);
+void EmitClangOpenCLBuiltinHeader(llvm::RecordKeeper &Records,
+                                  llvm::raw_ostream &OS);
 void EmitClangOpenCLBuiltinTests(llvm::RecordKeeper &Records,
                                  llvm::raw_ostream &OS);
 

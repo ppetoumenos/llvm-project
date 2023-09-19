@@ -1,4 +1,4 @@
-//===-- RISCVMCTargetDesc.cpp - RISCV Target Descriptions -----------------===//
+//===-- RISCVMCTargetDesc.cpp - RISC-V Target Descriptions ----------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 ///
-/// This file provides RISCV-specific target descriptions.
+/// This file provides RISC-V specific target descriptions.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -15,6 +15,7 @@
 #include "RISCVELFStreamer.h"
 #include "RISCVInstPrinter.h"
 #include "RISCVMCAsmInfo.h"
+#include "RISCVMCObjectFileInfo.h"
 #include "RISCVTargetStreamer.h"
 #include "TargetInfo/RISCVTargetInfo.h"
 #include "llvm/ADT/STLExtras.h"
@@ -23,14 +24,16 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/TargetRegistry.h"
 
 #define GET_INSTRINFO_MC_DESC
+#define ENABLE_INSTR_PREDICATE_VERIFIER
 #include "RISCVGenInstrInfo.inc"
 
 #define GET_REGINFO_MC_DESC
@@ -65,13 +68,19 @@ static MCAsmInfo *createRISCVMCAsmInfo(const MCRegisterInfo &MRI,
   return MAI;
 }
 
+static MCObjectFileInfo *
+createRISCVMCObjectFileInfo(MCContext &Ctx, bool PIC,
+                            bool LargeCodeModel = false) {
+  MCObjectFileInfo *MOFI = new RISCVMCObjectFileInfo();
+  MOFI->initMCObjectFileInfo(Ctx, PIC, LargeCodeModel);
+  return MOFI;
+}
+
 static MCSubtargetInfo *createRISCVMCSubtargetInfo(const Triple &TT,
                                                    StringRef CPU, StringRef FS) {
-  if (CPU.empty())
+  if (CPU.empty() || CPU == "generic")
     CPU = TT.isArch64Bit() ? "generic-rv64" : "generic-rv32";
-  if (CPU == "generic")
-    report_fatal_error(Twine("CPU 'generic' is not supported. Use ") +
-                       (TT.isArch64Bit() ? "generic-rv64" : "generic-rv32"));
+
   return createRISCVMCSubtargetInfoImpl(TT, CPU, /*TuneCPU*/ CPU, FS);
 }
 
@@ -133,6 +142,96 @@ public:
 
     return false;
   }
+
+  bool isTerminator(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isTerminator(Inst))
+      return true;
+
+    switch (Inst.getOpcode()) {
+    default:
+      return false;
+    case RISCV::JAL:
+    case RISCV::JALR:
+      return Inst.getOperand(0).getReg() == RISCV::X0;
+    }
+  }
+
+  bool isCall(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isCall(Inst))
+      return true;
+
+    switch (Inst.getOpcode()) {
+    default:
+      return false;
+    case RISCV::JAL:
+    case RISCV::JALR:
+      return Inst.getOperand(0).getReg() != RISCV::X0;
+    }
+  }
+
+  bool isReturn(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isReturn(Inst))
+      return true;
+
+    switch (Inst.getOpcode()) {
+    default:
+      return false;
+    case RISCV::JALR:
+      return Inst.getOperand(0).getReg() == RISCV::X0 &&
+             maybeReturnAddress(Inst.getOperand(1).getReg());
+    case RISCV::C_JR:
+      return maybeReturnAddress(Inst.getOperand(0).getReg());
+    }
+  }
+
+  bool isBranch(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isBranch(Inst))
+      return true;
+
+    return isBranchImpl(Inst);
+  }
+
+  bool isUnconditionalBranch(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isUnconditionalBranch(Inst))
+      return true;
+
+    return isBranchImpl(Inst);
+  }
+
+  bool isIndirectBranch(const MCInst &Inst) const override {
+    if (MCInstrAnalysis::isIndirectBranch(Inst))
+      return true;
+
+    switch (Inst.getOpcode()) {
+    default:
+      return false;
+    case RISCV::JALR:
+      return Inst.getOperand(0).getReg() == RISCV::X0 &&
+             !maybeReturnAddress(Inst.getOperand(1).getReg());
+    case RISCV::C_JR:
+      return !maybeReturnAddress(Inst.getOperand(0).getReg());
+    }
+  }
+
+private:
+  static bool maybeReturnAddress(unsigned Reg) {
+    // X1 is used for normal returns, X5 for returns from outlined functions.
+    return Reg == RISCV::X1 || Reg == RISCV::X5;
+  }
+
+  static bool isBranchImpl(const MCInst &Inst) {
+    switch (Inst.getOpcode()) {
+    default:
+      return false;
+    case RISCV::JAL:
+      return Inst.getOperand(0).getReg() == RISCV::X0;
+    case RISCV::JALR:
+      return Inst.getOperand(0).getReg() == RISCV::X0 &&
+             !maybeReturnAddress(Inst.getOperand(1).getReg());
+    case RISCV::C_JR:
+      return !maybeReturnAddress(Inst.getOperand(0).getReg());
+    }
+  }
 };
 
 } // end anonymous namespace
@@ -155,6 +254,7 @@ MCStreamer *createRISCVELFStreamer(const Triple &T, MCContext &Context,
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTargetMC() {
   for (Target *T : {&getTheRISCV32Target(), &getTheRISCV64Target()}) {
     TargetRegistry::RegisterMCAsmInfo(*T, createRISCVMCAsmInfo);
+    TargetRegistry::RegisterMCObjectFileInfo(*T, createRISCVMCObjectFileInfo);
     TargetRegistry::RegisterMCInstrInfo(*T, createRISCVMCInstrInfo);
     TargetRegistry::RegisterMCRegInfo(*T, createRISCVMCRegisterInfo);
     TargetRegistry::RegisterMCAsmBackend(*T, createRISCVAsmBackend);

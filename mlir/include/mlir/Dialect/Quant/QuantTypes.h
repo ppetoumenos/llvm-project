@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef MLIR_DIALECT_QUANT_QUANT_TYPES_H_
-#define MLIR_DIALECT_QUANT_QUANT_TYPES_H_
+#ifndef MLIR_DIALECT_QUANT_QUANTTYPES_H
+#define MLIR_DIALECT_QUANT_QUANTTYPES_H
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -19,9 +19,6 @@
 
 namespace mlir {
 namespace quant {
-
-class QuantizedIntegerType;
-
 namespace detail {
 
 struct QuantizedTypeStorage;
@@ -371,8 +368,7 @@ public:
   bool isFixedPoint() const {
     if (!isSigned())
       return false;
-    return llvm::all_of(getZeroPoints(),
-                        [](int64_t zeroPoint) { return zeroPoint != 0; });
+    return !llvm::is_contained(getZeroPoints(), 0);
   }
 };
 
@@ -408,4 +404,4 @@ public:
 } // namespace quant
 } // namespace mlir
 
-#endif // MLIR_DIALECT_QUANT_QUANT_TYPES_H_
+#endif // MLIR_DIALECT_QUANT_QUANTTYPES_H

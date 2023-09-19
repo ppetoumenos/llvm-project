@@ -36,7 +36,7 @@
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
-#include "llvm/ADT/None.h"
+#include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator_range.h"
@@ -79,10 +79,9 @@ CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
       HasBasesWithFields(false), HasBasesWithNonStaticDataMembers(false),
       HasPrivateFields(false), HasProtectedFields(false),
       HasPublicFields(false), HasMutableFields(false), HasVariantMembers(false),
-      HasOnlyCMembers(true), HasInClassInitializer(false),
+      HasOnlyCMembers(true), HasInitMethod(false), HasInClassInitializer(false),
       HasUninitializedReferenceMember(false), HasUninitializedFields(false),
-      HasInheritedConstructor(false),
-      HasInheritedDefaultConstructor(false),
+      HasInheritedConstructor(false), HasInheritedDefaultConstructor(false),
       HasInheritedAssignment(false),
       NeedOverloadResolutionForCopyConstructor(false),
       NeedOverloadResolutionForMoveConstructor(false),
@@ -147,16 +146,16 @@ CXXRecordDecl *CXXRecordDecl::Create(const ASTContext &C, TagKind TK,
 CXXRecordDecl *
 CXXRecordDecl::CreateLambda(const ASTContext &C, DeclContext *DC,
                             TypeSourceInfo *Info, SourceLocation Loc,
-                            bool Dependent, bool IsGeneric,
+                            unsigned DependencyKind, bool IsGeneric,
                             LambdaCaptureDefault CaptureDefault) {
   auto *R = new (C, DC) CXXRecordDecl(CXXRecord, TTK_Class, C, DC, Loc, Loc,
                                       nullptr, nullptr);
   R->setBeingDefined(true);
-  R->DefinitionData =
-      new (C) struct LambdaDefinitionData(R, Info, Dependent, IsGeneric,
-                                          CaptureDefault);
+  R->DefinitionData = new (C) struct LambdaDefinitionData(
+      R, Info, DependencyKind, IsGeneric, CaptureDefault);
   R->setMayHaveOutOfDateDef(false);
   R->setImplicit(true);
+
   C.getTypeDeclType(R, /*PrevDecl=*/nullptr);
   return R;
 }
@@ -178,6 +177,8 @@ static bool hasRepeatedBaseClass(const CXXRecordDecl *StartRD) {
   SmallVector<const CXXRecordDecl*, 8> WorkList = {StartRD};
   while (!WorkList.empty()) {
     const CXXRecordDecl *RD = WorkList.pop_back_val();
+    if (RD->getTypeForDecl()->isDependentType())
+      continue;
     for (const CXXBaseSpecifier &BaseSpec : RD->bases()) {
       if (const CXXRecordDecl *B = BaseSpec.getType()->getAsCXXRecordDecl()) {
         if (!SeenBaseTypes.insert(B).second)
@@ -767,12 +768,16 @@ void CXXRecordDecl::addedMember(Decl *D) {
         // Note that we have a user-declared constructor.
         data().UserDeclaredConstructor = true;
 
-        // C++ [class]p4:
-        //   A POD-struct is an aggregate class [...]
-        // Since the POD bit is meant to be C++03 POD-ness, clear it even if
-        // the type is technically an aggregate in C++0x since it wouldn't be
-        // in 03.
-        data().PlainOldData = false;
+        const TargetInfo &TI = getASTContext().getTargetInfo();
+        if ((!Constructor->isDeleted() && !Constructor->isDefaulted()) ||
+            !TI.areDefaultedSMFStillPOD(getLangOpts())) {
+          // C++ [class]p4:
+          //   A POD-struct is an aggregate class [...]
+          // Since the POD bit is meant to be C++03 POD-ness, clear it even if
+          // the type is technically an aggregate in C++0x since it wouldn't be
+          // in 03.
+          data().PlainOldData = false;
+        }
       }
 
       if (Constructor->isDefaultConstructor()) {
@@ -824,29 +829,11 @@ void CXXRecordDecl::addedMember(Decl *D) {
       data().HasInheritedDefaultConstructor = true;
   }
 
-  // Handle destructors.
-  if (const auto *DD = dyn_cast<CXXDestructorDecl>(D)) {
-    SMKind |= SMF_Destructor;
-
-    if (DD->isUserProvided())
-      data().HasIrrelevantDestructor = false;
-    // If the destructor is explicitly defaulted and not trivial or not public
-    // or if the destructor is deleted, we clear HasIrrelevantDestructor in
-    // finishedDefaultedOrDeletedMember.
-
-    // C++11 [class.dtor]p5:
-    //   A destructor is trivial if [...] the destructor is not virtual.
-    if (DD->isVirtual()) {
-      data().HasTrivialSpecialMembers &= ~SMF_Destructor;
-      data().HasTrivialSpecialMembersForCall &= ~SMF_Destructor;
-    }
-
-    if (DD->isNoReturn())
-      data().IsAnyDestructorNoReturn = true;
-  }
-
   // Handle member functions.
   if (const auto *Method = dyn_cast<CXXMethodDecl>(D)) {
+    if (isa<CXXDestructorDecl>(D))
+      SMKind |= SMF_Destructor;
+
     if (Method->isCopyAssignmentOperator()) {
       SMKind |= SMF_CopyAssignment;
 
@@ -892,46 +879,38 @@ void CXXRecordDecl::addedMember(Decl *D) {
       data().HasTrivialSpecialMembersForCall &=
           data().DeclaredSpecialMembers | ~SMKind;
 
-      if (!Method->isImplicit() && !Method->isUserProvided()) {
-        // This method is user-declared but not user-provided. We can't work out
-        // whether it's trivial yet (not until we get to the end of the class).
-        // We'll handle this method in finishedDefaultedOrDeletedMember.
-      } else if (Method->isTrivial()) {
-        data().HasTrivialSpecialMembers |= SMKind;
-        data().HasTrivialSpecialMembersForCall |= SMKind;
-      } else if (Method->isTrivialForCall()) {
-        data().HasTrivialSpecialMembersForCall |= SMKind;
-        data().DeclaredNonTrivialSpecialMembers |= SMKind;
-      } else {
-        data().DeclaredNonTrivialSpecialMembers |= SMKind;
-        // If this is a user-provided function, do not set
-        // DeclaredNonTrivialSpecialMembersForCall here since we don't know
-        // yet whether the method would be considered non-trivial for the
-        // purpose of calls (attribute "trivial_abi" can be dropped from the
-        // class later, which can change the special method's triviality).
-        if (!Method->isUserProvided())
-          data().DeclaredNonTrivialSpecialMembersForCall |= SMKind;
-      }
-
       // Note when we have declared a declared special member, and suppress the
       // implicit declaration of this special member.
       data().DeclaredSpecialMembers |= SMKind;
-
       if (!Method->isImplicit()) {
         data().UserDeclaredSpecialMembers |= SMKind;
 
-        // C++03 [class]p4:
-        //   A POD-struct is an aggregate class that has [...] no user-defined
-        //   copy assignment operator and no user-defined destructor.
-        //
-        // Since the POD bit is meant to be C++03 POD-ness, and in C++03,
-        // aggregates could not have any constructors, clear it even for an
-        // explicitly defaulted or deleted constructor.
-        // type is technically an aggregate in C++0x since it wouldn't be in 03.
-        //
-        // Also, a user-declared move assignment operator makes a class non-POD.
-        // This is an extension in C++03.
-        data().PlainOldData = false;
+        const TargetInfo &TI = getASTContext().getTargetInfo();
+        if ((!Method->isDeleted() && !Method->isDefaulted() &&
+             SMKind != SMF_MoveAssignment) ||
+            !TI.areDefaultedSMFStillPOD(getLangOpts())) {
+          // C++03 [class]p4:
+          //   A POD-struct is an aggregate class that has [...] no user-defined
+          //   copy assignment operator and no user-defined destructor.
+          //
+          // Since the POD bit is meant to be C++03 POD-ness, and in C++03,
+          // aggregates could not have any constructors, clear it even for an
+          // explicitly defaulted or deleted constructor.
+          // type is technically an aggregate in C++0x since it wouldn't be in
+          // 03.
+          //
+          // Also, a user-declared move assignment operator makes a class
+          // non-POD. This is an extension in C++03.
+          data().PlainOldData = false;
+        }
+      }
+      // When instantiating a class, we delay updating the destructor and
+      // triviality properties of the class until selecting a destructor and
+      // computing the eligibility of its special member functions. This is
+      // because there might be function constraints that we need to evaluate
+      // and compare later in the instantiation.
+      if (!Method->isIneligibleOrNotSelected()) {
+        addedEligibleSpecialMemberFunction(Method, SMKind);
       }
     }
 
@@ -1392,6 +1371,58 @@ void CXXRecordDecl::addedMember(Decl *D) {
   }
 }
 
+void CXXRecordDecl::addedSelectedDestructor(CXXDestructorDecl *DD) {
+  DD->setIneligibleOrNotSelected(false);
+  addedEligibleSpecialMemberFunction(DD, SMF_Destructor);
+}
+
+void CXXRecordDecl::addedEligibleSpecialMemberFunction(const CXXMethodDecl *MD,
+                                                       unsigned SMKind) {
+  // FIXME: We shouldn't change DeclaredNonTrivialSpecialMembers if `MD` is
+  // a function template, but this needs CWG attention before we break ABI.
+  // See https://github.com/llvm/llvm-project/issues/59206
+
+  if (const auto *DD = dyn_cast<CXXDestructorDecl>(MD)) {
+    if (DD->isUserProvided())
+      data().HasIrrelevantDestructor = false;
+    // If the destructor is explicitly defaulted and not trivial or not public
+    // or if the destructor is deleted, we clear HasIrrelevantDestructor in
+    // finishedDefaultedOrDeletedMember.
+
+    // C++11 [class.dtor]p5:
+    //   A destructor is trivial if [...] the destructor is not virtual.
+    if (DD->isVirtual()) {
+      data().HasTrivialSpecialMembers &= ~SMF_Destructor;
+      data().HasTrivialSpecialMembersForCall &= ~SMF_Destructor;
+    }
+
+    if (DD->isNoReturn())
+      data().IsAnyDestructorNoReturn = true;
+  }
+
+  if (!MD->isImplicit() && !MD->isUserProvided()) {
+    // This method is user-declared but not user-provided. We can't work
+    // out whether it's trivial yet (not until we get to the end of the
+    // class). We'll handle this method in
+    // finishedDefaultedOrDeletedMember.
+  } else if (MD->isTrivial()) {
+    data().HasTrivialSpecialMembers |= SMKind;
+    data().HasTrivialSpecialMembersForCall |= SMKind;
+  } else if (MD->isTrivialForCall()) {
+    data().HasTrivialSpecialMembersForCall |= SMKind;
+    data().DeclaredNonTrivialSpecialMembers |= SMKind;
+  } else {
+    data().DeclaredNonTrivialSpecialMembers |= SMKind;
+    // If this is a user-provided function, do not set
+    // DeclaredNonTrivialSpecialMembersForCall here since we don't know
+    // yet whether the method would be considered non-trivial for the
+    // purpose of calls (attribute "trivial_abi" can be dropped from the
+    // class later, which can change the special method's triviality).
+    if (!MD->isUserProvided())
+      data().DeclaredNonTrivialSpecialMembersForCall |= SMKind;
+  }
+}
+
 void CXXRecordDecl::finishedDefaultedOrDeletedMember(CXXMethodDecl *D) {
   assert(!D->isImplicit() && !D->isUserProvided());
 
@@ -1422,10 +1453,21 @@ void CXXRecordDecl::finishedDefaultedOrDeletedMember(CXXMethodDecl *D) {
 
   // Update which trivial / non-trivial special members we have.
   // addedMember will have skipped this step for this member.
-  if (D->isTrivial())
-    data().HasTrivialSpecialMembers |= SMKind;
-  else
-    data().DeclaredNonTrivialSpecialMembers |= SMKind;
+  if (!D->isIneligibleOrNotSelected()) {
+    if (D->isTrivial())
+      data().HasTrivialSpecialMembers |= SMKind;
+    else
+      data().DeclaredNonTrivialSpecialMembers |= SMKind;
+  }
+}
+
+void CXXRecordDecl::LambdaDefinitionData::AddCaptureList(ASTContext &Ctx,
+                                                         Capture *CaptureList) {
+  Captures.push_back(CaptureList);
+  if (Captures.size() == 2) {
+    // The TinyPtrVector member now needs destruction.
+    Ctx.addDestruction(&Captures);
+  }
 }
 
 void CXXRecordDecl::setCaptures(ASTContext &Context,
@@ -1435,9 +1477,9 @@ void CXXRecordDecl::setCaptures(ASTContext &Context,
   // Copy captures.
   Data.NumCaptures = Captures.size();
   Data.NumExplicitCaptures = 0;
-  Data.Captures = (LambdaCapture *)Context.Allocate(sizeof(LambdaCapture) *
-                                                    Captures.size());
-  LambdaCapture *ToCapture = Data.Captures;
+  auto *ToCapture = (LambdaCapture *)Context.Allocate(sizeof(LambdaCapture) *
+                                                      Captures.size());
+  Data.AddCaptureList(Context, ToCapture);
   for (unsigned I = 0, N = Captures.size(); I != N; ++I) {
     if (Captures[I].isExplicit())
       ++Data.NumExplicitCaptures;
@@ -1555,21 +1597,23 @@ CXXMethodDecl *CXXRecordDecl::getLambdaStaticInvoker(CallingConv CC) const {
 }
 
 void CXXRecordDecl::getCaptureFields(
-       llvm::DenseMap<const VarDecl *, FieldDecl *> &Captures,
-       FieldDecl *&ThisCapture) const {
+    llvm::DenseMap<const ValueDecl *, FieldDecl *> &Captures,
+    FieldDecl *&ThisCapture) const {
   Captures.clear();
   ThisCapture = nullptr;
 
   LambdaDefinitionData &Lambda = getLambdaData();
-  RecordDecl::field_iterator Field = field_begin();
-  for (const LambdaCapture *C = Lambda.Captures, *CEnd = C + Lambda.NumCaptures;
-       C != CEnd; ++C, ++Field) {
-    if (C->capturesThis())
-      ThisCapture = *Field;
-    else if (C->capturesVariable())
-      Captures[C->getCapturedVar()] = *Field;
+  for (const LambdaCapture *List : Lambda.Captures) {
+    RecordDecl::field_iterator Field = field_begin();
+    for (const LambdaCapture *C = List, *CEnd = C + Lambda.NumCaptures;
+         C != CEnd; ++C, ++Field) {
+      if (C->capturesThis())
+        ThisCapture = *Field;
+      else if (C->capturesVariable())
+        Captures[C->getCapturedVar()] = *Field;
+    }
+    assert(Field == field_end());
   }
-  assert(Field == field_end());
 }
 
 TemplateParameterList *
@@ -1593,7 +1637,7 @@ CXXRecordDecl::getLambdaExplicitTemplateParameters() const {
 
   const auto ExplicitEnd = llvm::partition_point(
       *List, [](const NamedDecl *D) { return !D->isImplicit(); });
-  return llvm::makeArrayRef(List->begin(), ExplicitEnd);
+  return llvm::ArrayRef(List->begin(), ExplicitEnd);
 }
 
 Decl *CXXRecordDecl::getLambdaContextDecl() const {
@@ -1602,18 +1646,20 @@ Decl *CXXRecordDecl::getLambdaContextDecl() const {
   return getLambdaData().ContextDecl.get(Source);
 }
 
-void CXXRecordDecl::setDeviceLambdaManglingNumber(unsigned Num) const {
+void CXXRecordDecl::setLambdaNumbering(LambdaNumbering Numbering) {
   assert(isLambda() && "Not a lambda closure type!");
-  if (Num)
-    getASTContext().DeviceLambdaManglingNumbers[this] = Num;
+  getLambdaData().ManglingNumber = Numbering.ManglingNumber;
+  if (Numbering.DeviceManglingNumber)
+    getASTContext().DeviceLambdaManglingNumbers[this] =
+        Numbering.DeviceManglingNumber;
+  getLambdaData().IndexInContext = Numbering.IndexInContext;
+  getLambdaData().ContextDecl = Numbering.ContextDecl;
+  getLambdaData().HasKnownInternalLinkage = Numbering.HasKnownInternalLinkage;
 }
 
 unsigned CXXRecordDecl::getDeviceLambdaManglingNumber() const {
   assert(isLambda() && "Not a lambda closure type!");
-  auto I = getASTContext().DeviceLambdaManglingNumbers.find(this);
-  if (I != getASTContext().DeviceLambdaManglingNumbers.end())
-    return I->second;
-  return 0;
+  return getASTContext().DeviceLambdaManglingNumbers.lookup(this);
 }
 
 static CanQualType GetConversionType(ASTContext &Context, NamedDecl *Conv) {
@@ -1776,7 +1822,7 @@ void CXXRecordDecl::removeConversion(const NamedDecl *ConvDecl) {
   for (unsigned I = 0, E = Convs.size(); I != E; ++I) {
     if (Convs[I].getDecl() == ConvDecl) {
       Convs.erase(I);
-      assert(llvm::find(Convs, ConvDecl) == Convs.end() &&
+      assert(!llvm::is_contained(Convs, ConvDecl) &&
              "conversion was found multiple times in unresolved set");
       return;
     }
@@ -1894,7 +1940,14 @@ CXXDestructorDecl *CXXRecordDecl::getDestructor() const {
 
   DeclContext::lookup_result R = lookup(Name);
 
-  return R.empty() ? nullptr : dyn_cast<CXXDestructorDecl>(R.front());
+  // If a destructor was marked as not selected, we skip it. We don't always
+  // have a selected destructor: dependent types, unnamed structs.
+  for (auto *Decl : R) {
+    auto* DD = dyn_cast<CXXDestructorDecl>(Decl);
+    if (DD && !DD->isIneligibleOrNotSelected())
+      return DD;
+  }
+  return nullptr;
 }
 
 static bool isDeclContextInNamespace(const DeclContext *DC) {
@@ -2059,21 +2112,21 @@ ExplicitSpecifier ExplicitSpecifier::getFromDecl(FunctionDecl *Function) {
   }
 }
 
-CXXDeductionGuideDecl *
-CXXDeductionGuideDecl::Create(ASTContext &C, DeclContext *DC,
-                              SourceLocation StartLoc, ExplicitSpecifier ES,
-                              const DeclarationNameInfo &NameInfo, QualType T,
-                              TypeSourceInfo *TInfo, SourceLocation EndLocation,
-                              CXXConstructorDecl *Ctor) {
+CXXDeductionGuideDecl *CXXDeductionGuideDecl::Create(
+    ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
+    ExplicitSpecifier ES, const DeclarationNameInfo &NameInfo, QualType T,
+    TypeSourceInfo *TInfo, SourceLocation EndLocation, CXXConstructorDecl *Ctor,
+    DeductionCandidate Kind) {
   return new (C, DC) CXXDeductionGuideDecl(C, DC, StartLoc, ES, NameInfo, T,
-                                           TInfo, EndLocation, Ctor);
+                                           TInfo, EndLocation, Ctor, Kind);
 }
 
 CXXDeductionGuideDecl *CXXDeductionGuideDecl::CreateDeserialized(ASTContext &C,
                                                                  unsigned ID) {
   return new (C, ID) CXXDeductionGuideDecl(
       C, nullptr, SourceLocation(), ExplicitSpecifier(), DeclarationNameInfo(),
-      QualType(), nullptr, SourceLocation(), nullptr);
+      QualType(), nullptr, SourceLocation(), nullptr,
+      DeductionCandidate::Normal);
 }
 
 RequiresExprBodyDecl *RequiresExprBodyDecl::Create(
@@ -2156,12 +2209,9 @@ CXXMethodDecl::getCorrespondingMethodInClass(const CXXRecordDecl *RD,
     }
 
     // Other candidate final overriders might be overridden by this function.
-    FinalOverriders.erase(
-        std::remove_if(FinalOverriders.begin(), FinalOverriders.end(),
-                       [&](CXXMethodDecl *OtherD) {
-                         return recursivelyOverrides(D, OtherD);
-                       }),
-        FinalOverriders.end());
+    llvm::erase_if(FinalOverriders, [&](CXXMethodDecl *OtherD) {
+      return recursivelyOverrides(D, OtherD);
+    });
 
     FinalOverriders.push_back(D);
   };
@@ -2337,7 +2387,7 @@ bool CXXMethodDecl::isUsualDeallocationFunction(
   // In C++17 onwards, all potential usual deallocation functions are actual
   // usual deallocation functions. Honor this behavior when post-C++14
   // deallocation functions are offered as extensions too.
-  // FIXME(EricWF): Destrying Delete should be a language option. How do we
+  // FIXME(EricWF): Destroying Delete should be a language option. How do we
   // handle when destroying delete is used prior to C++17?
   if (Context.getLangOpts().CPlusPlus17 ||
       Context.getLangOpts().AlignedAllocation ||
@@ -2391,7 +2441,7 @@ bool CXXMethodDecl::isMoveAssignmentOperator() const {
     return false;
 
   QualType ParamType = getParamDecl(0)->getType();
-  if (!isa<RValueReferenceType>(ParamType))
+  if (!ParamType->isRValueReferenceType())
     return false;
   ParamType = ParamType->getPointeeType();
 
@@ -2442,7 +2492,8 @@ QualType CXXMethodDecl::getThisType(const FunctionProtoType *FPT,
                                     const CXXRecordDecl *Decl) {
   ASTContext &C = Decl->getASTContext();
   QualType ObjectTy = ::getThisObjectType(C, FPT, Decl);
-  return C.getPointerType(ObjectTy);
+  return C.getLangOpts().HLSL ? C.getLValueReferenceType(ObjectTy)
+                              : C.getPointerType(ObjectTy);
 }
 
 QualType CXXMethodDecl::getThisObjectType(const FunctionProtoType *FPT,
@@ -2547,7 +2598,7 @@ SourceLocation CXXCtorInitializer::getSourceLocation() const {
     return getMemberLocation();
 
   if (const auto *TSInfo = Initializee.get<TypeSourceInfo *>())
-    return TSInfo->getTypeLoc().getLocalSourceRange().getBegin();
+    return TSInfo->getTypeLoc().getBeginLoc();
 
   return {};
 }
@@ -2846,41 +2897,47 @@ NamespaceDecl *UsingDirectiveDecl::getNominatedNamespace() {
 
 NamespaceDecl::NamespaceDecl(ASTContext &C, DeclContext *DC, bool Inline,
                              SourceLocation StartLoc, SourceLocation IdLoc,
-                             IdentifierInfo *Id, NamespaceDecl *PrevDecl)
+                             IdentifierInfo *Id, NamespaceDecl *PrevDecl,
+                             bool Nested)
     : NamedDecl(Namespace, DC, IdLoc, Id), DeclContext(Namespace),
-      redeclarable_base(C), LocStart(StartLoc),
-      AnonOrFirstNamespaceAndInline(nullptr, Inline) {
+      redeclarable_base(C), LocStart(StartLoc) {
+  unsigned Flags = 0;
+  if (Inline)
+    Flags |= F_Inline;
+  if (Nested)
+    Flags |= F_Nested;
+  AnonOrFirstNamespaceAndFlags = {nullptr, Flags};
   setPreviousDecl(PrevDecl);
 
   if (PrevDecl)
-    AnonOrFirstNamespaceAndInline.setPointer(PrevDecl->getOriginalNamespace());
+    AnonOrFirstNamespaceAndFlags.setPointer(PrevDecl->getOriginalNamespace());
 }
 
 NamespaceDecl *NamespaceDecl::Create(ASTContext &C, DeclContext *DC,
                                      bool Inline, SourceLocation StartLoc,
                                      SourceLocation IdLoc, IdentifierInfo *Id,
-                                     NamespaceDecl *PrevDecl) {
-  return new (C, DC) NamespaceDecl(C, DC, Inline, StartLoc, IdLoc, Id,
-                                   PrevDecl);
+                                     NamespaceDecl *PrevDecl, bool Nested) {
+  return new (C, DC)
+      NamespaceDecl(C, DC, Inline, StartLoc, IdLoc, Id, PrevDecl, Nested);
 }
 
 NamespaceDecl *NamespaceDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (C, ID) NamespaceDecl(C, nullptr, false, SourceLocation(),
-                                   SourceLocation(), nullptr, nullptr);
+                                   SourceLocation(), nullptr, nullptr, false);
 }
 
 NamespaceDecl *NamespaceDecl::getOriginalNamespace() {
   if (isFirstDecl())
     return this;
 
-  return AnonOrFirstNamespaceAndInline.getPointer();
+  return AnonOrFirstNamespaceAndFlags.getPointer();
 }
 
 const NamespaceDecl *NamespaceDecl::getOriginalNamespace() const {
   if (isFirstDecl())
     return this;
 
-  return AnonOrFirstNamespaceAndInline.getPointer();
+  return AnonOrFirstNamespaceAndFlags.getPointer();
 }
 
 bool NamespaceDecl::isOriginalNamespace() const { return isFirstDecl(); }
@@ -2970,8 +3027,10 @@ UsingShadowDecl::UsingShadowDecl(Kind K, ASTContext &C, DeclContext *DC,
                                  BaseUsingDecl *Introducer, NamedDecl *Target)
     : NamedDecl(K, DC, Loc, Name), redeclarable_base(C),
       UsingOrNextShadow(Introducer) {
-  if (Target)
+  if (Target) {
+    assert(!isa<UsingShadowDecl>(Target));
     setTargetDecl(Target);
+  }
   setImplicit();
 }
 
@@ -3014,8 +3073,7 @@ CXXRecordDecl *ConstructorUsingShadowDecl::getNominatedBaseClass() const {
 void BaseUsingDecl::anchor() {}
 
 void BaseUsingDecl::addShadowDecl(UsingShadowDecl *S) {
-  assert(std::find(shadow_begin(), shadow_end(), S) == shadow_end() &&
-         "declaration already in set");
+  assert(!llvm::is_contained(shadows(), S) && "declaration already in set");
   assert(S->getIntroducer() == this);
 
   if (FirstUsingShadow.getPointer())
@@ -3024,8 +3082,7 @@ void BaseUsingDecl::addShadowDecl(UsingShadowDecl *S) {
 }
 
 void BaseUsingDecl::removeShadowDecl(UsingShadowDecl *S) {
-  assert(std::find(shadow_begin(), shadow_end(), S) != shadow_end() &&
-         "declaration not in set");
+  assert(llvm::is_contained(shadows(), S) && "declaration not in set");
   assert(S->getIntroducer() == this);
 
   // Remove S from the shadow decl chain. This is O(n) but hopefully rare.
@@ -3068,18 +3125,23 @@ SourceRange UsingDecl::getSourceRange() const {
 void UsingEnumDecl::anchor() {}
 
 UsingEnumDecl *UsingEnumDecl::Create(ASTContext &C, DeclContext *DC,
-                                     SourceLocation UL, SourceLocation EL,
-                                     SourceLocation NL, EnumDecl *Enum) {
-  return new (C, DC) UsingEnumDecl(DC, Enum->getDeclName(), UL, EL, NL, Enum);
+                                     SourceLocation UL,
+                                     SourceLocation EL,
+                                     SourceLocation NL,
+                                     TypeSourceInfo *EnumType) {
+  assert(isa<EnumDecl>(EnumType->getType()->getAsTagDecl()));
+  return new (C, DC)
+      UsingEnumDecl(DC, EnumType->getType()->getAsTagDecl()->getDeclName(), UL, EL, NL, EnumType);
 }
 
 UsingEnumDecl *UsingEnumDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
-  return new (C, ID) UsingEnumDecl(nullptr, DeclarationName(), SourceLocation(),
-                                   SourceLocation(), SourceLocation(), nullptr);
+  return new (C, ID)
+      UsingEnumDecl(nullptr, DeclarationName(), SourceLocation(),
+                    SourceLocation(), SourceLocation(), nullptr);
 }
 
 SourceRange UsingEnumDecl::getSourceRange() const {
-  return SourceRange(EnumLocation, getLocation());
+  return SourceRange(UsingLocation, EnumType->getTypeLoc().getEndLoc());
 }
 
 void UsingPackDecl::anchor() {}
@@ -3094,7 +3156,8 @@ UsingPackDecl *UsingPackDecl::Create(ASTContext &C, DeclContext *DC,
 UsingPackDecl *UsingPackDecl::CreateDeserialized(ASTContext &C, unsigned ID,
                                                  unsigned NumExpansions) {
   size_t Extra = additionalSizeToAlloc<NamedDecl *>(NumExpansions);
-  auto *Result = new (C, ID, Extra) UsingPackDecl(nullptr, nullptr, None);
+  auto *Result =
+      new (C, ID, Extra) UsingPackDecl(nullptr, nullptr, std::nullopt);
   Result->NumExpansions = NumExpansions;
   auto *Trail = Result->getTrailingObjects<NamedDecl *>();
   for (unsigned I = 0; I != NumExpansions; ++I)
@@ -3175,8 +3238,7 @@ void StaticAssertDecl::anchor() {}
 
 StaticAssertDecl *StaticAssertDecl::Create(ASTContext &C, DeclContext *DC,
                                            SourceLocation StaticAssertLoc,
-                                           Expr *AssertExpr,
-                                           StringLiteral *Message,
+                                           Expr *AssertExpr, Expr *Message,
                                            SourceLocation RParenLoc,
                                            bool Failed) {
   return new (C, DC) StaticAssertDecl(DC, StaticAssertLoc, AssertExpr, Message,
@@ -3187,6 +3249,16 @@ StaticAssertDecl *StaticAssertDecl::CreateDeserialized(ASTContext &C,
                                                        unsigned ID) {
   return new (C, ID) StaticAssertDecl(nullptr, SourceLocation(), nullptr,
                                       nullptr, SourceLocation(), false);
+}
+
+VarDecl *ValueDecl::getPotentiallyDecomposedVarDecl() {
+  assert((isa<VarDecl, BindingDecl>(this)) &&
+         "expected a VarDecl or a BindingDecl");
+  if (auto *Var = llvm::dyn_cast<VarDecl>(this))
+    return Var;
+  if (auto *BD = llvm::dyn_cast<BindingDecl>(this))
+    return llvm::dyn_cast<VarDecl>(BD->getDecomposedDecl());
+  return nullptr;
 }
 
 void BindingDecl::anchor() {}
@@ -3232,7 +3304,7 @@ DecompositionDecl *DecompositionDecl::CreateDeserialized(ASTContext &C,
   size_t Extra = additionalSizeToAlloc<BindingDecl *>(NumBindings);
   auto *Result = new (C, ID, Extra)
       DecompositionDecl(C, nullptr, SourceLocation(), SourceLocation(),
-                        QualType(), nullptr, StorageClass(), None);
+                        QualType(), nullptr, StorageClass(), std::nullopt);
   // Set up and clean out the bindings array.
   Result->NumBindings = NumBindings;
   auto *Trail = Result->getTrailingObjects<BindingDecl *>();
@@ -3241,16 +3313,17 @@ DecompositionDecl *DecompositionDecl::CreateDeserialized(ASTContext &C,
   return Result;
 }
 
-void DecompositionDecl::printName(llvm::raw_ostream &os) const {
-  os << '[';
+void DecompositionDecl::printName(llvm::raw_ostream &OS,
+                                  const PrintingPolicy &Policy) const {
+  OS << '[';
   bool Comma = false;
   for (const auto *B : bindings()) {
     if (Comma)
-      os << ", ";
-    B->printName(os);
+      OS << ", ";
+    B->printName(OS, Policy);
     Comma = true;
   }
-  os << ']';
+  OS << ']';
 }
 
 void MSPropertyDecl::anchor() {}
@@ -3275,7 +3348,7 @@ void MSGuidDecl::anchor() {}
 
 MSGuidDecl::MSGuidDecl(DeclContext *DC, QualType T, Parts P)
     : ValueDecl(Decl::MSGuid, DC, SourceLocation(), DeclarationName(), T),
-      PartVal(P), APVal() {}
+      PartVal(P) {}
 
 MSGuidDecl *MSGuidDecl::Create(const ASTContext &C, QualType T, Parts P) {
   DeclContext *DC = C.getTranslationUnitDecl();
@@ -3286,7 +3359,8 @@ MSGuidDecl *MSGuidDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (C, ID) MSGuidDecl(nullptr, QualType(), Parts());
 }
 
-void MSGuidDecl::printName(llvm::raw_ostream &OS) const {
+void MSGuidDecl::printName(llvm::raw_ostream &OS,
+                           const PrintingPolicy &) const {
   OS << llvm::format("GUID{%08" PRIx32 "-%04" PRIx16 "-%04" PRIx16 "-",
                      PartVal.Part1, PartVal.Part2, PartVal.Part3);
   unsigned I = 0;
@@ -3365,6 +3439,39 @@ APValue &MSGuidDecl::getAsAPValue() const {
   }
 
   return APVal;
+}
+
+void UnnamedGlobalConstantDecl::anchor() {}
+
+UnnamedGlobalConstantDecl::UnnamedGlobalConstantDecl(const ASTContext &C,
+                                                     DeclContext *DC,
+                                                     QualType Ty,
+                                                     const APValue &Val)
+    : ValueDecl(Decl::UnnamedGlobalConstant, DC, SourceLocation(),
+                DeclarationName(), Ty),
+      Value(Val) {
+  // Cleanup the embedded APValue if required (note that our destructor is never
+  // run)
+  if (Value.needsCleanup())
+    C.addDestruction(&Value);
+}
+
+UnnamedGlobalConstantDecl *
+UnnamedGlobalConstantDecl::Create(const ASTContext &C, QualType T,
+                                  const APValue &Value) {
+  DeclContext *DC = C.getTranslationUnitDecl();
+  return new (C, DC) UnnamedGlobalConstantDecl(C, DC, T, Value);
+}
+
+UnnamedGlobalConstantDecl *
+UnnamedGlobalConstantDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
+  return new (C, ID)
+      UnnamedGlobalConstantDecl(C, nullptr, QualType(), APValue());
+}
+
+void UnnamedGlobalConstantDecl::printName(llvm::raw_ostream &OS,
+                                          const PrintingPolicy &) const {
+  OS << "unnamed-global-constant";
 }
 
 static const char *getAccessName(AccessSpecifier AS) {

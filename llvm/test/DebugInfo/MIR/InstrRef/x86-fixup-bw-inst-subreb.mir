@@ -16,6 +16,7 @@
 name:            test1
 alignment:       16
 tracksRegLiveness: true
+debugInstrRef: true
 liveins:
   - { reg: '$rax' }
 # CHECK:     debugValueSubstitutions:
@@ -28,7 +29,7 @@ body:             |
     $ax = MOV16rm killed $rax, 1, $noreg, 0, $noreg, debug-instr-number 1
     ; CHECK: $eax = MOVZX32rm16 killed $rax, {{.*}} debug-instr-number 2
 
-    RETQ $ax
+    RET64 $ax
 
 ...
 ---
@@ -36,6 +37,7 @@ body:             |
 name:            test3
 alignment:       16
 tracksRegLiveness: true
+debugInstrRef: true
 liveins:
   - { reg: '$rdi' }
 # CHECK:     debugValueSubstitutions:
@@ -55,11 +57,11 @@ body:             |
     $ax = MOV16rm killed $rdi, 1, $noreg, 0, $noreg, implicit-def $eax, debug-instr-number 1
     ; CHECK: $eax = MOVZX32rm16 killed $rdi, {{.*}} debug-instr-number 2
     $ax = KILL $ax, implicit killed $eax
-    RETQ $ax
+    RET64 $ax
 
   bb.1:
     $eax = XOR32rr undef $eax, undef $eax, implicit-def dead $eflags
     $ax = KILL $ax, implicit killed $eax
-    RETQ $ax
+    RET64 $ax
 
 ...

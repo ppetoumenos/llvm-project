@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC clause validity for the following construct and directive:
 !   2.14.4 Update
@@ -39,7 +38,7 @@ program openacc_update_validity
   !ERROR: At most one ASYNC clause can appear on the UPDATE directive
   !$acc update host(aa, bb) async(1) async(2)
 
-  !$acc update self(bb, cc(:)) wait(1)
+  !$acc update self(bb, cc(:,:)) wait(1)
 
   !ERROR: SELF clause on the UPDATE directive must have a var-list
   !$acc update self

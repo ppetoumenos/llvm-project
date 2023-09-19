@@ -9,3 +9,14 @@
 
 // -----
 
+//===----------------------------------------------------------------------===//
+// VectorType
+//===----------------------------------------------------------------------===//
+
+// expected-error@+1 {{missing ']' closing scalable dimension}}
+func.func @scalable_vector_arg(%arg0: vector<[4xf32>) { }
+
+// -----
+
+// expected-error@+1 {{missing ']' closing scalable dimension}}
+func.func @scalable_vector_arg(%arg0: vector<[4x4]xf32>) { }

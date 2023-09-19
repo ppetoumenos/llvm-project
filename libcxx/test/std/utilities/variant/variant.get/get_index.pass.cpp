@@ -1,4 +1,3 @@
-// -*- C++ -*-
 //===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -9,8 +8,7 @@
 
 // UNSUPPORTED: c++03, c++11, c++14
 
-// Throwing bad_variant_access is supported starting in macosx10.13
-// XFAIL: use_system_cxx_lib && target={{.+}}-apple-macosx10.{{9|10|11|12}} && !no-exceptions
+// XFAIL: availability-bad_variant_access-missing && !no-exceptions
 
 // <variant>
 
@@ -39,11 +37,7 @@ void test_const_lvalue_get() {
   {
     using V = std::variant<int, const long>;
     constexpr V v(42);
-#ifdef TEST_WORKAROUND_CONSTEXPR_IMPLIES_NOEXCEPT
-    ASSERT_NOEXCEPT(std::get<0>(v));
-#else
     ASSERT_NOT_NOEXCEPT(std::get<0>(v));
-#endif
     ASSERT_SAME_TYPE(decltype(std::get<0>(v)), const int &);
     static_assert(std::get<0>(v) == 42, "");
   }
@@ -57,11 +51,7 @@ void test_const_lvalue_get() {
   {
     using V = std::variant<int, const long>;
     constexpr V v(42l);
-#ifdef TEST_WORKAROUND_CONSTEXPR_IMPLIES_NOEXCEPT
-    ASSERT_NOEXCEPT(std::get<1>(v));
-#else
     ASSERT_NOT_NOEXCEPT(std::get<1>(v));
-#endif
     ASSERT_SAME_TYPE(decltype(std::get<1>(v)), const long &);
     static_assert(std::get<1>(v) == 42, "");
   }
@@ -243,7 +233,7 @@ void test_const_rvalue_get() {
 #endif
 }
 
-template <std::size_t I> using Idx = std::integral_constant<size_t, I>;
+template <std::size_t I> using Idx = std::integral_constant<std::size_t, I>;
 
 void test_throws_for_all_value_categories() {
 #ifndef TEST_HAS_NO_EXCEPTIONS
@@ -254,8 +244,8 @@ void test_throws_for_all_value_categories() {
   V v1(42l);
   const V &cv1 = v1;
   assert(v1.index() == 1);
-  std::integral_constant<size_t, 0> zero;
-  std::integral_constant<size_t, 1> one;
+  std::integral_constant<std::size_t, 0> zero;
+  std::integral_constant<std::size_t, 1> one;
   auto test = [](auto idx, auto &&v) {
     using Idx = decltype(idx);
     try {

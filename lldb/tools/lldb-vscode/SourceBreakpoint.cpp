@@ -16,7 +16,9 @@ SourceBreakpoint::SourceBreakpoint(const llvm::json::Object &obj)
       column(GetUnsigned(obj, "column", 0)) {}
 
 void SourceBreakpoint::SetBreakpoint(const llvm::StringRef source_path) {
-  bp = g_vsc.target.BreakpointCreateByLocation(source_path.str().c_str(), line);
+  lldb::SBFileSpecList module_list;
+  bp = g_vsc.target.BreakpointCreateByLocation(source_path.str().c_str(), line,
+                                               column, 0, module_list);
   // See comments in BreakpointBase::GetBreakpointLabel() for details of why
   // we add a label to our breakpoints.
   bp.AddName(GetBreakpointLabel());
@@ -24,6 +26,8 @@ void SourceBreakpoint::SetBreakpoint(const llvm::StringRef source_path) {
     SetCondition();
   if (!hitCondition.empty())
     SetHitCondition();
+  if (!logMessage.empty())
+    SetLogMessage();
 }
 
 } // namespace lldb_vscode

@@ -31,6 +31,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Scalar.h"
 #include "lldb/Utility/Status.h"
@@ -76,8 +77,7 @@ TypeAndOrName ItaniumABILanguageRuntime::GetTypeInfoFromVTableAddress(
           const char *name =
               symbol->GetMangled().GetDemangledName().AsCString();
           if (name && strstr(name, vtable_demangled_prefix) == name) {
-            Log *log(
-                lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_OBJECT));
+            Log *log = GetLog(LLDBLog::Object);
             LLDB_LOGF(log,
                       "0x%16.16" PRIx64
                       ": static-type = '%s' has vtable symbol '%s'\n",
@@ -318,9 +318,9 @@ ItaniumABILanguageRuntime::CreateInstance(Process *process,
 class CommandObjectMultiwordItaniumABI_Demangle : public CommandObjectParsed {
 public:
   CommandObjectMultiwordItaniumABI_Demangle(CommandInterpreter &interpreter)
-      : CommandObjectParsed(interpreter, "demangle",
-                            "Demangle a C++ mangled name.",
-                            "language cplusplus demangle") {
+      : CommandObjectParsed(
+            interpreter, "demangle", "Demangle a C++ mangled name.",
+            "language cplusplus demangle [<mangled-name> ...]") {
     CommandArgumentEntry arg;
     CommandArgumentData index_arg;
 
@@ -405,18 +405,6 @@ void ItaniumABILanguageRuntime::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
-lldb_private::ConstString ItaniumABILanguageRuntime::GetPluginNameStatic() {
-  static ConstString g_name("itanium");
-  return g_name;
-}
-
-// PluginInterface protocol
-lldb_private::ConstString ItaniumABILanguageRuntime::GetPluginName() {
-  return GetPluginNameStatic();
-}
-
-uint32_t ItaniumABILanguageRuntime::GetPluginVersion() { return 1; }
-
 BreakpointResolverSP ItaniumABILanguageRuntime::CreateExceptionResolver(
     const BreakpointSP &bkpt, bool catch_bp, bool throw_bp) {
   return CreateExceptionResolver(bkpt, catch_bp, throw_bp, false);
@@ -465,6 +453,8 @@ lldb::SearchFilterSP ItaniumABILanguageRuntime::CreateExceptionSearchFilter() {
     // Apple binaries.
     filter_modules.EmplaceBack("libc++abi.dylib");
     filter_modules.EmplaceBack("libSystem.B.dylib");
+    filter_modules.EmplaceBack("libc++abi.1.0.dylib");
+    filter_modules.EmplaceBack("libc++abi.1.dylib");
   }
   return target.GetSearchFilterForModuleList(&filter_modules);
 }
@@ -535,13 +525,13 @@ ValueObjectSP ItaniumABILanguageRuntime::GetExceptionObjectForThread(
   if (!thread_sp->SafeToCallFunctions())
     return {};
 
-  TypeSystemClang *clang_ast_context =
+  TypeSystemClangSP scratch_ts_sp =
       ScratchTypeSystemClang::GetForTarget(m_process->GetTarget());
-  if (!clang_ast_context)
+  if (!scratch_ts_sp)
     return {};
 
   CompilerType voidstar =
-      clang_ast_context->GetBasicType(eBasicTypeVoid).GetPointerType();
+      scratch_ts_sp->GetBasicType(eBasicTypeVoid).GetPointerType();
 
   DiagnosticManager diagnostics;
   ExecutionContext exe_ctx;
@@ -593,7 +583,11 @@ ValueObjectSP ItaniumABILanguageRuntime::GetExceptionObjectForThread(
   ValueObjectSP exception = ValueObject::CreateValueObjectFromData(
       "exception", exception_isw.GetAsData(m_process->GetByteOrder()), exe_ctx,
       voidstar);
-  exception = exception->GetDynamicValue(eDynamicDontRunTarget);
+  ValueObjectSP dyn_exception 
+      = exception->GetDynamicValue(eDynamicDontRunTarget);
+  // If we succeed in making a dynamic value, return that:
+  if (dyn_exception) 
+     return dyn_exception;
 
   return exception;
 }

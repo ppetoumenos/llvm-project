@@ -33,8 +33,10 @@ protected:
     return *Formatted;
   }
 
-  void verifySort(llvm::StringRef Expected, llvm::StringRef Code,
-                  unsigned Offset = 0, unsigned Length = 0) {
+  void _verifySort(const char *File, int Line, llvm::StringRef Expected,
+                   llvm::StringRef Code, unsigned Offset = 0,
+                   unsigned Length = 0) {
+    ::testing::ScopedTrace t(File, Line, ::testing::Message() << Code.str());
     std::string Result = sort(Code, Offset, Length);
     EXPECT_EQ(Expected.str(), Result) << "Expected:\n"
                                       << Expected << "\nActual:\n"
@@ -43,6 +45,8 @@ protected:
 
   FormatStyle Style = getGoogleStyle(FormatStyle::LK_JavaScript);
 };
+
+#define verifySort(...) _verifySort(__FILE__, __LINE__, __VA_ARGS__)
 
 TEST_F(SortImportsTestJS, AlreadySorted) {
   verifySort("import {sym} from 'a';\n"
@@ -440,6 +444,74 @@ TEST_F(SortImportsTestJS, RespectsClangFormatOffInNamedImports) {
              "import {B, A} from './b';\n"
              "// clang-format on\n"
              "const x =   1;");
+}
+
+TEST_F(SortImportsTestJS, ImportEqAliases) {
+  verifySort("import {B} from 'bar';\n"
+             "import {A} from 'foo';\n"
+             "\n"
+             "import Z = A.C;\n"
+             "import Y = B.C.Z;\n"
+             "\n"
+             "export {Z};\n"
+             "\n"
+             "console.log(Z);\n",
+             "import {A} from 'foo';\n"
+             "import Z = A.C;\n"
+             "export {Z};\n"
+             "import {B} from 'bar';\n"
+             "import Y = B.C.Z;\n"
+             "\n"
+             "console.log(Z);\n");
+}
+
+TEST_F(SortImportsTestJS, ImportExportType) {
+  verifySort("import type {sym} from 'a';\n"
+             "import {type sym} from 'b';\n"
+             "import {sym} from 'c';\n"
+             "import type sym from 'd';\n"
+             "import type * as sym from 'e';\n"
+             "\n"
+             "let x = 1;",
+             "import {sym} from 'c';\n"
+             "import type {sym} from 'a';\n"
+             "import type * as sym from 'e';\n"
+             "import type sym from 'd';\n"
+             "import {type sym} from 'b';\n"
+             "let x = 1;");
+
+  // Symbols within import statement
+  verifySort("import {type sym1, type sym2 as a, sym3} from 'b';\n",
+             "import {type sym2 as a, type sym1, sym3} from 'b';\n");
+
+  // Merging
+  verifySort("import {X, type Z} from 'a';\n"
+             "import type {Y} from 'a';\n"
+             "\n"
+             "X + Y + Z;\n",
+             "import {X} from 'a';\n"
+             "import {type Z} from 'a';\n"
+             "import type {Y} from 'a';\n"
+             "\n"
+             "X + Y + Z;\n");
+
+  // Merging: empty imports
+  verifySort("import type {A} from 'foo';\n", "import type {} from 'foo';\n"
+                                              "import type {A} from 'foo';");
+
+  // Merging: exports
+  verifySort("export {A, type B} from 'foo';\n",
+             "export {A} from 'foo';\n"
+             "export   {type B} from 'foo';");
+
+  // `export type X = Y;` should terminate import sorting. The following export
+  // statements should therefore not merge.
+  verifySort("export type A = B;\n"
+             "export {X};\n"
+             "export {Y};\n",
+             "export type A = B;\n"
+             "export {X};\n"
+             "export {Y};\n");
 }
 
 } // end namespace

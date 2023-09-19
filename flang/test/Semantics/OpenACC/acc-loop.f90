@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC clause validity for the following construct and directive:
 !   2.9 Loop
@@ -250,5 +249,23 @@ program openacc_loop_validity
     a(i) = 3.14
   end do
   !$acc end parallel
+
+  !$acc loop collapse(2)
+  do i = 1, N
+    !ERROR: Loop control is not present in the DO LOOP
+    do
+      a(i) = 3.14
+    end do
+  end do
+
+  !ERROR: The num argument is not allowed when dim is specified
+  !$acc loop gang(1, dim: 2)
+  do i = 1, N
+  end do
+
+  !$acc loop
+  do i = 1, N
+  end do
+  !$acc end loop
 
 end program openacc_loop_validity

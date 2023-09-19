@@ -50,7 +50,7 @@ std::size_t TotalElementCount(const ConstantSubscripts &);
 
 // Validate dimension re-ordering like ORDER in RESHAPE.
 // On success, return a vector that can be used as dimOrder in
-// ConstantBound::IncrementSubscripts().
+// ConstantBounds::IncrementSubscripts().
 std::optional<std::vector<int>> ValidateDimensionOrder(
     int rank, const std::vector<int> &order);
 
@@ -63,10 +63,23 @@ public:
   explicit ConstantBounds(ConstantSubscripts &&shape);
   ~ConstantBounds();
   const ConstantSubscripts &shape() const { return shape_; }
-  const ConstantSubscripts &lbounds() const { return lbounds_; }
-  void set_lbounds(ConstantSubscripts &&);
   int Rank() const { return GetRank(shape_); }
   Constant<SubscriptInteger> SHAPE() const;
+
+  // It is possible in this representation for a constant array to have
+  // lower bounds other than 1, which is of course not expressible in
+  // Fortran.  This case arises only from definitions of named constant
+  // arrays with such bounds, as in:
+  //   REAL, PARAMETER :: NAMED(0:1) = [1.,2.]
+  // Bundling the lower bounds of the named constant with its
+  // constant value allows folding of subscripted array element
+  // references, LBOUND, and UBOUND without having to thread the named
+  // constant or its bounds throughout folding.
+  const ConstantSubscripts &lbounds() const { return lbounds_; }
+  ConstantSubscripts ComputeUbounds(std::optional<int> dim) const;
+  void set_lbounds(ConstantSubscripts &&);
+  void SetLowerBoundsToOne();
+  bool HasNonDefaultLowerBound() const;
 
   // If no optional dimension order argument is passed, increments a vector of
   // subscripts in Fortran array order (first dimension varying most quickly).
@@ -140,8 +153,8 @@ public:
     }
   }
 
-  // Apply subscripts.  An empty subscript list is allowed for
-  // a scalar constant.
+  // Apply subscripts.  Excess subscripts are ignored, including the
+  // case of a scalar.
   Element At(const ConstantSubscripts &) const;
 
   Constant Reshape(ConstantSubscripts &&) const;
@@ -163,7 +176,8 @@ public:
   ~Constant();
 
   bool operator==(const Constant &that) const {
-    return shape() == that.shape() && values_ == that.values_;
+    return LEN() == that.LEN() && shape() == that.shape() &&
+        values_ == that.values_;
   }
   bool empty() const;
   std::size_t size() const;
@@ -182,11 +196,12 @@ public:
   // Apply subscripts, if any.
   Scalar<Result> At(const ConstantSubscripts &) const;
 
+  // Extract substring(s); returns nullopt for errors.
+  std::optional<Constant> Substring(ConstantSubscript, ConstantSubscript) const;
+
   Constant Reshape(ConstantSubscripts &&) const;
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
-  static constexpr DynamicType GetType() {
-    return {TypeCategory::Character, KIND};
-  }
+  DynamicType GetType() const { return {KIND, length_}; }
   std::size_t CopyFrom(const Constant &source, std::size_t count,
       ConstantSubscripts &resultSubscripts, const std::vector<int> *dimOrder);
 
@@ -221,6 +236,7 @@ public:
   std::optional<StructureConstructor> GetScalarValue() const;
   StructureConstructor At(const ConstantSubscripts &) const;
 
+  bool operator==(const Constant &) const;
   Constant Reshape(ConstantSubscripts &&) const;
   std::size_t CopyFrom(const Constant &source, std::size_t count,
       ConstantSubscripts &resultSubscripts, const std::vector<int> *dimOrder);

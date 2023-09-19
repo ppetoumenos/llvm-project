@@ -1,44 +1,58 @@
-set(SCUDO_DEPS "")
-
-if(LLVM_LIBC_INCLUDE_SCUDO)
-  include(../../compiler-rt/cmake/Modules/AllSupportedArchDefs.cmake)
-  if(NOT (LIBC_TARGET_ARCHITECTURE IN_LIST ALL_SCUDO_STANDALONE_SUPPORTED_ARCH))
-    message(FATAL_ERROR "Architecture ${LIBC_TARGET_ARCHITECTURE} is not supported by SCUDO. 
-Either disable LLVM_LIBC_INCLUDE_SCUDO or change your target architecture.")
+set(libc_archive_targets "")
+set(libc_archive_names "")
+set(libc_archive_entrypoint_lists "")
+if(LLVM_LIBC_FULL_BUILD)
+  if(LIBC_TARGET_ARCHITECTURE_IS_GPU)
+    list(APPEND libc_archive_names cgpu mgpu)
+  else()
+    list(APPEND libc_archive_names c m)
   endif()
-  list(APPEND SCUDO_DEPS RTScudoStandalone.${LIBC_TARGET_ARCHITECTURE} RTScudoStandaloneCWrappers.${LIBC_TARGET_ARCHITECTURE})
-  if((LIBC_TARGET_ARCHITECTURE IN_LIST ALL_GWP_ASAN_SUPPORTED_ARCH) AND COMPILER_RT_BUILD_GWP_ASAN)
-    list(APPEND SCUDO_DEPS RTGwpAsan.${LIBC_TARGET_ARCHITECTURE} 
-                            RTGwpAsanBacktraceLibc.${LIBC_TARGET_ARCHITECTURE} 
-                            RTGwpAsanSegvHandler.${LIBC_TARGET_ARCHITECTURE})
-  elseif(COMPILER_RT_BUILD_GWP_ASAN)
-    message(WARNING "Architecture ${LIBC_TARGET_ARCHITECTURE} is not supported by GWP-ASan. Skipping.")
-  endif()
+  list(APPEND libc_archive_targets libc libm)
+  list(APPEND libc_archive_entrypoint_lists
+       TARGET_LIBC_ENTRYPOINTS TARGET_LIBM_ENTRYPOINTS)
+else()
+  list(APPEND libc_archive_names llvmlibc)
+  list(APPEND libc_archive_targets libc)
+  list(APPEND libc_archive_entrypoint_lists TARGET_LLVMLIBC_ENTRYPOINTS)
 endif()
 
-add_entrypoint_library(
-  llvmlibc
-  DEPENDS
-  ${TARGET_LLVMLIBC_ENTRYPOINTS}
-  EXT_DEPS
-  ${SCUDO_DEPS}
-)
+set(added_archive_targets "")
+foreach(archive IN ZIP_LISTS
+        libc_archive_names libc_archive_targets libc_archive_entrypoint_lists)
+  if(NOT ${archive_2})
+    # If an entrypoint list is missing, then skip adding targets for it.
+    continue()
+  endif()
+  add_entrypoint_library(
+    ${archive_1}
+    DEPENDS
+      ${${archive_2}}
+  )
+  set_target_properties(
+    ${archive_1}
+    PROPERTIES
+      ARCHIVE_OUTPUT_NAME ${archive_0}
+  )
+  list(APPEND added_archive_targets ${archive_1})
+endforeach()
 
-if(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR)
-  set(LIBC_INSTALL_LIBRARY_DIR lib${LLVM_LIBDIR_SUFFIX}/${LLVM_DEFAULT_TARGET_TRIPLE})
+if(LIBC_TARGET_TRIPLE)
+  set(LIBC_INSTALL_LIBRARY_DIR lib${LLVM_LIBDIR_SUFFIX}/${LIBC_TARGET_TRIPLE})
+elseif(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR AND NOT LIBC_GPU_BUILD)
+  set(LIBC_INSTALL_LIBRARY_DIR
+      lib${LLVM_LIBDIR_SUFFIX}/${LLVM_DEFAULT_TARGET_TRIPLE})
 else()
   set(LIBC_INSTALL_LIBRARY_DIR lib${LLVM_LIBDIR_SUFFIX})
 endif()
 
 install(
-  TARGETS llvmlibc
-  ARCHIVE DESTINATION "${LIBC_INSTALL_LIBRARY_DIR}"
-  COMPONENT llvmlibc
+  TARGETS ${added_archive_targets}
+  ARCHIVE DESTINATION ${LIBC_INSTALL_LIBRARY_DIR}
+  COMPONENT libc-static-archives
 )
 
-add_custom_target(
-    install-llvmlibc
-    DEPENDS llvmlibc
-    COMMAND "${CMAKE_COMMAND}" -DCMAKE_INSTALL_COMPONENT=llvmlibc
-            -P "${LIBC_BINARY_DIR}/cmake_install.cmake"
+add_llvm_install_targets(
+  install-libc-static-archives
+  DEPENDS ${added_archive_targets}
+  COMPONENT libc-static-archives
 )

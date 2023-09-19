@@ -120,8 +120,7 @@ define <8 x i16> @cttz_v8i16_undef(<8 x i16> %x) {
 }
 
 ; CHECK-LABEL: ctpop_v8i16:
-; Note: expansion does not use i32.popcnt
-; CHECK: v128.and
+; CHECK: i32.popcnt
 declare <8 x i16> @llvm.ctpop.v8i16(<8 x i16>)
 define <8 x i16> @ctpop_v8i16(<8 x i16> %x) {
   %v = call <8 x i16> @llvm.ctpop.v8i16(<8 x i16> %x)
@@ -209,8 +208,7 @@ define <4 x i32> @cttz_v4i32_undef(<4 x i32> %x) {
 }
 
 ; CHECK-LABEL: ctpop_v4i32:
-; Note: expansion does not use i32.popcnt
-; CHECK: v128.and
+; CHECK: i32.popcnt
 declare <4 x i32> @llvm.ctpop.v4i32(<4 x i32>)
 define <4 x i32> @ctpop_v4i32(<4 x i32> %x) {
   %v = call <4 x i32> @llvm.ctpop.v4i32(<4 x i32> %x)
@@ -298,8 +296,7 @@ define <2 x i64> @cttz_v2i64_undef(<2 x i64> %x) {
 }
 
 ; CHECK-LABEL: ctpop_v2i64:
-; Note: expansion does not use i64.popcnt
-; CHECK: v128.and
+; CHECK: i64.popcnt
 declare <2 x i64> @llvm.ctpop.v2i64(<2 x i64>)
 define <2 x i64> @ctpop_v2i64(<2 x i64> %x) {
   %v = call <2 x i64> @llvm.ctpop.v2i64(<2 x i64> %x)
@@ -436,14 +433,6 @@ define <4 x float> @exp2_v4f32(<4 x float> %x) {
   ret <4 x float> %v
 }
 
-; CHECK-LABEL: rint_v4f32:
-; CHECK: f32.nearest
-declare <4 x float> @llvm.rint.v4f32(<4 x float>)
-define <4 x float> @rint_v4f32(<4 x float> %x) {
-  %v = call <4 x float> @llvm.rint.v4f32(<4 x float> %x)
-  ret <4 x float> %v
-}
-
 ; CHECK-LABEL: round_v4f32:
 ; CHECK: call $push[[L:[0-9]+]]=, roundf
 declare <4 x float> @llvm.round.v4f32(<4 x float>)
@@ -533,14 +522,6 @@ define <2 x double> @exp_v2f64(<2 x double> %x) {
 declare <2 x double> @llvm.exp2.v2f64(<2 x double>)
 define <2 x double> @exp2_v2f64(<2 x double> %x) {
   %v = call <2 x double> @llvm.exp2.v2f64(<2 x double> %x)
-  ret <2 x double> %v
-}
-
-; CHECK-LABEL: rint_v2f64:
-; CHECK: f64.nearest
-declare <2 x double> @llvm.rint.v2f64(<2 x double>)
-define <2 x double> @rint_v2f64(<2 x double> %x) {
-  %v = call <2 x double> @llvm.rint.v2f64(<2 x double> %x)
   ret <2 x double> %v
 }
 

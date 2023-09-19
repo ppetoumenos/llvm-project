@@ -7,10 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03, c++11, c++14
-// UNSUPPORTED: libcpp-has-no-filesystem-library
 
-// Filesystem is supported on Apple platforms starting with macosx10.15.
-// UNSUPPORTED: use_system_cxx_lib && target={{.+}}-apple-macosx10.{{9|10|11|12|13|14}}
+// UNSUPPORTED: availability-filesystem-missing
 
 // <fstream>
 
@@ -19,11 +17,13 @@
 
 // explicit basic_ofstream(const filesystem::path& s, ios_base::openmode mode = ios_base::out);
 
-#include <fstream>
-#include <filesystem>
 #include <cassert>
-#include "test_macros.h"
+#include <filesystem>
+#include <fstream>
+#include <type_traits>
+
 #include "platform_support.h"
+#include "test_macros.h"
 
 namespace fs = std::filesystem;
 
@@ -53,6 +53,8 @@ int main(int, char**) {
     assert(x == 3.25);
   }
   std::remove(p.string().c_str());
+
+#ifndef TEST_HAS_NO_WIDE_CHARACTERS
   {
     std::wofstream stream(p);
     stream << 3.25;
@@ -70,6 +72,7 @@ int main(int, char**) {
     assert(x == 3.25);
   }
   std::remove(p.string().c_str());
+#endif
 
   return 0;
 }

@@ -126,11 +126,15 @@ int omp_get_default_device(void);
 
 int omp_get_num_devices(void);
 
+int omp_get_device_num(void);
+
 int omp_get_num_teams(void);
 
 int omp_get_team_num();
 
 int omp_get_initial_device(void);
+
+void *llvm_omp_target_dynamic_shared_alloc();
 
 /// Synchronization
 ///
@@ -174,6 +178,10 @@ void *__kmpc_alloc_shared(uint64_t Bytes);
 /// allocated by __kmpc_alloc_shared by the same thread.
 void __kmpc_free_shared(void *Ptr, uint64_t Bytes);
 
+/// Get a pointer to the memory buffer containing dynamically allocated shared
+/// memory configured at launch.
+void *__kmpc_get_dynamic_shared();
+
 /// Allocate sufficient space for \p NumArgs sequential `void*` and store the
 /// allocation address in \p GlobalArgs.
 ///
@@ -194,15 +202,26 @@ void __kmpc_end_sharing_variables();
 /// Called by the worker threads in the parallel region (function).
 void __kmpc_get_shared_variables(void ***GlobalArgs);
 
+/// External interface to get the thread ID.
+uint32_t __kmpc_get_hardware_thread_id_in_block();
+
+/// External interface to get the number of threads.
+uint32_t __kmpc_get_hardware_num_threads_in_block();
+
+/// External interface to get the warp size.
+uint32_t __kmpc_get_warp_size();
+
 /// Kernel
 ///
 ///{
+// Forward declaration
+struct KernelEnvironmentTy;
+
 int8_t __kmpc_is_spmd_exec_mode();
 
-int32_t __kmpc_target_init(IdentTy *Ident, bool IsSPMD,
-                           bool UseGenericStateMachine, bool);
+int32_t __kmpc_target_init(KernelEnvironmentTy &KernelEnvironment);
 
-void __kmpc_target_deinit(IdentTy *Ident, bool IsSPMD, bool);
+void __kmpc_target_deinit();
 
 ///}
 
@@ -237,9 +256,15 @@ void __kmpc_barrier(IdentTy *Loc_ref, int32_t TId);
 
 void __kmpc_barrier_simple_spmd(IdentTy *Loc_ref, int32_t TId);
 
+void __kmpc_barrier_simple_generic(IdentTy *Loc_ref, int32_t TId);
+
 int32_t __kmpc_master(IdentTy *Loc, int32_t TId);
 
 void __kmpc_end_master(IdentTy *Loc, int32_t TId);
+
+int32_t __kmpc_masked(IdentTy *Loc, int32_t TId, int32_t Filter);
+
+void __kmpc_end_masked(IdentTy *Loc, int32_t TId);
 
 int32_t __kmpc_single(IdentTy *Loc, int32_t TId);
 
@@ -247,9 +272,9 @@ void __kmpc_end_single(IdentTy *Loc, int32_t TId);
 
 void __kmpc_flush(IdentTy *Loc);
 
-__kmpc_impl_lanemask_t __kmpc_warp_active_thread_mask();
+uint64_t __kmpc_warp_active_thread_mask(void);
 
-void __kmpc_syncwarp(__kmpc_impl_lanemask_t Mask);
+void __kmpc_syncwarp(uint64_t Mask);
 
 void __kmpc_critical(IdentTy *Loc, int32_t TId, CriticalNameTy *Name);
 
@@ -269,12 +294,6 @@ bool __kmpc_kernel_parallel(ParallelRegionFnTy *WorkFn);
 void __kmpc_kernel_end_parallel();
 
 /// TODO
-void __kmpc_serialized_parallel(IdentTy *Loc, uint32_t);
-
-/// TODO
-void __kmpc_end_serialized_parallel(IdentTy *Loc, uint32_t);
-
-/// TODO
 void __kmpc_push_proc_bind(IdentTy *Loc, uint32_t TId, int ProcBind);
 
 /// TODO
@@ -284,16 +303,14 @@ void __kmpc_push_num_teams(IdentTy *Loc, int32_t TId, int32_t NumTeams,
 /// TODO
 uint16_t __kmpc_parallel_level(IdentTy *Loc, uint32_t);
 
-/// TODO
-void __kmpc_push_num_threads(IdentTy *Loc, int32_t, int32_t NumThreads);
 ///}
 
 /// Tasking
 ///
 ///{
-TaskDescriptorTy *__kmpc_omp_task_alloc(IdentTy *, uint32_t, int32_t,
-                                        uint32_t TaskSizeInclPrivateValues,
-                                        uint32_t SharedValuesSize,
+TaskDescriptorTy *__kmpc_omp_task_alloc(IdentTy *, int32_t, int32_t,
+                                        size_t TaskSizeInclPrivateValues,
+                                        size_t SharedValuesSize,
                                         TaskFnTy TaskFn);
 
 int32_t __kmpc_omp_task(IdentTy *Loc, uint32_t TId,

@@ -25,9 +25,9 @@ BreakpointSite::BreakpointSite(BreakpointSiteList *list,
       m_type(eSoftware), // Process subclasses need to set this correctly using
                          // SetType()
       m_saved_opcode(), m_trap_opcode(),
-      m_enabled(false), // Need to create it disabled, so the first enable turns
-                        // it on.
-      m_owners(), m_owners_mutex() {
+      m_enabled(false) // Need to create it disabled, so the first enable turns
+                       // it on.
+{
   m_owners.Add(owner);
 }
 
@@ -49,7 +49,7 @@ break_id_t BreakpointSite::GetNextID() {
 
 bool BreakpointSite::ShouldStop(StoppointCallbackContext *context) {
   m_hit_counter.Increment();
-  // ShouldStop can do a lot of work, and might even come come back and hit
+  // ShouldStop can do a lot of work, and might even come back and hit
   // this breakpoint site again.  So don't hold the m_owners_mutex the whole
   // while.  Instead make a local copy of the collection and call ShouldStop on
   // the copy.

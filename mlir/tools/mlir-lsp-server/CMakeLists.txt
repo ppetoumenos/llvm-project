@@ -17,21 +17,26 @@ if(MLIR_INCLUDE_TESTS)
     MLIRSPIRVTestPasses
     MLIRTestAnalysis
     MLIRTestDialect
+    MLIRTestDynDialect
     MLIRTestIR
     MLIRTestPass
     MLIRTestReducer
     MLIRTestRewrite
+    MLIRTestTransformDialect
     MLIRTestTransforms
     )
 endif()
 
 set(LIBS
-  ${dialect_libs}
   ${conversion_libs}
+  ${dialect_libs}
+  ${extension_libs}
   ${test_libs}
-  MLIRLoopAnalysis
+
+  MLIRAffineAnalysis
   MLIRAnalysis
   MLIRDialect
+  MLIRFuncAllExtensions
   MLIRLspServerLib
   MLIRParser
   MLIRPass
@@ -41,7 +46,7 @@ set(LIBS
   MLIRIR
   )
 
-add_llvm_tool(mlir-lsp-server
+add_mlir_tool(mlir-lsp-server
   mlir-lsp-server.cpp
 
   DEPENDS

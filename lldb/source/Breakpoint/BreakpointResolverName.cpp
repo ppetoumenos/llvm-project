@@ -15,8 +15,9 @@
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/Symbol.h"
 #include "lldb/Symbol/SymbolContext.h"
-#include "lldb/Target/Target.h"
 #include "lldb/Target/Language.h"
+#include "lldb/Target/Target.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
@@ -28,12 +29,11 @@ BreakpointResolverName::BreakpointResolverName(const BreakpointSP &bkpt,
     LanguageType language, Breakpoint::MatchType type, lldb::addr_t offset,
     bool skip_prologue)
     : BreakpointResolver(bkpt, BreakpointResolver::NameResolver, offset),
-      m_class_name(), m_regex(), m_match_type(type), m_language(language),
-      m_skip_prologue(skip_prologue) {
+      m_match_type(type), m_language(language), m_skip_prologue(skip_prologue) {
   if (m_match_type == Breakpoint::Regexp) {
     m_regex = RegularExpression(name_cstr);
     if (!m_regex.IsValid()) {
-      Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_BREAKPOINTS));
+      Log *log = GetLog(LLDBLog::Breakpoints);
 
       if (log)
         log->Warning("function name regexp: \"%s\" did not compile.",
@@ -56,12 +56,10 @@ BreakpointResolverName::BreakpointResolverName(
   }
 }
 
-BreakpointResolverName::BreakpointResolverName(const BreakpointSP &bkpt,
-                                               std::vector<std::string> names,
-                                               FunctionNameType name_type_mask,
-                                               LanguageType language,
-                                               lldb::addr_t offset,
-                                               bool skip_prologue)
+BreakpointResolverName::BreakpointResolverName(
+    const BreakpointSP &bkpt, const std::vector<std::string> &names,
+    FunctionNameType name_type_mask, LanguageType language, lldb::addr_t offset,
+    bool skip_prologue)
     : BreakpointResolver(bkpt, BreakpointResolver::NameResolver, offset),
       m_match_type(Breakpoint::Exact), m_language(language),
       m_skip_prologue(skip_prologue) {
@@ -104,7 +102,7 @@ BreakpointResolver *BreakpointResolverName::CreateFromStructuredData(
     }
   }
 
-  lldb::addr_t offset = 0;
+  lldb::offset_t offset = 0;
   success =
       options_dict.GetValueForKeyAsInteger(GetKey(OptionNames::Offset), offset);
   if (!success) {
@@ -197,8 +195,8 @@ StructuredData::ObjectSP BreakpointResolverName::SerializeToStructuredData() {
     for (auto lookup : m_lookups) {
       names_sp->AddItem(StructuredData::StringSP(
           new StructuredData::String(lookup.GetName().GetStringRef())));
-      name_masks_sp->AddItem(StructuredData::IntegerSP(
-          new StructuredData::Integer(lookup.GetNameTypeMask())));
+      name_masks_sp->AddItem(StructuredData::UnsignedIntegerSP(
+          new StructuredData::UnsignedInteger(lookup.GetNameTypeMask())));
     }
     options_dict_sp->AddItem(GetKey(OptionNames::SymbolNameArray), names_sp);
     options_dict_sp->AddItem(GetKey(OptionNames::NameMaskArray), name_masks_sp);
@@ -252,7 +250,7 @@ void BreakpointResolverName::AddNameLookup(ConstString name,
 Searcher::CallbackReturn
 BreakpointResolverName::SearchCallback(SearchFilter &filter,
                                        SymbolContext &context, Address *addr) {
-  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_BREAKPOINTS));
+  Log *log = GetLog(LLDBLog::Breakpoints);
 
   if (m_class_name) {
     if (log)
@@ -274,9 +272,8 @@ BreakpointResolverName::SearchCallback(SearchFilter &filter,
     if (context.module_sp) {
       for (const auto &lookup : m_lookups) {
         const size_t start_func_idx = func_list.GetSize();
-        context.module_sp->FindFunctions(
-            lookup.GetLookupName(), CompilerDeclContext(),
-            lookup.GetNameTypeMask(), function_options, func_list);
+        context.module_sp->FindFunctions(lookup, CompilerDeclContext(),
+                                         function_options, func_list);
 
         const size_t end_func_idx = func_list.GetSize();
 
@@ -332,14 +329,7 @@ BreakpointResolverName::SearchCallback(SearchFilter &filter,
   Address break_addr;
 
   // Remove any duplicates between the function list and the symbol list
-  SymbolContext sc;
-  if (!func_list.GetSize())
-    return Searcher::eCallbackReturnContinue;
-
-  for (uint32_t i = 0; i < func_list.GetSize(); i++) {
-    if (!func_list.GetContextAtIndex(i, sc))
-      continue;
-
+  for (const SymbolContext &sc : func_list) {
     bool is_reexported = false;
 
     if (sc.block && sc.block->GetInlinedFunctionInfo()) {

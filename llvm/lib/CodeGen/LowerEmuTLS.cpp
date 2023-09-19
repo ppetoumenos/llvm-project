@@ -17,7 +17,6 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
@@ -79,14 +78,14 @@ bool LowerEmuTLS::runOnModule(Module &M) {
     if (G.isThreadLocal())
       TlsVars.append({&G});
   }
-  for (const auto G : TlsVars)
+  for (const auto *const G : TlsVars)
     Changed |= addEmuTlsVar(M, G);
   return Changed;
 }
 
 bool LowerEmuTLS::addEmuTlsVar(Module &M, const GlobalVariable *GV) {
   LLVMContext &C = M.getContext();
-  PointerType *VoidPtrType = Type::getInt8PtrTy(C);
+  PointerType *VoidPtrType = PointerType::getUnqual(C);
 
   std::string EmuTlsVarName = ("__emutls_v." + GV->getName()).str();
   GlobalVariable *EmuTlsVar = M.getNamedGlobal(EmuTlsVarName);
@@ -115,8 +114,7 @@ bool LowerEmuTLS::addEmuTlsVar(Module &M, const GlobalVariable *GV) {
   //     void *templ; // 0 or point to __emutls_t.*
   // sizeof(word) should be the same as sizeof(void*) on target.
   IntegerType *WordType = DL.getIntPtrType(C);
-  PointerType *InitPtrType = InitValue ?
-      PointerType::getUnqual(InitValue->getType()) : VoidPtrType;
+  PointerType *InitPtrType = PointerType::getUnqual(C);
   Type *ElementTypes[4] = {WordType, WordType, VoidPtrType, InitPtrType};
   ArrayRef<Type*> ElementTypeArray(ElementTypes, 4);
   StructType *EmuTlsVarType = StructType::create(ElementTypeArray);

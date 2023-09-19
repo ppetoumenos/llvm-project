@@ -15,6 +15,7 @@
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -43,7 +44,7 @@ struct ValueKnowledge {
   // Get the static knowledge intrinsic to `type`.
   static ValueKnowledge getKnowledgeFromType(Type type) {
     ValueKnowledge result = getPessimisticValueState();
-    if (auto shapedType = type.dyn_cast<ShapedType>()) {
+    if (auto shapedType = dyn_cast<ShapedType>(type)) {
       if (shapedType.hasRank()) {
         result.hasRank = true;
         result.sizes.reserve(shapedType.getRank());
@@ -61,9 +62,13 @@ struct ValueKnowledge {
     return ValueKnowledge(false, {}, Type());
   }
 
+  ShapedTypeComponents getShapedTypeComponents() const {
+    return hasRank ? ShapedTypeComponents(sizes) : ShapedTypeComponents();
+  }
+
   Type getType() const {
     if (hasRank)
-      return RankedTensorType::get(llvm::makeArrayRef(sizes), dtype);
+      return RankedTensorType::get(llvm::ArrayRef(sizes), dtype);
     return UnrankedTensorType::get(dtype);
   }
 
@@ -106,14 +111,14 @@ struct ValueKnowledge {
       return result;
 
     result.hasRank = true;
-    result.sizes.resize(lhs.sizes.size(), ShapedType::kDynamicSize);
+    result.sizes.resize(lhs.sizes.size(), ShapedType::kDynamic);
     for (auto i : llvm::seq<unsigned>(0, result.sizes.size())) {
       int64_t lhsSize = lhs.sizes[i];
       int64_t rhsSize = rhs.sizes[i];
       int64_t &resultSize = result.sizes[i];
-      if (lhsSize == ShapedType::kDynamicSize) {
+      if (lhsSize == ShapedType::kDynamic) {
         resultSize = rhsSize;
-      } else if (rhsSize == ShapedType::kDynamicSize) {
+      } else if (rhsSize == ShapedType::kDynamic) {
         resultSize = lhsSize;
       } else if (lhsSize == rhsSize) {
         resultSize = lhsSize;
@@ -133,7 +138,7 @@ struct ValueKnowledge {
     ValueKnowledge result = getPessimisticValueState();
     result.hasError = true;
 
-    if (!rhs || !rhs || lhs.dtype != rhs.dtype)
+    if (!lhs || !rhs || lhs.dtype != rhs.dtype)
       return result;
 
     result.hasError = false;
@@ -150,7 +155,7 @@ struct ValueKnowledge {
     }
 
     result.hasRank = true;
-    result.sizes.resize(lhs.sizes.size(), ShapedType::kDynamicSize);
+    result.sizes.resize(lhs.sizes.size(), ShapedType::kDynamic);
     for (int i = 0, e = lhs.sizes.size(); i < e; i++) {
       if (lhs.sizes[i] == rhs.sizes[i]) {
         result.sizes[i] = lhs.sizes[i];
@@ -165,7 +170,7 @@ struct ValueKnowledge {
   // Whether the value has known rank.
   bool hasRank;
   // If `hasRank`, the sizes along each rank. Unknown sizes are represented as
-  // `ShapedType::kDynamicSize`.
+  // `ShapedType::kDynamic`.
   llvm::SmallVector<int64_t> sizes;
   // The dtype of a tensor.
   // This is equal to nullptr if we don't know that it is a specific concrete

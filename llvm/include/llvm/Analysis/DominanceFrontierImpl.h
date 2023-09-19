@@ -17,7 +17,6 @@
 #ifndef LLVM_ANALYSIS_DOMINANCEFRONTIERIMPL_H
 #define LLVM_ANALYSIS_DOMINANCEFRONTIERIMPL_H
 
-#include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/Config/llvm-config.h"
@@ -58,8 +57,7 @@ template <class BlockT, bool IsPostDom>
 void DominanceFrontierBase<BlockT, IsPostDom>::addToFrontier(iterator I,
                                                              BlockT *Node) {
   assert(I != end() && "BB is not in DominanceFrontier!");
-  assert(I->second.count(Node) && "Node is not in DominanceFrontier of BB");
-  I->second.erase(Node);
+  I->second.insert(Node);
 }
 
 template <class BlockT, bool IsPostDom>

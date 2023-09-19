@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
 #include "llvm/CodeGen/GlobalISel/Utils.h"
 #include "llvm/CodeGen/LowLevelType.h"
+#include "llvm/CodeGen/LowLevelTypeUtils.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -30,6 +31,7 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
@@ -40,11 +42,10 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/LowLevelTypeImpl.h"
-#include "llvm/Support/MachineValueType.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <utility>
 
 using namespace llvm;
@@ -109,7 +110,7 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
   }
 
   void assignValueToReg(Register ValVReg, Register PhysReg,
-                        CCValAssign &VA) override {
+                        CCValAssign VA) override {
     assert(VA.isRegLoc() && "Value shouldn't be assigned to reg");
     assert(VA.getLocReg() == PhysReg && "Assigning to the wrong reg?");
 
@@ -130,7 +131,8 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
   }
 
   unsigned assignCustomValue(CallLowering::ArgInfo &Arg,
-                             ArrayRef<CCValAssign> VAs) override {
+                             ArrayRef<CCValAssign> VAs,
+                             std::function<void()> *Thunk) override {
     assert(Arg.Regs.size() == 1 && "Can't handle multple regs yet");
 
     CCValAssign VA = VAs[0];
@@ -158,9 +160,15 @@ struct ARMOutgoingValueHandler : public CallLowering::OutgoingValueHandler {
     if (!IsLittle)
       std::swap(NewRegs[0], NewRegs[1]);
 
+    if (Thunk) {
+      *Thunk = [=]() {
+        assignValueToReg(NewRegs[0], VA.getLocReg(), VA);
+        assignValueToReg(NewRegs[1], NextVA.getLocReg(), NextVA);
+      };
+      return 1;
+    }
     assignValueToReg(NewRegs[0], VA.getLocReg(), VA);
     assignValueToReg(NewRegs[1], NextVA.getLocReg(), NextVA);
-
     return 1;
   }
 
@@ -273,7 +281,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
   }
 
   void assignValueToReg(Register ValVReg, Register PhysReg,
-                        CCValAssign &VA) override {
+                        CCValAssign VA) override {
     assert(VA.isRegLoc() && "Value shouldn't be assigned to reg");
     assert(VA.getLocReg() == PhysReg && "Assigning to the wrong reg?");
 
@@ -298,7 +306,8 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
   }
 
   unsigned assignCustomValue(ARMCallLowering::ArgInfo &Arg,
-                             ArrayRef<CCValAssign> VAs) override {
+                             ArrayRef<CCValAssign> VAs,
+                             std::function<void()> *Thunk) override {
     assert(Arg.Regs.size() == 1 && "Can't handle multple regs yet");
 
     CCValAssign VA = VAs[0];
@@ -328,7 +337,7 @@ struct ARMIncomingValueHandler : public CallLowering::IncomingValueHandler {
     if (!IsLittle)
       std::swap(NewRegs[0], NewRegs[1]);
 
-    MIRBuilder.buildMerge(Arg.Regs[0], NewRegs);
+    MIRBuilder.buildMergeLikeInstr(Arg.Regs[0], NewRegs);
 
     return 1;
   }
@@ -471,7 +480,7 @@ bool ARMCallLowering::lowerCall(MachineIRBuilder &MIRBuilder, CallLoweringInfo &
   MIB.add(Info.Callee);
   if (!IsDirect) {
     auto CalleeReg = Info.Callee.getReg();
-    if (CalleeReg && !Register::isPhysicalRegister(CalleeReg)) {
+    if (CalleeReg && !CalleeReg.isPhysical()) {
       unsigned CalleeIdx = IsThumb ? 2 : 0;
       MIB->getOperand(CalleeIdx).setReg(constrainOperandRegClass(
           MF, *TRI, MRI, *STI.getInstrInfo(), *STI.getRegBankInfo(),
@@ -519,13 +528,11 @@ bool ARMCallLowering::lowerCall(MachineIRBuilder &MIRBuilder, CallLoweringInfo &
 
   // We now know the size of the stack - update the ADJCALLSTACKDOWN
   // accordingly.
-  CallSeqStart.addImm(ArgAssigner.StackOffset)
-      .addImm(0)
-      .add(predOps(ARMCC::AL));
+  CallSeqStart.addImm(ArgAssigner.StackSize).addImm(0).add(predOps(ARMCC::AL));
 
   MIRBuilder.buildInstr(ARM::ADJCALLSTACKUP)
-      .addImm(ArgAssigner.StackOffset)
-      .addImm(0)
+      .addImm(ArgAssigner.StackSize)
+      .addImm(-1ULL)
       .add(predOps(ARMCC::AL));
 
   return true;

@@ -24,8 +24,8 @@ include "mlir/IR/OpBase.td"
 // Where low and high ends are 0,255 when unsigned, -128,127 when signed, for
 // the 8-bit case.
 class Tosa_QuantizedType<string n, list<int> params, bit signed>
-  : Type<And<[CPred<"$_self.isa<mlir::quant::QuantizedType>()">,
-              CPred<"$_self.cast<mlir::quant::QuantizedType>()" #
+  : Type<And<[CPred<"::llvm::isa<mlir::quant::QuantizedType>($_self)">,
+              CPred<"::llvm::cast<mlir::quant::QuantizedType>($_self)" #
                     ".getStorageTypeIntegralWidth() == " # !head(params)>]>,
     "Q" # !if (signed, "int", "uint") # !head(params) # " type"> {
   string name = n;
@@ -38,6 +38,10 @@ class Tosa_QuantizedType<string n, list<int> params, bit signed>
 // Used to express accumulator results or compare results.
 //===----------------------------------------------------------------------===//
 
+def Tosa_UInt8 : UI<8>;
+def Tosa_UInt16 : UI<16>;
+
+def Tosa_Int4 : I<4>;
 def Tosa_Int8 : I<8>;
 def Tosa_Int16 : I<16>;
 def Tosa_Int32 : I<32>;
@@ -54,6 +58,8 @@ def Tosa_Bool : I<1>;
 
 // No unsigned unquantized int types.
 def Tosa_Int : AnyTypeOf<[Tosa_Bool,
+                          Tosa_UInt8,
+                          Tosa_UInt16,
                           Tosa_SignedInt]>;
 
 def Tosa_Int32Or64 : AnyTypeOf<[Tosa_Int32,
@@ -74,7 +80,8 @@ def Tosa_Int32Or64 : AnyTypeOf<[Tosa_Int32,
 def Tosa_QuantizedInt	: AnyTypeOf<[ Tosa_QuantizedType<"uint8", [8], 0>,
                                      Tosa_QuantizedType<"int4", [4, 0], 1>,
                                      Tosa_QuantizedType<"int8", [8, 0], 1>,
-                                     Tosa_QuantizedType<"int16", [16, 0], 1>]>;
+                                     Tosa_QuantizedType<"int16", [16, 0], 1>,
+                                     Tosa_QuantizedType<"int32", [32, 0], 1>]>;
 
 //===----------------------------------------------------------------------===//
 // Floating-point types.
@@ -90,6 +97,15 @@ def Tosa_Float : AnyTypeOf<[
 def Tosa_AnyNumber : AnyTypeOf<[Tosa_Int, Tosa_QuantizedInt, Tosa_Float],
                                "number">;
 
+// Add F64 type support just for tosa::CastOp and tosa::ConstOp
+def Tosa_AnyNumber_Plus_F64 : AnyTypeOf<[Tosa_Int, Tosa_QuantizedInt, Tosa_Float, F64],
+                               "number_plus_f64">;
+
+// For weight tensors from tosa::Conv2DOp, tosa::Conv3DOp,
+// tosa::DepthwiseConv2DOp, tosa::TransposeConv2DOp, tosa::FullyConnectedOp
+def Tosa_Weight : AnyTypeOf<[Tosa_Int4, Tosa_Int8,
+                             Tosa_QuantizedInt, Tosa_Float]>;
+
 //===----------------------------------------------------------------------===//
 // Tensor types
 //===----------------------------------------------------------------------===//
@@ -97,8 +113,10 @@ def Tosa_AnyNumber : AnyTypeOf<[Tosa_Int, Tosa_QuantizedInt, Tosa_Float],
 def Tosa_Int32Tensor : TensorOf<[Tosa_Int32]>;
 def Tosa_Int32Or64Tensor : TensorOf<[Tosa_Int32Or64]>;
 
-// Either ranked or unranked tensor of TOSA supported element types. 
+// Either ranked or unranked tensor of TOSA supported element types.
 def Tosa_Tensor : TensorOf<[Tosa_AnyNumber]>;
+def Tosa_Tensor_Plus_F64 : TensorOf<[Tosa_AnyNumber_Plus_F64]>;
+
 // Must be ranked but no further constraints
 def Tosa_RankedTensor : RankedTensorOf<[Tosa_AnyNumber]>;
 
@@ -112,6 +130,9 @@ class Tosa_TensorOfOrNone<list<Type> allowedTypes, string description = ""> :
 //===----------------------------------------------------------------------===//
 // Tensor types with constrained ranks.
 //===----------------------------------------------------------------------===//
+
+// Rank-0 (scalar) tensor
+def Tosa_ScalarTensor : TensorRankOf<[Tosa_AnyNumber], [0]>;
 
 // We include unranked tensors as a supported type for all possible tosa
 // Tensors as unranked does not guarantee invalid. If unranked tensors exist
@@ -145,8 +166,9 @@ class Tosa_TypeLike<list<Type> types, string description = ""> : TypeConstraint<
      AnyTypeOf<types>.predicate,
      VectorOf<types>.predicate,
      TensorOf<types>.predicate]>,
-     "signless-integer-32-like">;
+     description>;
 
+def Tosa_IntLike : Tosa_TypeLike<[Tosa_Int], "signless-integer-like">;
 def Tosa_Int8Like : Tosa_TypeLike<[Tosa_Int8], "signless-integer-8-bit-like">;
 def Tosa_Int16Like : Tosa_TypeLike<[Tosa_Int16], "signless-integer-16-bit-like">;
 def Tosa_Int32Like : Tosa_TypeLike<[Tosa_Int32], "signless-integer-32-bit-like">;
@@ -155,33 +177,33 @@ def Tosa_Int64Like : Tosa_TypeLike<[Tosa_Int64], "signless-integer-64-bit-like">
 //===----------------------------------------------------------------------===//
 // Attribute predicates and classes.
 //===----------------------------------------------------------------------===//
-class ArrayMaxCt<int n> : AttrConstraint<
-    CPred<"$_self.cast<::mlir::ArrayAttr>().size() <= " # n>,
+class DenseArrayMaxCt<int n> : AttrConstraint<
+    CPred<"::llvm::cast<::mlir::DenseArrayAttr>($_self).size() <= " # n>,
     "with at least " # n # " elements">;
 
-def Tosa_Fp32ArrayAttr2 : Confined<F32ArrayAttr, [ArrayCount<2>]>;
-def Tosa_Fp32ArrayAttr3 : Confined<F32ArrayAttr, [ArrayCount<3>]>;
-def Tosa_Fp32ArrayAttr4 : Confined<F32ArrayAttr, [ArrayCount<4>]>;
-def Tosa_Fp32ArrayAttr5 : Confined<F32ArrayAttr, [ArrayCount<5>]>;
-def Tosa_Fp32ArrayAttr6 : Confined<F32ArrayAttr, [ArrayCount<6>]>;
+def Tosa_Fp32ArrayAttr2 : ConfinedAttr<DenseF32ArrayAttr, [DenseArrayCount<2>]>;
+def Tosa_Fp32ArrayAttr3 : ConfinedAttr<DenseF32ArrayAttr, [DenseArrayCount<3>]>;
+def Tosa_Fp32ArrayAttr4 : ConfinedAttr<DenseF32ArrayAttr, [DenseArrayCount<4>]>;
+def Tosa_Fp32ArrayAttr5 : ConfinedAttr<DenseF32ArrayAttr, [DenseArrayCount<5>]>;
+def Tosa_Fp32ArrayAttr6 : ConfinedAttr<DenseF32ArrayAttr, [DenseArrayCount<6>]>;
 
-def Tosa_IntArrayAttr2 : Confined<I64ArrayAttr, [ArrayCount<2>]>;
-def Tosa_IntArrayAttr3 : Confined<I64ArrayAttr, [ArrayCount<3>]>;
-def Tosa_IntArrayAttr4 : Confined<I64ArrayAttr, [ArrayCount<4>]>;
-def Tosa_IntArrayAttr5 : Confined<I64ArrayAttr, [ArrayCount<5>]>;
-def Tosa_IntArrayAttr6 : Confined<I64ArrayAttr, [ArrayCount<6>]>;
+def Tosa_IntArrayAttr2 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<2>]>;
+def Tosa_IntArrayAttr3 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<3>]>;
+def Tosa_IntArrayAttr4 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<4>]>;
+def Tosa_IntArrayAttr5 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<5>]>;
+def Tosa_IntArrayAttr6 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayCount<6>]>;
 
-def Tosa_IntArrayAttrUpto2 : Confined<I64ArrayAttr, [ArrayMaxCt<2>]>;
-def Tosa_IntArrayAttrUpto4 : Confined<I64ArrayAttr, [ArrayMaxCt<4>]>;
-def Tosa_IntArrayAttrUpto5 : Confined<I64ArrayAttr, [ArrayMaxCt<5>]>;
+def Tosa_IntArrayAttrUpto2 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayMaxCt<2>]>;
+def Tosa_IntArrayAttrUpto4 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayMaxCt<4>]>;
+def Tosa_IntArrayAttrUpto5 : ConfinedAttr<DenseI64ArrayAttr, [DenseArrayMaxCt<5>]>;
 
 //===----------------------------------------------------------------------===//
 // Iterable attributes.
 //===----------------------------------------------------------------------===//
 // Supported regimes for tosa.resize.
 def Tosa_ResizeTypeAttr : StringBasedAttr<
-    CPred<"$_self.cast<StringAttr>().getValue() == \"BILINEAR\"  || " #
-          "$_self.cast<StringAttr>().getValue() == \"NEAREST_NEIGHBOR\"">,
+    CPred<"::llvm::cast<StringAttr>($_self).getValue() == \"BILINEAR\"  || " #
+          "::llvm::cast<StringAttr>($_self).getValue() == \"NEAREST_NEIGHBOR\"">,
     "Supported resize/upsampling strategies">;
 
 def Tosa_TensorTypeAttr : TypeAttrBase<"TensorType", "Tensor type attribute">;

@@ -9,33 +9,34 @@
 
 // <string>
 
-//   constexpr bool contains(charT x) const noexcept;
+// constexpr bool contains(charT x) const noexcept;
 
 #include <string>
 #include <cassert>
 
 #include "test_macros.h"
 
-void test()
-{
-    using S = std::string;
+constexpr bool test() {
+  using S = std::string;
 
-    S s1 {};
-    S s2 {"abcde", 5};
+  S s1{};
+  S s2{"abcde", 5};
 
-    ASSERT_NOEXCEPT(s1.contains('e'));
+  ASSERT_NOEXCEPT(s1.contains('e'));
 
-    assert(!s1.contains('c'));
-    assert(!s1.contains('e'));
-    assert(!s1.contains('x'));
-    assert( s2.contains('c'));
-    assert( s2.contains('e'));
-    assert(!s2.contains('x'));
+  assert(!s1.contains('c'));
+  assert(!s1.contains('e'));
+  assert(!s1.contains('x'));
+  assert(s2.contains('c'));
+  assert(s2.contains('e'));
+  assert(!s2.contains('x'));
+
+  return true;
 }
 
-int main(int, char**)
-{
-    test();
+int main(int, char**) {
+  test();
+  static_assert(test());
 
-    return 0;
+  return 0;
 }

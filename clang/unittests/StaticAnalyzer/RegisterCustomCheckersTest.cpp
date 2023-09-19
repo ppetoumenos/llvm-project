@@ -51,7 +51,7 @@ void addCustomChecker(AnalysisASTConsumer &AnalysisConsumer,
 TEST(RegisterCustomCheckers, RegisterChecker) {
   std::string Diags;
   EXPECT_TRUE(runCheckerOnCode<addCustomChecker>("void f() {;}", Diags));
-  EXPECT_EQ(Diags, "test.CustomChecker:Custom diagnostic description\n");
+  EXPECT_EQ(Diags, "test.CustomChecker: Custom diagnostic description\n");
 }
 
 //===----------------------------------------------------------------------===//
@@ -89,8 +89,8 @@ TEST(RegisterCustomCheckers, CheckLocationIncDec) {
 
 class CheckerRegistrationOrderPrinter
     : public Checker<check::PreStmt<DeclStmt>> {
-  std::unique_ptr<BuiltinBug> BT =
-      std::make_unique<BuiltinBug>(this, "Registration order");
+  std::unique_ptr<BugType> BT =
+      std::make_unique<BugType>(this, "Registration order");
 
 public:
   void checkPreStmt(const DeclStmt *DS, CheckerContext &C) const {
@@ -125,8 +125,7 @@ void addCheckerRegistrationOrderPrinter(CheckerRegistry &Registry) {
 
 #define UNITTEST_CHECKER(CHECKER_NAME, DIAG_MSG)                               \
   class CHECKER_NAME : public Checker<check::PreStmt<DeclStmt>> {              \
-    std::unique_ptr<BuiltinBug> BT =                                           \
-        std::make_unique<BuiltinBug>(this, DIAG_MSG);                          \
+    std::unique_ptr<BugType> BT = std::make_unique<BugType>(this, DIAG_MSG);   \
                                                                                \
   public:                                                                      \
     void checkPreStmt(const DeclStmt *DS, CheckerContext &C) const {}          \
@@ -169,7 +168,7 @@ void addDep(AnalysisASTConsumer &AnalysisConsumer,
 TEST(RegisterDeps, UnsatisfiedDependency) {
   std::string Diags;
   EXPECT_TRUE(runCheckerOnCode<addDep>("void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.RegistrationOrder\n");
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.RegistrationOrder\n");
 }
 
 //===----------------------------------------------------------------------===//
@@ -272,7 +271,7 @@ TEST(RegisterDeps, SimpleWeakDependency) {
   std::string Diags;
   EXPECT_TRUE(runCheckerOnCode<addWeakDepCheckerBothEnabled>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.WeakDep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.WeakDep\ntest."
                    "Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
@@ -280,31 +279,33 @@ TEST(RegisterDeps, SimpleWeakDependency) {
   // but the dependencies are switched.
   EXPECT_TRUE(runCheckerOnCode<addWeakDepCheckerBothEnabledSwitched>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.Dep\ntest."
                    "RegistrationOrder\ntest.WeakDep\n");
   Diags.clear();
 
   // Weak dependencies dont prevent dependent checkers from being enabled.
   EXPECT_TRUE(runCheckerOnCode<addWeakDepCheckerDepDisabled>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest.RegistrationOrder\n");
+  EXPECT_EQ(Diags,
+            "test.RegistrationOrder: test.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   // Nor will they be enabled just because a dependent checker is.
   EXPECT_TRUE(runCheckerOnCode<addWeakDepCheckerDepUnspecified>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest.RegistrationOrder\n");
+  EXPECT_EQ(Diags,
+            "test.RegistrationOrder: test.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   EXPECT_TRUE(
       runCheckerOnCode<addWeakDepTransitivity>("void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.WeakDep2\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.WeakDep2\ntest."
                    "Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   EXPECT_TRUE(
       runCheckerOnCode<addWeakDepHasWeakDep>("void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.WeakDep2\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.WeakDep2\ntest."
                    "WeakDep\ntest.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 }
@@ -414,7 +415,7 @@ TEST(RegisterDeps, DependencyInteraction) {
   std::string Diags;
   EXPECT_TRUE(
       runCheckerOnCode<addWeakDepHasStrongDep>("void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.StrongDep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.StrongDep\ntest."
                    "WeakDep\ntest.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
@@ -424,14 +425,14 @@ TEST(RegisterDeps, DependencyInteraction) {
   // established in between the modeling portion and the weak dependency.
   EXPECT_TRUE(
       runCheckerOnCode<addWeakDepAndStrongDep>("void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.WeakDep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.WeakDep\ntest."
                    "StrongDep\ntest.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   // If a weak dependency is disabled, the checker itself can still be enabled.
   EXPECT_TRUE(runCheckerOnCode<addDisabledWeakDepHasStrongDep>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.Dep\ntest."
                    "RegistrationOrder\ntest.StrongDep\n");
   Diags.clear();
 
@@ -439,20 +440,22 @@ TEST(RegisterDeps, DependencyInteraction) {
   // but it shouldn't enable a strong unspecified dependency.
   EXPECT_TRUE(runCheckerOnCode<addDisabledWeakDepHasUnspecifiedStrongDep>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest.RegistrationOrder\n");
+  EXPECT_EQ(Diags,
+            "test.RegistrationOrder: test.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   // A strong dependency of a weak dependency is disabled, so neither of them
   // should be enabled.
   EXPECT_TRUE(runCheckerOnCode<addWeakDepHasDisabledStrongDep>(
       "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.Dep\ntest.RegistrationOrder\n");
+  EXPECT_EQ(Diags,
+            "test.RegistrationOrder: test.Dep\ntest.RegistrationOrder\n");
   Diags.clear();
 
   EXPECT_TRUE(
       runCheckerOnCode<addWeakDepHasUnspecifiedButLaterEnabledStrongDep>(
           "void f() {int i;}", Diags));
-  EXPECT_EQ(Diags, "test.RegistrationOrder:test.StrongDep\ntest.WeakDep\ntest."
+  EXPECT_EQ(Diags, "test.RegistrationOrder: test.StrongDep\ntest.WeakDep\ntest."
                    "Dep\ntest.Dep2\ntest.RegistrationOrder\n");
   Diags.clear();
 }

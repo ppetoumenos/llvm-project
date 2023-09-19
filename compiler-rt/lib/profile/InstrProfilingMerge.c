@@ -20,34 +20,39 @@ COMPILER_RT_VISIBILITY
 void (*VPMergeHook)(ValueProfData *, __llvm_profile_data *);
 
 COMPILER_RT_VISIBILITY
-uint64_t lprofGetLoadModuleSignature() {
+uint64_t lprofGetLoadModuleSignature(void) {
   /* A very fast way to compute a module signature.  */
   uint64_t Version = __llvm_profile_get_version();
-  uint64_t CounterSize = (uint64_t)(__llvm_profile_end_counters() -
-                                    __llvm_profile_begin_counters());
-  uint64_t DataSize = __llvm_profile_get_data_size(__llvm_profile_begin_data(),
-                                                   __llvm_profile_end_data());
+  uint64_t NumCounters = __llvm_profile_get_num_counters(
+      __llvm_profile_begin_counters(), __llvm_profile_end_counters());
+  uint64_t NumData = __llvm_profile_get_num_data(__llvm_profile_begin_data(),
+                                                 __llvm_profile_end_data());
   uint64_t NamesSize =
       (uint64_t)(__llvm_profile_end_names() - __llvm_profile_begin_names());
   uint64_t NumVnodes =
       (uint64_t)(__llvm_profile_end_vnodes() - __llvm_profile_begin_vnodes());
   const __llvm_profile_data *FirstD = __llvm_profile_begin_data();
 
-  return (NamesSize << 40) + (CounterSize << 30) + (DataSize << 20) +
-         (NumVnodes << 10) + (DataSize > 0 ? FirstD->NameRef : 0) + Version;
+  return (NamesSize << 40) + (NumCounters << 30) + (NumData << 20) +
+         (NumVnodes << 10) + (NumData > 0 ? FirstD->NameRef : 0) + Version +
+         __llvm_profile_get_magic();
 }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-qual"
+#endif
 
 /* Returns 1 if profile is not structurally compatible.  */
 COMPILER_RT_VISIBILITY
 int __llvm_profile_check_compatibility(const char *ProfileData,
                                        uint64_t ProfileSize) {
-  /* Check profile header only for now  */
   __llvm_profile_header *Header = (__llvm_profile_header *)ProfileData;
   __llvm_profile_data *SrcDataStart, *SrcDataEnd, *SrcData, *DstData;
   SrcDataStart =
       (__llvm_profile_data *)(ProfileData + sizeof(__llvm_profile_header) +
                               Header->BinaryIdsSize);
-  SrcDataEnd = SrcDataStart + Header->DataSize;
+  SrcDataEnd = SrcDataStart + Header->NumData;
 
   if (ProfileSize < sizeof(__llvm_profile_header))
     return 1;
@@ -55,19 +60,21 @@ int __llvm_profile_check_compatibility(const char *ProfileData,
   /* Check the header first.  */
   if (Header->Magic != __llvm_profile_get_magic() ||
       Header->Version != __llvm_profile_get_version() ||
-      Header->DataSize !=
-          __llvm_profile_get_data_size(__llvm_profile_begin_data(),
-                                       __llvm_profile_end_data()) ||
-      Header->CountersSize != (uint64_t)(__llvm_profile_end_counters() -
-                                         __llvm_profile_begin_counters()) ||
+      Header->NumData !=
+          __llvm_profile_get_num_data(__llvm_profile_begin_data(),
+                                      __llvm_profile_end_data()) ||
+      Header->NumCounters !=
+          __llvm_profile_get_num_counters(__llvm_profile_begin_counters(),
+                                          __llvm_profile_end_counters()) ||
       Header->NamesSize != (uint64_t)(__llvm_profile_end_names() -
                                       __llvm_profile_begin_names()) ||
       Header->ValueKindLast != IPVK_Last)
     return 1;
 
-  if (ProfileSize < sizeof(__llvm_profile_header) + Header->BinaryIdsSize +
-                        Header->DataSize * sizeof(__llvm_profile_data) +
-                        Header->NamesSize + Header->CountersSize)
+  if (ProfileSize <
+      sizeof(__llvm_profile_header) + Header->BinaryIdsSize +
+          Header->NumData * sizeof(__llvm_profile_data) + Header->NamesSize +
+          Header->NumCounters * __llvm_profile_counter_entry_size())
     return 1;
 
   for (SrcData = SrcDataStart,
@@ -94,9 +101,17 @@ static uintptr_t signextIfWin64(void *V) {
 COMPILER_RT_VISIBILITY
 int __llvm_profile_merge_from_buffer(const char *ProfileData,
                                      uint64_t ProfileSize) {
+  if (__llvm_profile_get_version() & VARIANT_MASK_TEMPORAL_PROF) {
+    PROF_ERR("%s\n",
+             "Temporal profiles do not support profile merging at runtime. "
+             "Instead, merge raw profiles using the llvm-profdata tool.");
+    return 1;
+  }
+
   __llvm_profile_data *SrcDataStart, *SrcDataEnd, *SrcData, *DstData;
   __llvm_profile_header *Header = (__llvm_profile_header *)ProfileData;
-  uint64_t *SrcCountersStart;
+  char *SrcCountersStart, *DstCounter;
+  const char *SrcCountersEnd, *SrcCounter;
   const char *SrcNameStart;
   const char *SrcValueProfDataStart, *SrcValueProfData;
   uintptr_t CountersDelta = Header->CountersDelta;
@@ -104,14 +119,33 @@ int __llvm_profile_merge_from_buffer(const char *ProfileData,
   SrcDataStart =
       (__llvm_profile_data *)(ProfileData + sizeof(__llvm_profile_header) +
                               Header->BinaryIdsSize);
-  SrcDataEnd = SrcDataStart + Header->DataSize;
-  SrcCountersStart = (uint64_t *)SrcDataEnd;
-  SrcNameStart = (const char *)(SrcCountersStart + Header->CountersSize);
+  SrcDataEnd = SrcDataStart + Header->NumData;
+  SrcCountersStart = (char *)SrcDataEnd;
+  SrcCountersEnd = SrcCountersStart +
+                   Header->NumCounters * __llvm_profile_counter_entry_size();
+  SrcNameStart = SrcCountersEnd;
   SrcValueProfDataStart =
       SrcNameStart + Header->NamesSize +
       __llvm_profile_get_num_padding_bytes(Header->NamesSize);
-  if (SrcNameStart < (const char *)SrcCountersStart)
+  if (SrcNameStart < SrcCountersStart)
     return 1;
+
+  // Merge counters by iterating the entire counter section when debug info
+  // correlation is enabled.
+  if (__llvm_profile_get_version() & VARIANT_MASK_DBG_CORRELATE) {
+    for (SrcCounter = SrcCountersStart,
+        DstCounter = __llvm_profile_begin_counters();
+         SrcCounter < SrcCountersEnd;) {
+      if (__llvm_profile_get_version() & VARIANT_MASK_BYTE_COVERAGE) {
+        *DstCounter &= *SrcCounter;
+      } else {
+        *(uint64_t *)DstCounter += *(uint64_t *)SrcCounter;
+      }
+      SrcCounter += __llvm_profile_counter_entry_size();
+      DstCounter += __llvm_profile_counter_entry_size();
+    }
+    return 0;
+  }
 
   for (SrcData = SrcDataStart,
       DstData = (__llvm_profile_data *)__llvm_profile_begin_data(),
@@ -121,8 +155,8 @@ int __llvm_profile_merge_from_buffer(const char *ProfileData,
     // address of the data to the start address of the counter. On WIN64,
     // CounterPtr is a truncated 32-bit value due to COFF limitation. Sign
     // extend CounterPtr to get the original value.
-    uint64_t *DstCounters =
-        (uint64_t *)((uintptr_t)DstData + signextIfWin64(DstData->CounterPtr));
+    char *DstCounters =
+        (char *)((uintptr_t)DstData + signextIfWin64(DstData->CounterPtr));
     unsigned NVK = 0;
 
     // SrcData is a serialized representation of the memory image. We need to
@@ -132,21 +166,25 @@ int __llvm_profile_merge_from_buffer(const char *ProfileData,
     // CountersDelta computes the offset into the in-buffer counter section.
     //
     // On WIN64, CountersDelta is truncated as well, so no need for signext.
-    uint64_t *SrcCounters =
-        SrcCountersStart +
-        ((uintptr_t)SrcData->CounterPtr - CountersDelta) / sizeof(uint64_t);
+    char *SrcCounters =
+        SrcCountersStart + ((uintptr_t)SrcData->CounterPtr - CountersDelta);
     // CountersDelta needs to be decreased as we advance to the next data
     // record.
     CountersDelta -= sizeof(*SrcData);
     unsigned NC = SrcData->NumCounters;
     if (NC == 0)
       return 1;
-    if (SrcCounters < SrcCountersStart ||
-        (const char *)SrcCounters >= SrcNameStart ||
-        (const char *)(SrcCounters + NC) > SrcNameStart)
+    if (SrcCounters < SrcCountersStart || SrcCounters >= SrcNameStart ||
+        (SrcCounters + __llvm_profile_counter_entry_size() * NC) > SrcNameStart)
       return 1;
-    for (unsigned I = 0; I < NC; I++)
-      DstCounters[I] += SrcCounters[I];
+    for (unsigned I = 0; I < NC; I++) {
+      if (__llvm_profile_get_version() & VARIANT_MASK_BYTE_COVERAGE) {
+        // A value of zero signifies the function is covered.
+        DstCounters[I] &= SrcCounters[I];
+      } else {
+        ((uint64_t *)DstCounters)[I] += ((uint64_t *)SrcCounters)[I];
+      }
+    }
 
     /* Now merge value profile data. */
     if (!VPMergeHook)
@@ -167,3 +205,7 @@ int __llvm_profile_merge_from_buffer(const char *ProfileData,
 
   return 0;
 }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif

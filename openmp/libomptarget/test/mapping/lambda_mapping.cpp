@@ -1,4 +1,8 @@
-// RUN: %libomptarget-compilexx-run-and-check-generic
+// On AMDGPU we don't have malloc support yet. We need optimizations
+// to avoid a thread state which requires malloc.
+//
+// XUN: %libomptarget-compilexx-run-and-check-generic
+// RUN: %libomptarget-compileoptxx-run-and-check-generic
 
 #include <iostream>
 
@@ -25,7 +29,7 @@ int main() {
     C[I] = -9;
   }
 
-#pragma omp target data map(tofrom : C [0:N]) map(to : A [0:N], B [0:N])
+#pragma omp target data map(tofrom : C[0 : N]) map(to : A[0 : N], B[0 : N])
   {
     forall(0, N, [&](int I) { C[I] += A[I] + B[I]; });
   }

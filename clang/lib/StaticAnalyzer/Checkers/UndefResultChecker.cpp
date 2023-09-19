@@ -53,8 +53,8 @@ static bool isArrayIndexOutOfBounds(CheckerContext &C, const Expr *Ex) {
   DefinedOrUnknownSVal Idx = ER->getIndex().castAs<DefinedOrUnknownSVal>();
   DefinedOrUnknownSVal ElementCount = getDynamicElementCount(
       state, ER->getSuperRegion(), C.getSValBuilder(), ER->getValueType());
-  ProgramStateRef StInBound = state->assumeInBound(Idx, ElementCount, true);
-  ProgramStateRef StOutBound = state->assumeInBound(Idx, ElementCount, false);
+  ProgramStateRef StInBound, StOutBound;
+  std::tie(StInBound, StOutBound) = state->assumeInBoundDual(Idx, ElementCount);
   return StOutBound && !StInBound;
 }
 
@@ -70,7 +70,7 @@ static bool isLeftShiftResultUnrepresentable(const BinaryOperator *B,
   const llvm::APSInt *LHS = SB.getKnownValue(State, C.getSVal(B->getLHS()));
   const llvm::APSInt *RHS = SB.getKnownValue(State, C.getSVal(B->getRHS()));
   assert(LHS && RHS && "Values unknown, inconsistent state");
-  return (unsigned)RHS->getZExtValue() > LHS->countLeadingZeros();
+  return (unsigned)RHS->getZExtValue() > LHS->countl_zero();
 }
 
 void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
@@ -79,7 +79,6 @@ void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
 
     // Do not report assignments of uninitialized values inside swap functions.
     // This should allow to swap partially uninitialized structs
-    // (radar://14129997)
     if (const FunctionDecl *EnclosingFunctionDecl =
         dyn_cast<FunctionDecl>(C.getStackFrame()->getDecl()))
       if (C.getCalleeName(EnclosingFunctionDecl) == "swap")
@@ -92,7 +91,7 @@ void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
 
     if (!BT)
       BT.reset(
-          new BuiltinBug(this, "Result of operation is garbage or undefined"));
+          new BugType(this, "Result of operation is garbage or undefined"));
 
     SmallString<256> sbuf;
     llvm::raw_svector_ostream OS(sbuf);
@@ -145,7 +144,7 @@ void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
           OS << '\'' << I->getSExtValue() << "\', which is";
 
         OS << " greater or equal to the width of type '"
-           << B->getLHS()->getType().getAsString() << "'.";
+           << B->getLHS()->getType() << "'.";
       } else if (B->getOpcode() == BinaryOperatorKind::BO_Shl &&
                  C.isNegative(B->getLHS())) {
         OS << "The result of the left shift is undefined because the left "
@@ -162,8 +161,7 @@ void UndefResultChecker::checkPostStmt(const BinaryOperator *B,
         OS << "The result of the left shift is undefined due to shifting \'"
            << LHS->getSExtValue() << "\' by \'" << RHS->getZExtValue()
            << "\', which is unrepresentable in the unsigned version of "
-           << "the return type \'" << B->getLHS()->getType().getAsString()
-           << "\'";
+           << "the return type \'" << B->getLHS()->getType() << "\'";
         Ex = B->getLHS();
       } else {
         OS << "The result of the '"

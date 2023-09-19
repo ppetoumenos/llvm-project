@@ -84,7 +84,7 @@ def DataLayoutSpecInterface : AttrInterface<"DataLayoutSpecInterface"> {
 
     Data layout specifications may need to be combined in case they appear on
     nested operations subject to layout, or to ensure the validity of layout
-    modification. Concerete specification attributes must implement the
+    modification. Concrete specification attributes must implement the
     corresponding hook.
   }];
   // The underlying storage being contiguous may be revised in the future, but
@@ -106,6 +106,18 @@ def DataLayoutSpecInterface : AttrInterface<"DataLayoutSpecInterface"> {
       /*methodName=*/"getEntries",
       /*args=*/(ins)
     >,
+    InterfaceMethod<
+      /*description=*/"Returns the alloca memory space identifier.",
+      /*retTy=*/"::mlir::StringAttr",
+      /*methodName=*/"getAllocaMemorySpaceIdentifier",
+      /*args=*/(ins "::mlir::MLIRContext *":$context)
+    >,
+    InterfaceMethod<
+      /*description=*/"Returns the stack alignment identifier.",
+      /*retTy=*/"::mlir::StringAttr",
+      /*methodName=*/"getStackAlignmentIdentifier",
+      /*args=*/(ins "::mlir::MLIRContext *":$context)
+    >,
     // Implementations may override this if they have an efficient lookup
     // mechanism.
     InterfaceMethod<
@@ -126,7 +138,7 @@ def DataLayoutSpecInterface : AttrInterface<"DataLayoutSpecInterface"> {
                       "present.",
       /*retTy=*/"::mlir::DataLayoutEntryInterface",
       /*methodName=*/"getSpecForIdentifier",
-      /*args=*/(ins "::mlir::Identifier":$identifier),
+      /*args=*/(ins "::mlir::StringAttr":$identifier),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
         return ::mlir::detail::filterEntryForIdentifier($_attr.getEntries(),
@@ -159,7 +171,7 @@ def DataLayoutSpecInterface : AttrInterface<"DataLayoutSpecInterface"> {
     /// method directly.
     void bucketEntriesByType(
         ::llvm::DenseMap<::mlir::TypeID, ::mlir::DataLayoutEntryList> &types,
-        ::llvm::DenseMap<::mlir::Identifier,
+        ::llvm::DenseMap<::mlir::StringAttr,
                          ::mlir::DataLayoutEntryInterface> &ids);
   }];
 }
@@ -256,6 +268,30 @@ def DataLayoutOpInterface : OpInterface<"DataLayoutOpInterface"> {
                                                             params);
       }]
     >,
+    StaticInterfaceMethod<
+      /*description=*/"Returns the memory space used by the ABI computed "
+                      "using the relevant entries. The data layout object "
+                      "can be used for recursive queries.",
+      /*retTy=*/"::mlir::Attribute",
+      /*methodName=*/"getAllocaMemorySpace",
+      /*args=*/(ins "::mlir::DataLayoutEntryInterface":$entry),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return ::mlir::detail::getDefaultAllocaMemorySpace(entry);
+      }]
+    >,
+    StaticInterfaceMethod<
+      /*description=*/"Returns the natural stack alignment in bits computed "
+                      "using the relevant entries. The data layout object "
+                      "can be used for recursive queries.",
+      /*retTy=*/"unsigned",
+      /*methodName=*/"getStackAlignment",
+      /*args=*/(ins "::mlir::DataLayoutEntryInterface":$entry),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return ::mlir::detail::getDefaultStackAlignment(entry);
+      }]
+    >,
   ];
 
   let verify = [{ return ::mlir::detail::verifyDataLayoutOp($_op); }];
@@ -285,7 +321,7 @@ def DataLayoutTypeInterface : TypeInterface<"DataLayoutTypeInterface"> {
 
     The list of entries may be empty, in which case the type must provide a
     reasonable default value. The entries in the list are known to have passed
-    the spec and the entry verifiers, as well as the type-specifid verifier if
+    the spec and the entry verifiers, as well as the type-specified verifier if
     provided.
 
     In case of nested layout specs or spec changes, the type can override a hook
@@ -321,7 +357,7 @@ def DataLayoutTypeInterface : TypeInterface<"DataLayoutTypeInterface"> {
                     "::mlir::DataLayoutEntryListRef":$params)
     >,
     InterfaceMethod<
-      /*description=*/"Returns the preferred alignemnt for this type, "
+      /*description=*/"Returns the preferred alignment for this type, "
                       "in bytes.",
       /*retTy=*/"unsigned",
       /*methodName=*/"getPreferredAlignment",

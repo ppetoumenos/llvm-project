@@ -1,7 +1,9 @@
-; RUN: lli --jit-kind=orc-lazy --per-module-lazy --jit-linker=rtdyld \
+; REQUIRES: native && target-x86_64
+
+; RUN: lli --jit-linker=rtdyld \
 ; RUN:     --generate=__dump_jit_debug_descriptor %s | FileCheck %s
 ;
-; RUN: lli --jit-kind=orc-lazy --per-module-lazy --jit-linker=jitlink \
+; RUN: lli --jit-linker=jitlink \
 ; RUN:     --generate=__dump_jit_debug_descriptor %s | FileCheck %s
 ;
 ; CHECK: Reading __jit_debug_descriptor at 0x{{.*}}
@@ -13,15 +15,15 @@
 target triple = "x86_64-unknown-unknown-elf"
 
 ; Built-in symbol provided by the JIT
-declare void @__dump_jit_debug_descriptor(i8*)
+declare void @__dump_jit_debug_descriptor(ptr)
 
 ; Host-process symbol from the GDB JIT interface
 @__jit_debug_descriptor = external global i8, align 1
 
 define i32 @main() !dbg !9 {
   %1 = alloca i32, align 4
-  store i32 0, i32* %1, align 4
-  call void @__dump_jit_debug_descriptor(i8* @__jit_debug_descriptor), !dbg !13
+  store i32 0, ptr %1, align 4
+  call void @__dump_jit_debug_descriptor(ptr @__jit_debug_descriptor), !dbg !13
   ret i32 0, !dbg !14
 }
 

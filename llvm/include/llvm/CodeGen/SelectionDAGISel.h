@@ -16,12 +16,14 @@
 
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/SelectionDAG.h"
-#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/BasicBlock.h"
 #include <memory>
 
 namespace llvm {
 class AAResults;
+class AssumptionCache;
+class TargetInstrInfo;
+class TargetMachine;
 class SelectionDAGBuilder;
 class SDValue;
 class MachineRegisterInfo;
@@ -46,9 +48,10 @@ public:
   MachineRegisterInfo *RegInfo;
   SelectionDAG *CurDAG;
   std::unique_ptr<SelectionDAGBuilder> SDB;
-  AAResults *AA;
-  GCFunctionInfo *GFI;
-  CodeGenOpt::Level OptLevel;
+  AAResults *AA = nullptr;
+  AssumptionCache *AC = nullptr;
+  GCFunctionInfo *GFI = nullptr;
+  CodeGenOptLevel OptLevel;
   const TargetInstrInfo *TII;
   const TargetLowering *TLI;
   bool FastISelFailed;
@@ -58,10 +61,8 @@ public:
   /// Used to report things like combines and FastISel failures.
   std::unique_ptr<OptimizationRemarkEmitter> ORE;
 
-  static char ID;
-
-  explicit SelectionDAGISel(TargetMachine &tm,
-                            CodeGenOpt::Level OL = CodeGenOpt::Default);
+  explicit SelectionDAGISel(char &ID, TargetMachine &tm,
+                            CodeGenOptLevel OL = CodeGenOptLevel::Default);
   ~SelectionDAGISel() override;
 
   const TargetLowering *getTargetLowering() const { return TLI; }
@@ -88,9 +89,10 @@ public:
   /// not match or is not implemented, return true.  The resultant operands
   /// (which will appear in the machine instruction) should be added to the
   /// OutOps vector.
-  virtual bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                            unsigned ConstraintID,
-                                            std::vector<SDValue> &OutOps) {
+  virtual bool
+  SelectInlineAsmMemoryOperand(const SDValue &Op,
+                               InlineAsm::ConstraintCode ConstraintID,
+                               std::vector<SDValue> &OutOps) {
     return true;
   }
 
@@ -103,7 +105,7 @@ public:
   /// FIXME: This is a static member function because the MSP430/X86
   /// targets, which uses it during isel.  This could become a proper member.
   static bool IsLegalToFold(SDValue N, SDNode *U, SDNode *Root,
-                            CodeGenOpt::Level OptLevel,
+                            CodeGenOptLevel OptLevel,
                             bool IgnoreChains = false);
 
   static void InvalidateNodeId(SDNode *N);
@@ -127,6 +129,7 @@ public:
     OPC_CheckChild0Same, OPC_CheckChild1Same,
     OPC_CheckChild2Same, OPC_CheckChild3Same,
     OPC_CheckPatternPredicate,
+    OPC_CheckPatternPredicate2,
     OPC_CheckPredicate,
     OPC_CheckPredicateWithOperands,
     OPC_CheckOpcode,
@@ -199,7 +202,7 @@ public:
 protected:
   /// DAGSize - Size of DAG being instruction selected.
   ///
-  unsigned DAGSize;
+  unsigned DAGSize = 0;
 
   /// ReplaceUses - replace all uses of the old node F with the use
   /// of the new node T.
@@ -319,6 +322,14 @@ private:
 
   void Select_FREEZE(SDNode *N);
   void Select_ARITH_FENCE(SDNode *N);
+  void Select_MEMBARRIER(SDNode *N);
+
+  void pushStackMapLiveVariable(SmallVectorImpl<SDValue> &Ops, SDValue Operand,
+                                SDLoc DL);
+  void Select_STACKMAP(SDNode *N);
+  void Select_PATCHPOINT(SDNode *N);
+
+  void Select_JUMP_TABLE_DEBUG_INFO(SDNode *N);
 
 private:
   void DoInstructionSelection();
@@ -329,6 +340,9 @@ private:
   /// personality specific tasks. Returns true if the block should be
   /// instruction selected, false if no code should be emitted for it.
   bool PrepareEHLandingPad();
+
+  // Mark and Report IPToState for each Block under AsynchEH
+  void reportIPToStateForBlocks(MachineFunction *Fn);
 
   /// Perform instruction selection on all basic blocks in the function.
   void SelectAllBasicBlocks(const Function &Fn);

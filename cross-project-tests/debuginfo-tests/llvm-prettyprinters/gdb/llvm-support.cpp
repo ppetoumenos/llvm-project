@@ -1,6 +1,5 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallString.h"
@@ -9,6 +8,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/ilist.h"
 #include "llvm/Support/Error.h"
+#include <optional>
 
 int Array[] = {1, 2, 3};
 auto IntPtr = reinterpret_cast<int *>(0xabc);
@@ -19,12 +19,17 @@ llvm::DenseMap<int, int> DenseMap = {{4, 5}, {6, 7}};
 llvm::StringMap<int> StringMap = {{"foo", 123}, {"bar", 456}};
 llvm::Expected<int> ExpectedValue(8);
 llvm::Expected<int> ExpectedError(llvm::createStringError({}, ""));
-llvm::Optional<int> OptionalValue(9);
-llvm::Optional<int> OptionalNone(llvm::None);
+std::optional<int> OptionalValue(9);
+std::optional<int> OptionalNone(std::nullopt);
 llvm::SmallVector<int, 5> SmallVector = {10, 11, 12};
 llvm::SmallString<5> SmallString("foo");
 llvm::StringRef StringRef = "bar";
-llvm::Twine Twine = llvm::Twine(SmallString) + StringRef;
+// Should test std::string in Twine too, but it's currently broken because I
+// don't know how to add 'str' and 'gdb.LazyString' (can't figure out any way to
+// string-ify LazyString).
+std::string String = "foo";
+llvm::Twine TempTwine = llvm::Twine(String) + StringRef;
+llvm::Twine Twine = TempTwine + "baz";
 llvm::PointerIntPair<int *, 1> PointerIntPair(IntPtr, 1);
 
 struct alignas(8) Z {};
@@ -56,12 +61,15 @@ auto SimpleIlist = []() {
 }();
 
 int main() {
-  // Reference symbols that might otherwise be stripped.
-  ArrayRef[0];
-  MutableArrayRef[0];
-  (void)!ExpectedValue;
-  (void)!ExpectedError;
-  *OptionalValue;
-  *OptionalNone;
-  return 0;
+  std::uintptr_t result = 0;
+  auto dont_strip = [&](const auto &val) {
+    result += reinterpret_cast<std::uintptr_t>(&val);
+  };
+  dont_strip(ArrayRef);
+  dont_strip(MutableArrayRef);
+  dont_strip(ExpectedValue);
+  dont_strip(ExpectedError);
+  dont_strip(OptionalValue);
+  dont_strip(OptionalNone);
+  return result; // Non-zero return value is OK.
 }

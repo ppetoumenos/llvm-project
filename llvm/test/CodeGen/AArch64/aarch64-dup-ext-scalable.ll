@@ -4,9 +4,9 @@
 define <vscale x 2 x i16> @dupsext_v2i8_v2i16(i8 %src, <vscale x 2 x i16> %b) {
 ; CHECK-LABEL: dupsext_v2i8_v2i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    sxtb w8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -20,9 +20,9 @@ entry:
 define <vscale x 4 x i16> @dupsext_v4i8_v4i16(i8 %src, <vscale x 4 x i16> %b) {
 ; CHECK-LABEL: dupsext_v4i8_v4i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    sxtb w8, w0
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -36,9 +36,9 @@ entry:
 define <vscale x 8 x i16> @dupsext_v8i8_v8i16(i8 %src, <vscale x 8 x i16> %b) {
 ; CHECK-LABEL: dupsext_v8i8_v8i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.h
 ; CHECK-NEXT:    sxtb w8, w0
 ; CHECK-NEXT:    mov z1.h, w8
-; CHECK-NEXT:    ptrue p0.h
 ; CHECK-NEXT:    mul z0.h, p0/m, z0.h, z1.h
 ; CHECK-NEXT:    ret
 entry:
@@ -52,9 +52,9 @@ entry:
 define <vscale x 2 x i32> @dupsext_v2i8_v2i32(i8 %src, <vscale x 2 x i32> %b) {
 ; CHECK-LABEL: dupsext_v2i8_v2i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    sxtb w8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -68,9 +68,9 @@ entry:
 define <vscale x 4 x i32> @dupsext_v4i8_v4i32(i8 %src, <vscale x 4 x i32> %b) {
 ; CHECK-LABEL: dupsext_v4i8_v4i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    sxtb w8, w0
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -84,10 +84,10 @@ entry:
 define <vscale x 2 x i64> @dupsext_v2i8_v2i64(i8 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupsext_v2i8_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
 ; CHECK-NEXT:    sxtb x8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -101,9 +101,9 @@ entry:
 define <vscale x 2 x i32> @dupsext_v2i16_v2i32(i16 %src, <vscale x 2 x i32> %b) {
 ; CHECK-LABEL: dupsext_v2i16_v2i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    sxth w8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -117,9 +117,9 @@ entry:
 define <vscale x 4 x i32> @dupsext_v4i16_v4i32(i16 %src, <vscale x 4 x i32> %b) {
 ; CHECK-LABEL: dupsext_v4i16_v4i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    sxth w8, w0
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -133,10 +133,10 @@ entry:
 define <vscale x 2 x i64> @dupsext_v2i16_v2i64(i16 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupsext_v2i16_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
 ; CHECK-NEXT:    sxth x8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -150,10 +150,10 @@ entry:
 define <vscale x 2 x i64> @dupsext_v2i32_v2i64(i32 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupsext_v2i32_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
 ; CHECK-NEXT:    sxtw x8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -167,9 +167,9 @@ entry:
 define <vscale x 2 x i16> @dupzext_v2i8_v2i16(i8 %src, <vscale x 2 x i16> %b) {
 ; CHECK-LABEL: dupzext_v2i8_v2i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    and w8, w0, #0xff
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -183,9 +183,9 @@ entry:
 define <vscale x 4 x i16> @dupzext_v4i8_v4i16(i8 %src, <vscale x 4 x i16> %b) {
 ; CHECK-LABEL: dupzext_v4i8_v4i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    and w8, w0, #0xff
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -199,9 +199,9 @@ entry:
 define <vscale x 8 x i16> @dupzext_v8i8_v8i16(i8 %src, <vscale x 8 x i16> %b) {
 ; CHECK-LABEL: dupzext_v8i8_v8i16:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.h
 ; CHECK-NEXT:    and w8, w0, #0xff
 ; CHECK-NEXT:    mov z1.h, w8
-; CHECK-NEXT:    ptrue p0.h
 ; CHECK-NEXT:    mul z0.h, p0/m, z0.h, z1.h
 ; CHECK-NEXT:    ret
 entry:
@@ -215,9 +215,9 @@ entry:
 define <vscale x 2 x i32> @dupzext_v2i8_v2i32(i8 %src, <vscale x 2 x i32> %b) {
 ; CHECK-LABEL: dupzext_v2i8_v2i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    and w8, w0, #0xff
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -231,9 +231,9 @@ entry:
 define <vscale x 4 x i32> @dupzext_v4i8_v4i32(i8 %src, <vscale x 4 x i32> %b) {
 ; CHECK-LABEL: dupzext_v4i8_v4i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    and w8, w0, #0xff
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -247,10 +247,10 @@ entry:
 define <vscale x 2 x i64> @dupzext_v2i8_v2i64(i8 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupzext_v2i8_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
 ; CHECK-NEXT:    and x8, x0, #0xff
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -264,9 +264,9 @@ entry:
 define <vscale x 2 x i32> @dupzext_v2i16_v2i32(i16 %src, <vscale x 2 x i32> %b) {
 ; CHECK-LABEL: dupzext_v2i16_v2i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    and w8, w0, #0xffff
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -280,9 +280,9 @@ entry:
 define <vscale x 4 x i32> @dupzext_v4i16_v4i32(i16 %src, <vscale x 4 x i32> %b) {
 ; CHECK-LABEL: dupzext_v4i16_v4i32:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    and w8, w0, #0xffff
 ; CHECK-NEXT:    mov z1.s, w8
-; CHECK-NEXT:    ptrue p0.s
 ; CHECK-NEXT:    mul z0.s, p0/m, z0.s, z1.s
 ; CHECK-NEXT:    ret
 entry:
@@ -296,10 +296,10 @@ entry:
 define <vscale x 2 x i64> @dupzext_v2i16_v2i64(i16 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupzext_v2i16_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
 ; CHECK-NEXT:    and x8, x0, #0xffff
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:
@@ -313,9 +313,9 @@ entry:
 define <vscale x 2 x i64> @dupzext_v2i32_v2i64(i32 %src, <vscale x 2 x i64> %b) {
 ; CHECK-LABEL: dupzext_v2i32_v2i64:
 ; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mov w8, w0
 ; CHECK-NEXT:    mov z1.d, x8
-; CHECK-NEXT:    ptrue p0.d
 ; CHECK-NEXT:    mul z0.d, p0/m, z0.d, z1.d
 ; CHECK-NEXT:    ret
 entry:

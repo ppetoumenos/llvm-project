@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 
 using namespace mlir;
+using namespace mlir::affine;
 
 AffineValueMap::AffineValueMap(AffineMap map, ValueRange operands,
                                ValueRange results)
@@ -99,4 +100,4 @@ ArrayRef<Value> AffineValueMap::getOperands() const {
 
 AffineMap AffineValueMap::getAffineMap() const { return map.getAffineMap(); }
 
-AffineValueMap::~AffineValueMap() {}
+AffineValueMap::~AffineValueMap() = default;

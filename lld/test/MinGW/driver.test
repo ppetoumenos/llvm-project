@@ -146,9 +146,10 @@ PDB-DEFAULT-NOT: -pdb:{{.*}}
 RUN: ld.lld -### -m i386pep foo.o --large-address-aware 2>&1 | FileCheck -check-prefix LARGE-ADDRESS-AWARE %s
 LARGE-ADDRESS-AWARE: -largeaddressaware
 
-RUN: ld.lld -### -m i386pe foo.o --no-dynamicbase 2>&1 | FileCheck -check-prefix DISABLE-DYNAMICBASE %s
+RUN: ld.lld -### -m i386pe foo.o --dynamicbase --no-dynamicbase 2>&1 | FileCheck -check-prefix DISABLE-DYNAMICBASE %s
+RUN: ld.lld -### -m i386pe foo.o --dynamicbase --disable-dynamicbase 2>&1 | FileCheck -check-prefix DISABLE-DYNAMICBASE %s
 DISABLE-DYNAMICBASE: -dynamicbase:no
-RUN: ld.lld -### -m i386pe --dynamicbase foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
+RUN: ld.lld -### -m i386pe --disable-dynamicbase --dynamicbase foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
 RUN: ld.lld -### -m i386pep -dynamicbase foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
 RUN: ld.lld -### -m i386pe foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
 RUN: ld.lld -### -m i386pep foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
@@ -158,6 +159,34 @@ RUN: ld.lld -### -m arm64pe foo.o 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNA
 RUN: ld.lld -### -m thumb2pe foo.o --no-dynamicbase 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
 RUN: ld.lld -### -m arm64pe foo.o --no-dynamicbase 2>&1 | FileCheck -check-prefix NO-DISABLE-DYNAMICBASE %s
 NO-DISABLE-DYNAMICBASE-NOT: -dynamicbase:no
+
+RUN: ld.lld -### -m i386pe foo.o -high-entropy-va -disable-high-entropy-va 2>&1 | FileCheck -check-prefix DISABLE-HIGH-ENTROPY-VA %s
+RUN: ld.lld -### -m i386pe foo.o --high-entropy-va --disable-high-entropy-va 2>&1 | FileCheck -check-prefix DISABLE-HIGH-ENTROPY-VA %s
+DISABLE-HIGH-ENTROPY-VA: -highentropyva:no
+RUN: ld.lld -### -m i386pe foo.o -disable-high-entropy-va -high-entropy-va 2>&1 | FileCheck -check-prefix NO-DISABLE-HIGH-ENTROPY-VA %s
+RUN: ld.lld -### -m i386pe foo.o --disable-high-entropy-va --high-entropy-va 2>&1 | FileCheck -check-prefix NO-DISABLE-HIGH-ENTROPY-VA %s
+NO-DISABLE-HIGH-ENTROPY-VA-NOT: -highentropyva:no
+
+RUN: ld.lld -### -m i386pe foo.o -nxcompat -disable-nxcompat 2>&1 | FileCheck -check-prefix DISABLE-NXCOMPAT %s
+RUN: ld.lld -### -m i386pe foo.o --nxcompat --disable-nxcompat 2>&1 | FileCheck -check-prefix DISABLE-NXCOMPAT %s
+DISABLE-NXCOMPAT: -nxcompat:no
+RUN: ld.lld -### -m i386pe foo.o -disable-nxcompat -nxcompat 2>&1 | FileCheck -check-prefix NO-DISABLE-NXCOMPAT %s
+RUN: ld.lld -### -m i386pe foo.o --disable-nxcompat --nxcompat 2>&1 | FileCheck -check-prefix NO-DISABLE-NXCOMPAT %s
+NO-DISABLE-NXCOMPAT-NOT: -nxcompat:no
+
+RUN: ld.lld -### -m i386pe foo.o -tsaware -disable-tsaware 2>&1 | FileCheck -check-prefix DISABLE-TSAWARE %s
+RUN: ld.lld -### -m i386pe foo.o --tsaware --disable-tsaware 2>&1 | FileCheck -check-prefix DISABLE-TSAWARE %s
+DISABLE-TSAWARE: -tsaware:no
+RUN: ld.lld -### -m i386pe foo.o -disable-tsaware -tsaware 2>&1 | FileCheck -check-prefix NO-DISABLE-TSAWARE %s
+RUN: ld.lld -### -m i386pe foo.o --disable-tsaware --tsaware 2>&1 | FileCheck -check-prefix NO-DISABLE-TSAWARE %s
+NO-DISABLE-TSAWARE-NOT: -tsaware:no
+
+RUN: ld.lld -### -m i386pe foo.o -enable-reloc-section -disable-reloc-section 2>&1 | FileCheck -check-prefix DISABLE-RELOC-SECTION %s
+RUN: ld.lld -### -m i386pe foo.o --enable-reloc-section --disable-reloc-section 2>&1 | FileCheck -check-prefix DISABLE-RELOC-SECTION %s
+DISABLE-RELOC-SECTION: -fixed{{ }}
+RUN: ld.lld -### -m i386pe foo.o -disable-reloc-section -enable-reloc-section 2>&1 | FileCheck -check-prefix NO-DISABLE-RELOC-SECTION %s
+RUN: ld.lld -### -m i386pe foo.o --disable-reloc-section --enable-reloc-section 2>&1 | FileCheck -check-prefix NO-DISABLE-RELOC-SECTION %s
+NO-DISABLE-RELOC-SECTION-NOT: -fixed
 
 RUN: ld.lld -### -m i386pep foo.o --image-base 0x1230000 2>&1 | FileCheck -check-prefix IMAGE-BASE %s
 RUN: ld.lld -### -m i386pep foo.o -image-base 0x1230000 2>&1 | FileCheck -check-prefix IMAGE-BASE %s
@@ -273,9 +302,12 @@ RUN: ld.lld -### -m i386pep foo.o --section-alignment=0x2000 2>&1 | FileCheck -c
 RUN: ld.lld -### -m i386pep foo.o -section-alignment=0x2000 2>&1 | FileCheck -check-prefix ALIGN %s
 ALIGN: -align:0x2000
 
-RUN: ld.lld -### -m i386pe foo.o -no-seh 2>&1 | FileCheck -check-prefix NOSEH %s
-RUN: ld.lld -### -m i386pe foo.o --no-seh 2>&1 | FileCheck -check-prefix NOSEH %s
+RUN: ld.lld -### -m i386pe foo.o -disable-no-seh -no-seh 2>&1 | FileCheck -check-prefix NOSEH %s
+RUN: ld.lld -### -m i386pe foo.o --disable-no-seh --no-seh 2>&1 | FileCheck -check-prefix NOSEH %s
+RUN: ld.lld -### -m i386pe foo.o -no-seh -disable-no-seh 2>&1 | FileCheck -check-prefix DISABLE-NOSEH %s
+RUN: ld.lld -### -m i386pe foo.o --no-seh --disable-no-seh 2>&1 | FileCheck -check-prefix DISABLE-NOSEH %s
 NOSEH: -noseh
+DISABLE-NOSEH-NOT: -noseh
 
 RUN: ld.lld -### -m i386pep foo.o --no-allow-multiple-definition --allow-multiple-definition 2>&1 | FileCheck -check-prefix ALLOW_MULTIPLE_DEFINITION %s
 RUN: ld.lld -### -m i386pep foo.o -no-allow-multiple-definition -allow-multiple-definition 2>&1 | FileCheck -check-prefix ALLOW_MULTIPLE_DEFINITION %s
@@ -288,6 +320,10 @@ NO_ALLOW_MULTIPLE_DEFINITION-NOT: -force:multiple
 RUN: ld.lld -### -m i386pep foo.o -wrap foo1 --wrap foo2 2>&1 | FileCheck -check-prefix WRAP %s
 RUN: ld.lld -### -m i386pep foo.o -wrap=foo1 --wrap=foo2 2>&1 | FileCheck -check-prefix WRAP %s
 WRAP: -wrap:foo1 -wrap:foo2
+
+RUN: ld.lld -### -m i386pep foo.o -exclude-symbols sym1,sym2 --exclude-symbols sym3 2>&1 | FileCheck -check-prefix EXCLUDE_SYMBOLS %s
+RUN: ld.lld -### -m i386pep foo.o -exclude-symbols=sym1,sym2 --exclude-symbols=sym3 2>&1 | FileCheck -check-prefix EXCLUDE_SYMBOLS %s
+EXCLUDE_SYMBOLS: -exclude-symbols:sym1,sym2 -exclude-symbols:sym3
 
 RUN: ld.lld -### -m i386pep foo.o 2>&1 | FileCheck -check-prefix DEMANGLE %s
 RUN: ld.lld -### -m i386pep foo.o -demangle 2>&1 | FileCheck -check-prefix DEMANGLE %s
@@ -315,3 +351,38 @@ DISABLE-FIXUP: -stdcall-fixup:no
 
 RUN: ld.lld -### -m i386pep foo.o --disable-stdcall-fixup --enable-stdcall-fixup 2>&1 | FileCheck -check-prefix ENABLE-FIXUP %s
 ENABLE-FIXUP: -stdcall-fixup{{ }}
+
+RUN: ld.lld -### foo.o -m i386pep -heap 8388608,16384 2>&1 | FileCheck -check-prefix=HEAP %s
+RUN: ld.lld -### foo.o -m i386pep --heap 8388608,16384 2>&1 | FileCheck -check-prefix=HEAP %s
+RUN: ld.lld -### foo.o -m i386pep --heap=8388608,16384 2>&1 | FileCheck -check-prefix=HEAP %s
+HEAP: -heap:8388608,16384
+
+RUN: ld.lld -### foo.o -m i386pep --no-guard-cf 2>&1 | FileCheck -check-prefix=NO_GUARD_CF %s
+RUN: ld.lld -### foo.o -m i386pep --no-guard-cf --no-guard-longjmp 2>&1 | FileCheck -check-prefix=NO_GUARD_CF %s
+NO_GUARD_CF-NOT: -guard:
+
+RUN: ld.lld -### foo.o -m i386pep --guard-cf 2>&1 | FileCheck -check-prefix=GUARD_CF %s
+RUN: ld.lld -### foo.o -m i386pep --guard-cf --guard-longjmp 2>&1 | FileCheck -check-prefix=GUARD_CF %s
+GUARD_CF: -guard:cf,longjmp
+
+RUN: ld.lld -### foo.o -m i386pep --guard-cf --no-guard-longjmp 2>&1 | FileCheck -check-prefix=GUARD_CF_NOLONGJMP %s
+GUARD_CF_NOLONGJMP: -guard:cf,nolongjmp
+
+RUN: ld.lld -### foo.o -m i386pep --guard-longjmp 2>&1 | FileCheck -check-prefix=GUARD_LONGJMP_NO_CF %s
+RUN: ld.lld -### foo.o -m i386pep --no-guard-cf --guard-longjmp 2>&1 | FileCheck -check-prefix=GUARD_LONGJMP_NO_CF %s
+GUARD_LONGJMP_NO_CF: warning: parameter --guard-longjmp only takes effect when used with --guard-cf
+
+RUN: ld.lld -### foo.o -m i386pep --threads 3 --thinlto-jobs=4 2>&1 | FileCheck -check-prefix=THREADS %s
+RUN: ld.lld -### foo.o -m i386pep --threads 3 -plugin-opt=jobs=4 2>&1 | FileCheck -check-prefix=THREADS %s
+THREADS: -threads:3 {{.*}} -opt:lldltojobs=4
+
+RUN: ld.lld -### foo.o -m i386pep -plugin-opt=mcpu=x86-64 -plugin-opt=-emulated-tls -plugin-opt=thinlto -plugin-opt=O2 -plugin-opt=dwo_dir=foo -plugin-opt=cs-profile-generate -plugin-opt=cs-profile-path=bar 2>&1 | FileCheck -check-prefix=LTO_OPTS %s
+LTO_OPTS: -mllvm:-mcpu=x86-64 -opt:lldlto=2 -dwodir:foo -lto-cs-profile-generate -lto-cs-profile-file:bar -mllvm:-emulated-tls
+
+RUN: ld.lld -### foo.o -m i386pep --lto-O2 --lto-CGO1 --lto-cs-profile-generate --lto-cs-profile-file=foo 2>&1 | FileCheck -check-prefix=LTO_OPTS2 %s
+LTO_OPTS2:-opt:lldlto=2 -opt:lldltocgo=1 -lto-cs-profile-generate -lto-cs-profile-file:foo
+
+Test GCC specific LTO options that GCC passes unconditionally, that we ignore.
+
+RUN: ld.lld -### foo.o -m i386pep -plugin /usr/lib/gcc/x86_64-w64-mingw32/10-posix/liblto_plugin.so -plugin-opt=/usr/lib/gcc/x86_64-w64-mingw32/10-posix/lto-wrapper -plugin-opt=-fresolution=/tmp/ccM9d4fP.res -plugin-opt=-pass-through=-lmingw32 2> /dev/null
+RUN: ld.lld -### foo.o -m i386pep -plugin C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/liblto_plugin.dll -plugin-opt=C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/lto-wrapper.exe -plugin-opt=-fresolution=C:/msys64/tmp/cckbC7wB.res -plugin-opt=-pass-through=-lmingw32 2> /dev/null

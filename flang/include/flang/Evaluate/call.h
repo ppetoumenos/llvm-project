@@ -130,6 +130,13 @@ public:
     dummyIntent_ = intent;
     return *this;
   }
+  std::optional<parser::CharBlock> sourceLocation() const {
+    return sourceLocation_;
+  }
+  ActualArgument &set_sourceLocation(std::optional<parser::CharBlock> at) {
+    sourceLocation_ = at;
+    return *this;
+  }
 
   // Wrap this argument in parentheses
   void Parenthesize();
@@ -148,6 +155,7 @@ private:
   std::optional<parser::CharBlock> keyword_;
   bool isPassedObject_{false};
   common::Intent dummyIntent_{common::Intent::Default};
+  std::optional<parser::CharBlock> sourceLocation_;
 };
 
 using ActualArguments = std::vector<std::optional<ActualArgument>>;
@@ -177,6 +185,7 @@ struct ProcedureDesignator {
   // Exactly one of these will return a non-null pointer.
   const SpecificIntrinsic *GetSpecificIntrinsic() const;
   const Symbol *GetSymbol() const; // symbol or component symbol
+  const SymbolRef *UnwrapSymbolRef() const; // null if intrinsic or component
 
   // For references to NOPASS components and bindings only.
   // References to PASS components and bindings are represented
@@ -191,6 +200,7 @@ struct ProcedureDesignator {
   std::optional<DynamicType> GetType() const;
   int Rank() const;
   bool IsElemental() const;
+  bool IsPure() const;
   std::optional<Expr<SubscriptInteger>> LEN() const;
   llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
 
@@ -198,6 +208,8 @@ struct ProcedureDesignator {
       common::CopyableIndirection<Component>>
       u;
 };
+
+using Chevrons = std::vector<Expr<SomeType>>;
 
 class ProcedureRef {
 public:
@@ -213,6 +225,10 @@ public:
   const ProcedureDesignator &proc() const { return proc_; }
   ActualArguments &arguments() { return arguments_; }
   const ActualArguments &arguments() const { return arguments_; }
+  // CALL subr <<< kernel launch >>> (...); not function
+  Chevrons &chevrons() { return chevrons_; }
+  const Chevrons &chevrons() const { return chevrons_; }
+  void set_chevrons(Chevrons &&chevrons) { chevrons_ = std::move(chevrons); }
 
   std::optional<Expr<SubscriptInteger>> LEN() const;
   int Rank() const;
@@ -240,6 +256,7 @@ public:
 protected:
   ProcedureDesignator proc_;
   ActualArguments arguments_;
+  Chevrons chevrons_;
   bool hasAlternateReturns_;
 };
 
@@ -252,9 +269,6 @@ public:
       : ProcedureRef{std::move(p), std::move(a)} {}
 
   std::optional<DynamicType> GetType() const { return proc_.GetType(); }
-  std::optional<Constant<Result>> Fold(FoldingContext &); // for intrinsics
 };
-
-FOR_EACH_SPECIFIC_TYPE(extern template class FunctionRef, )
 } // namespace Fortran::evaluate
 #endif // FORTRAN_EVALUATE_CALL_H_

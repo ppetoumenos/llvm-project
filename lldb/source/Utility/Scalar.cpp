@@ -16,6 +16,7 @@
 #include "lldb/lldb-types.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 
 #include <cinttypes>
 #include <cstdio>
@@ -145,7 +146,7 @@ bool Scalar::IsZero() const {
   case e_void:
     break;
   case e_int:
-    return m_integer.isNullValue();
+    return m_integer.isZero();
   case e_float:
     return m_float.isZero();
   }
@@ -714,7 +715,7 @@ Status Scalar::SetValueFromData(const DataExtractor &data,
       return Status("insufficient data");
     m_type = e_int;
     m_integer =
-        APSInt(APInt::getNullValue(8 * byte_size), encoding == eEncodingUint);
+        APSInt(APInt::getZero(8 * byte_size), encoding == eEncodingUint);
     if (data.GetByteOrder() == endian::InlHostByteOrder()) {
       llvm::LoadIntFromMemory(m_integer, data.GetDataStart(), byte_size);
     } else {

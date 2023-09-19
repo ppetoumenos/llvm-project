@@ -9,23 +9,20 @@
 #ifndef _LIBCPP___ALGORITHM_SHIFT_RIGHT_H
 #define _LIBCPP___ALGORITHM_SHIFT_RIGHT_H
 
-#include <__config>
 #include <__algorithm/move.h>
 #include <__algorithm/move_backward.h>
 #include <__algorithm/swap_ranges.h>
+#include <__config>
 #include <__iterator/iterator_traits.h>
-#include <type_traits> // swap
+#include <__utility/swap.h>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
-#pragma GCC system_header
+#  pragma GCC system_header
 #endif
-
-_LIBCPP_PUSH_MACROS
-#include <__undef_macros>
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-#if _LIBCPP_STD_VER > 17
+#if _LIBCPP_STD_VER >= 20
 
 template <class _ForwardIterator>
 inline _LIBCPP_INLINE_VISIBILITY constexpr
@@ -37,14 +34,14 @@ shift_right(_ForwardIterator __first, _ForwardIterator __last,
         return __first;
     }
 
-    if constexpr (__is_cpp17_random_access_iterator<_ForwardIterator>::value) {
+    if constexpr (__has_random_access_iterator_category<_ForwardIterator>::value) {
         decltype(__n) __d = __last - __first;
         if (__n >= __d) {
             return __last;
         }
         _ForwardIterator __m = __first + (__d - __n);
         return _VSTD::move_backward(__first, __m, __last);
-    } else if constexpr (__is_cpp17_bidirectional_iterator<_ForwardIterator>::value) {
+    } else if constexpr (__has_bidirectional_iterator_category<_ForwardIterator>::value) {
         _ForwardIterator __m = __last;
         for (; __n > 0; --__n) {
             if (__m == __first) {
@@ -97,10 +94,8 @@ shift_right(_ForwardIterator __first, _ForwardIterator __last,
     }
 }
 
-#endif // _LIBCPP_STD_VER > 17
+#endif // _LIBCPP_STD_VER >= 20
 
 _LIBCPP_END_NAMESPACE_STD
-
-_LIBCPP_POP_MACROS
 
 #endif // _LIBCPP___ALGORITHM_SHIFT_RIGHT_H

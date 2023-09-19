@@ -96,8 +96,7 @@ Expected<JThreadsInfo> JThreadsInfo::create(StringRef Response,
                                             ArrayRef<RegisterInfo> RegInfos) {
   JThreadsInfo jthreads_info;
 
-  StructuredData::ObjectSP json =
-      StructuredData::ParseJSON(std::string(Response));
+  StructuredData::ObjectSP json = StructuredData::ParseJSON(Response);
   StructuredData::Array *array = json->GetAsArray();
   if (!array)
     return make_parsing_error("JThreadsInfo: JSON array");
@@ -157,8 +156,7 @@ Expected<RegisterInfo> RegisterInfoParser::create(StringRef Response) {
       },
       nullptr,
       nullptr,
-      nullptr, // Dwarf expression opcode bytes pointer
-      0        // Dwarf expression opcode bytes length
+      nullptr,
   };
   Info.name = ConstString(Elements["name"]).GetCString();
   if (!Info.name)
@@ -217,7 +215,7 @@ Expected<RegisterValue> parseRegisterValue(const RegisterInfo &Info,
   RegisterValue Value;
   Status ST;
   Value.SetFromMemoryData(
-      &Info, Bytes.data(), Bytes.size(),
+      Info, Bytes.data(), Bytes.size(),
       Endian == support::little ? eByteOrderLittle : eByteOrderBig, ST);
   if (ST.Fail())
     return ST.ToError();

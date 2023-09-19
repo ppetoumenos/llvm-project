@@ -22,7 +22,7 @@
 namespace mlir {
 class DataLayout;
 class DataLayoutEntryInterface;
-using DataLayoutEntryKey = llvm::PointerUnion<Type, Identifier>;
+using DataLayoutEntryKey = llvm::PointerUnion<Type, StringAttr>;
 // Using explicit SmallVector size because we cannot infer the size from the
 // forward declaration, and we need the typedef in the actual declaration.
 using DataLayoutEntryList = llvm::SmallVector<DataLayoutEntryInterface, 4>;
@@ -56,6 +56,14 @@ unsigned
 getDefaultPreferredAlignment(Type type, const DataLayout &dataLayout,
                              ArrayRef<DataLayoutEntryInterface> params);
 
+/// Default handler for alloca memory space request. Dispatches to the
+/// DataLayoutInterface if specified, otherwise returns the default.
+Attribute getDefaultAllocaMemorySpace(DataLayoutEntryInterface entry);
+
+/// Default handler for the stack alignment request. Dispatches to the
+/// DataLayoutInterface if specified, otherwise returns the default.
+unsigned getDefaultStackAlignment(DataLayoutEntryInterface entry);
+
 /// Given a list of data layout entries, returns a new list containing the
 /// entries with keys having the given type ID, i.e. belonging to the same type
 /// class.
@@ -65,7 +73,7 @@ DataLayoutEntryList filterEntriesForType(DataLayoutEntryListRef entries,
 /// Given a list of data layout entries, returns the entry that has the given
 /// identifier as key, if such an entry exists in the list.
 DataLayoutEntryInterface
-filterEntryForIdentifier(DataLayoutEntryListRef entries, Identifier id);
+filterEntryForIdentifier(DataLayoutEntryListRef entries, StringAttr id);
 
 /// Verifies that the operation implementing the data layout interface, or a
 /// module operation, is valid. This calls the verifier of the spec attribute
@@ -159,6 +167,15 @@ public:
   /// Returns the preferred of the given type in the current scope.
   unsigned getTypePreferredAlignment(Type t) const;
 
+  /// Returns the memory space used for AllocaOps.
+  Attribute getAllocaMemorySpace() const;
+
+  /// Returns the natural alignment of the stack in bits. Alignment promotion of
+  /// stack variables should be limited to the natural stack alignment to
+  /// prevent dynamic stack alignment. Returns zero if the stack alignment is
+  /// unspecified.
+  unsigned getStackAlignment() const;
+
 private:
   /// Combined layout spec at the given scope.
   const DataLayoutSpecInterface originalLayout;
@@ -173,15 +190,19 @@ private:
   void checkValid() const;
 
   /// Operation defining the scope of requests.
-  // TODO: this is mutable because the generated interface method are not const.
-  // Update the generator to support const methods and change this to const.
-  mutable Operation *scope;
+  Operation *scope;
 
   /// Caches for individual requests.
   mutable DenseMap<Type, unsigned> sizes;
   mutable DenseMap<Type, unsigned> bitsizes;
   mutable DenseMap<Type, unsigned> abiAlignments;
   mutable DenseMap<Type, unsigned> preferredAlignments;
+
+  /// Cache for alloca memory space.
+  mutable std::optional<Attribute> allocaMemorySpace;
+
+  /// Cache for stack alignment.
+  mutable std::optional<unsigned> stackAlignment;
 };
 
 } // namespace mlir

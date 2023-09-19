@@ -82,7 +82,7 @@ let NumMicroOps = 0 in {
   def : WriteRes<LSU, [Z196_LSUnit]>;
   def : WriteRes<FPU, [Z196_FPUnit]>;
   def : WriteRes<DFU, [Z196_DFUnit]>;
-  foreach Num = 2-6 in { let ResourceCycles = [Num] in {
+  foreach Num = 2-6 in { let ReleaseAtCycles = [Num] in {
     def : WriteRes<!cast<SchedWrite>("FXU"#Num), [Z196_FXUnit]>;
     def : WriteRes<!cast<SchedWrite>("LSU"#Num), [Z196_LSUnit]>;
     def : WriteRes<!cast<SchedWrite>("FPU"#Num), [Z196_FPUnit]>;
@@ -147,12 +147,12 @@ def : InstRW<[WLat1, FXU, NormalGr], (instregex "CL(F|G)IT(Asm.*)?$")>;
 // Call
 def : InstRW<[WLat1, LSU, FXU2, GroupAlone], (instregex "(Call)?BRAS$")>;
 def : InstRW<[WLat1, LSU, FXU2, GroupAlone], (instregex "(Call)?BRASL(_XPLINK64)?$")>;
-def : InstRW<[WLat1, LSU, FXU2, GroupAlone], (instregex "(Call)?BAS(R)?(_XPLINK64)?$")>;
+def : InstRW<[WLat1, LSU, FXU2, GroupAlone], (instregex "(Call)?BAS(R)?(_XPLINK64|_STACKEXT)?$")>;
 def : InstRW<[WLat1, LSU, FXU2, GroupAlone], (instregex "TLS_(G|L)DCALL$")>;
 
 // Return
-def : InstRW<[WLat1, LSU, EndGroup], (instregex "Return$")>;
-def : InstRW<[WLat1, LSU, EndGroup], (instregex "CondReturn$")>;
+def : InstRW<[WLat1, LSU, EndGroup], (instregex "Return(_XPLINK)?$")>;
+def : InstRW<[WLat1, LSU, EndGroup], (instregex "CondReturn(_XPLINK)?$")>;
 
 //===----------------------------------------------------------------------===//
 // Move instructions

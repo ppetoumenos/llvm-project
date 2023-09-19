@@ -286,7 +286,7 @@ Relevant standard
 
 Notes for frontends
   If you are writing a frontend which uses this directly, use with caution.
-  Release only provides a semantic guarantee when paired with a Acquire
+  Release only provides a semantic guarantee when paired with an Acquire
   operation.
 
 Notes for optimizers
@@ -580,6 +580,13 @@ compare-and-swap support are uniprocessor (no SMP). This is almost always the
 case. The only common architecture without that property is SPARC -- SPARCV8 SMP
 systems were common, yet it doesn't support any sort of compare-and-swap
 operation.
+
+Some targets (like RISCV) support a ``+forced-atomics`` target feature, which
+enables the use of lock-free atomics even if LLVM is not aware of any specific
+OS support for them. In this case, the user is responsible for ensuring that
+necessary ``__sync_*`` implementations are available. Code using
+``+forced-atomics`` is ABI-incompatible with code not using the feature, if
+atomic variables cross the ABI boundary.
 
 In either of these cases, the Target in LLVM can claim support for atomics of an
 appropriate size, and then implement some subset of the operations via libcalls

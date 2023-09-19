@@ -5,12 +5,12 @@
 // RUN: %clang -mtargetos=tvos14 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=TVOS %s
 // RUN: %clang -mtargetos=watchos7.1 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=WATCHOS %s
 
-// RUN: %clang -target arm64-apple-ios14 -mtargetos=ios14 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOMIX1 %s
-// RUN: %clang -mtargetos=ios14 -arch arm64 -miphoneos-version-min=14 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOMIX2 %s
-// RUN: %clang -mtargetos=darwin20 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=INVALIDOS %s
-// RUN: %clang -mtargetos=ios -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOVERSION %s
+// RUN: not %clang -target arm64-apple-ios14 -mtargetos=ios14 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOMIX1 %s
+// RUN: not %clang -mtargetos=ios14 -arch arm64 -miphoneos-version-min=14 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOMIX2 %s
+// RUN: not %clang -mtargetos=darwin20 -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=INVALIDOS %s
+// RUN: not %clang -mtargetos=ios -arch arm64 -c %s -o %t.o -### 2>&1 | FileCheck --check-prefix=NOVERSION %s
 
-// REQUIRES: darwin
+// REQUIRES: system-darwin
 
 // MACOS: "-cc1" "-triple" "arm64-apple-macosx11.0.0"
 // MACOS-NEXT: "-cc1" "-triple" "x86_64-apple-macosx11.0.0"

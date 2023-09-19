@@ -29,6 +29,56 @@ Models core language features and contains general-purpose checkers such as divi
 null pointer dereference, usage of uninitialized values, etc.
 *These checkers must be always switched on as other checker rely on them.*
 
+.. _core-BitwiseShift:
+
+core.BitwiseShift (C, C++)
+""""""""""""""""""""""""""
+
+Finds undefined behavior caused by the bitwise left- and right-shift operator
+operating on integer types.
+
+By default, this checker only reports situations when the right operand is
+either negative or larger than the bit width of the type of the left operand;
+these are logically unsound.
+
+Moreover, if the pedantic mode is activated by
+``-analyzer-config core.BitwiseShift:Pedantic=true``, then this checker also
+reports situations where the _left_ operand of a shift operator is negative or
+overflow occurs during the right shift of a signed value. (Most compilers
+handle these predictably, but the C standard and the C++ standards before C++20
+say that they're undefined behavior. In the C++20 standard these constructs are
+well-defined, so activating pedantic mode in C++20 has no effect.)
+
+**Examples**
+
+.. code-block:: cpp
+
+ static_assert(sizeof(int) == 4, "assuming 32-bit int")
+
+ void basic_examples(int a, int b) {
+   if (b < 0) {
+     b = a << b; // warn: right operand is negative in left shift
+   } else if (b >= 32) {
+     b = a >> b; // warn: right shift overflows the capacity of 'int'
+   }
+ }
+
+ int pedantic_examples(int a, int b) {
+   if (a < 0) {
+     return a >> b; // warn: left operand is negative in right shift
+   }
+   a = 1000u << 31; // OK, overflow of unsigned value is well-defined, a == 0
+   if (b > 10) {
+     a = b << 31; // this is undefined before C++20, but the checker doesn't
+                  // warn because it doesn't know the exact value of b
+   }
+   return 1000 << 31; // warn: this overflows the capacity of 'int'
+ }
+
+**Solution**
+
+Ensure the shift operands are in proper range before shifting.
+
 .. _core-CallAndMessage:
 
 core.CallAndMessage (C, C++, ObjC)
@@ -67,6 +117,19 @@ Check for null pointers passed as arguments to a function whose arguments are re
 core.NullDereference (C, C++, ObjC)
 """""""""""""""""""""""""""""""""""
 Check for dereferences of null pointers.
+
+This checker specifically does
+not report null pointer dereferences for x86 and x86-64 targets when the
+address space is 256 (x86 GS Segment), 257 (x86 FS Segment), or 258 (x86 SS
+segment). See `X86/X86-64 Language Extensions
+<https://clang.llvm.org/docs/LanguageExtensions.html#memory-references-to-specified-segments>`__
+for reference.
+
+The ``SuppressAddressSpaces`` option suppresses
+warnings for null dereferences of all pointers with address spaces. You can
+disable this behavior with the option
+``-analyzer-config core.NullDereference:SuppressAddressSpaces=false``.
+*Defaults to true*.
 
 .. code-block:: objc
 
@@ -232,6 +295,22 @@ Check for uninitialized values being returned to the caller.
    return x; // warn
  }
 
+.. _core-uninitialized-NewArraySize:
+
+core.uninitialized.NewArraySize (C++)
+"""""""""""""""""""""""""""""""""""""
+
+Check if the element count in new[] is garbage or undefined.
+
+.. code-block:: cpp
+
+  void test() {
+    int n;
+    int *arr = new int[n]; // warn: Element count in new[] is a garbage value
+    delete[] arr;
+  }
+
+
 .. _cplusplus-checkers:
 
 
@@ -292,10 +371,10 @@ Check for memory leaks. Traces memory managed by new/delete.
    int *p = new int;
  } // warn
 
-.. _cplusplus-PlacementNewChecker:
+.. _cplusplus-PlacementNew:
 
-cplusplus.PlacementNewChecker (C++)
-"""""""""""""""""""""""""""""""""""
+cplusplus.PlacementNew (C++)
+""""""""""""""""""""""""""""
 Check if default placement new is provided with pointers to sufficient storage capacity.
 
 .. code-block:: cpp
@@ -312,6 +391,31 @@ Check if default placement new is provided with pointers to sufficient storage c
 cplusplus.SelfAssignment (C++)
 """"""""""""""""""""""""""""""
 Checks C++ copy and move assignment operators for self assignment.
+
+.. _cplusplus-StringChecker:
+
+cplusplus.StringChecker (C++)
+"""""""""""""""""""""""""""""
+Checks std::string operations.
+
+Checks if the cstring pointer from which the ``std::string`` object is
+constructed is ``NULL`` or not.
+If the checker cannot reason about the nullness of the pointer it will assume
+that it was non-null to satisfy the precondition of the constructor.
+
+This checker is capable of checking the `SEI CERT C++ coding rule STR51-CPP.
+Do not attempt to create a std::string from a null pointer
+<https://wiki.sei.cmu.edu/confluence/x/E3s-BQ>`__.
+
+.. code-block:: cpp
+
+ #include <string>
+
+ void f(const char *p) {
+   if (!p) {
+     std::string msg(p); // warn: The parameter must not be null
+   }
+ }
 
 .. _deadcode-checkers:
 
@@ -909,12 +1013,12 @@ Check the size argument passed into C string functions for common erroneous patt
      // warn: potential buffer overflow
  }
 
-.. _unix-cstrisng-NullArg:
+.. _unix-cstring-NullArg:
 
-unix.cstrisng.NullArg (C)
+unix.cstring.NullArg (C)
 """""""""""""""""""""""""
 Check for null pointers being passed as arguments to C string functions:
-``strlen, strnlen, strcpy, strncpy, strcat, strncat, strcmp, strncmp, strcasecmp, strncasecmp``.
+``strlen, strnlen, strcpy, strncpy, strcat, strncat, strcmp, strncmp, strcasecmp, strncasecmp, wcslen, wcsnlen``.
 
 .. code-block:: c
 
@@ -1838,6 +1942,20 @@ Method calls on a moved-from object and copying a moved-from object will be repo
    a.foo();            // warn: method call on a 'moved-from' object 'a'
  }
 
+.. _alpha-cplusplus-SmartPtr:
+
+alpha.cplusplus.SmartPtr (C++)
+""""""""""""""""""""""""""""""
+Check for dereference of null smart pointers.
+
+.. code-block:: cpp
+
+ void deref_smart_ptr() {
+   std::unique_ptr<int> P;
+   *P; // warn: dereference of a default constructed smart unique_ptr
+ }
+
+
 alpha.deadcode
 ^^^^^^^^^^^^^^
 .. _alpha-deadcode-UnreachableCode:
@@ -1870,19 +1988,6 @@ Check unreachable code.
  void test(id x) {
    return;
    [x retain]; // warn
- }
-
-.. _alpha-cplusplus-SmartPtr:
-
-alpha.cplusplus.SmartPtr (C++)
-""""""""""""""""""""""""""""""
-Check for dereference of null smart pointers.
-
-.. code-block:: cpp
-
- void deref_smart_ptr() {
-   std::unique_ptr<int> P;
-   *P; // warn: dereference of a default constructed smart unique_ptr
  }
 
 alpha.fuchsia
@@ -2047,37 +2152,6 @@ Warns against using one vs. many plural pattern in code when generating localize
 alpha.security
 ^^^^^^^^^^^^^^
 
-
-alpha.security.cert
-^^^^^^^^^^^^^^^^^^^
-
-SEI CERT checkers which tries to find errors based on their `C coding rules <https://wiki.sei.cmu.edu/confluence/display/c/2+Rules>`_.
-
-.. _alpha-security-cert-pos-checkers:
-
-alpha.security.cert.pos
-^^^^^^^^^^^^^^^^^^^^^^^
-
-SEI CERT checkers of `POSIX C coding rules <https://wiki.sei.cmu.edu/confluence/pages/viewpage.action?pageId=87152405>`_.
-
-.. _alpha-security-cert-pos-34c:
-
-alpha.security.cert.pos.34c
-"""""""""""""""""""""""""""
-Finds calls to the ``putenv`` function which pass a pointer to an automatic variable as the argument.
-
-.. code-block:: c
-
-  int func(const char *var) {
-    char env[1024];
-    int retval = snprintf(env, sizeof(env),"TEST=%s", var);
-    if (retval < 0 || (size_t)retval >= sizeof(env)) {
-        /* Handle error */
-    }
- 
-    return putenv(env); // putenv function should not be called with auto variables
-  }
-  
 .. _alpha-security-ArrayBound:
 
 alpha.security.ArrayBound (C)
@@ -2154,7 +2228,15 @@ Warn about buffer overflows (newer checker).
 
 alpha.security.MallocOverflow (C)
 """""""""""""""""""""""""""""""""
-Check for overflows in the arguments to malloc().
+Check for overflows in the arguments to ``malloc()``.
+It tries to catch ``malloc(n * c)`` patterns, where:
+
+ - ``n``: a variable or member access of an object
+ - ``c``: a constant foldable integral
+
+This checker was designed for code audits, so expect false-positive reports.
+One is supposed to silence this checker by ensuring proper bounds checking on
+the variable in question using e.g. an ``assert()`` or a branch.
 
 .. code-block:: c
 
@@ -2167,6 +2249,23 @@ Check for overflows in the arguments to malloc().
      return;
    void *p = malloc(n * sizeof(int)); // no warning
  }
+
+ void test3(int n) {
+   assert(n <= 100 && "Contract violated.");
+   void *p = malloc(n * sizeof(int)); // no warning
+ }
+
+Limitations:
+
+ - The checker won't warn for variables involved in explicit casts,
+   since that might limit the variable's domain.
+   E.g.: ``(unsigned char)int x`` would limit the domain to ``[0,255]``.
+   The checker will miss the true-positive cases when the explicit cast would
+   not tighten the domain to prevent the overflow in the subsequent
+   multiplication operation.
+
+ - It is an AST-based checker, thus it does not make use of the
+   path-sensitive taint-analysis.
 
 .. _alpha-security-MmapWriteExec:
 
@@ -2204,39 +2303,447 @@ Check for an out-of-bound pointer being returned to callers.
    return x; // warn: undefined or garbage returned
  }
 
+
+alpha.security.cert
+^^^^^^^^^^^^^^^^^^^
+
+SEI CERT checkers which tries to find errors based on their `C coding rules <https://wiki.sei.cmu.edu/confluence/display/c/2+Rules>`_.
+
+.. _alpha-security-cert-pos-checkers:
+
+alpha.security.cert.pos
+^^^^^^^^^^^^^^^^^^^^^^^
+
+SEI CERT checkers of `POSIX C coding rules <https://wiki.sei.cmu.edu/confluence/pages/viewpage.action?pageId=87152405>`_.
+
+.. _alpha-security-cert-pos-34c:
+
+alpha.security.cert.pos.34c
+"""""""""""""""""""""""""""
+Finds calls to the ``putenv`` function which pass a pointer to an automatic variable as the argument.
+
+.. code-block:: c
+
+  int func(const char *var) {
+    char env[1024];
+    int retval = snprintf(env, sizeof(env),"TEST=%s", var);
+    if (retval < 0 || (size_t)retval >= sizeof(env)) {
+        /* Handle error */
+    }
+
+    return putenv(env); // putenv function should not be called with auto variables
+  }
+
+Limitations:
+
+   - Technically, one can pass automatic variables to ``putenv``,
+     but one needs to ensure that the given environment key stays
+     alive until it's removed or overwritten.
+     Since the analyzer cannot keep track of which envvars get overwritten
+     and when, it needs to be slightly more aggressive and warn for such
+     cases too, leading in some cases to false-positive reports like this:
+
+     .. code-block:: c
+
+        void baz() {
+          char env[] = "NAME=value";
+          putenv(env); // false-positive warning: putenv function should not be called...
+          // More code...
+          putenv((char *)"NAME=anothervalue");
+          // This putenv call overwrites the previous entry, thus that can no longer dangle.
+        } // 'env' array becomes dead only here.
+
+alpha.security.cert.env
+^^^^^^^^^^^^^^^^^^^^^^^
+
+SEI CERT checkers of `Environment C coding rules <https://wiki.sei.cmu.edu/confluence/x/JdcxBQ>`_.
+
+.. _alpha-security-cert-env-InvalidPtr:
+
+alpha.security.cert.env.InvalidPtr
+""""""""""""""""""""""""""""""""""
+
+Corresponds to SEI CERT Rules ENV31-C and ENV34-C.
+
+ENV31-C:
+Rule is about the possible problem with `main` function's third argument, environment pointer,
+"envp". When environment array is modified using some modification function
+such as putenv, setenv or others, It may happen that memory is reallocated,
+however "envp" is not updated to reflect the changes and points to old memory
+region.
+
+ENV34-C:
+Some functions return a pointer to a statically allocated buffer.
+Consequently, subsequent call of these functions will invalidate previous
+pointer. These functions include: getenv, localeconv, asctime, setlocale, strerror
+
+.. code-block:: c
+
+  int main(int argc, const char *argv[], const char *envp[]) {
+    if (setenv("MY_NEW_VAR", "new_value", 1) != 0) {
+      // setenv call may invalidate 'envp'
+      /* Handle error */
+    }
+    if (envp != NULL) {
+      for (size_t i = 0; envp[i] != NULL; ++i) {
+        puts(envp[i]);
+        // envp may no longer point to the current environment
+        // this program has unanticipated behavior, since envp
+        // does not reflect changes made by setenv function.
+      }
+    }
+    return 0;
+  }
+
+  void previous_call_invalidation() {
+    char *p, *pp;
+
+    p = getenv("VAR");
+    pp = getenv("VAR2");
+    // subsequent call to 'getenv' invalidated previous one
+
+    *p;
+    // dereferencing invalid pointer
+  }
+
+alpha.security.taint
+^^^^^^^^^^^^^^^^^^^^
+
+Checkers implementing
+`taint analysis <https://en.wikipedia.org/wiki/Taint_checking>`_.
+
 .. _alpha-security-taint-TaintPropagation:
 
 alpha.security.taint.TaintPropagation (C, C++)
 """"""""""""""""""""""""""""""""""""""""""""""
-Generate taint information used by other checkers.
-A data is tainted when it comes from an unreliable source.
+
+Taint analysis identifies potential security vulnerabilities where the
+attacker can inject malicious data to the program to execute an attack
+(privilege escalation, command injection, SQL injection etc.).
+
+The malicious data is injected at the taint source (e.g. ``getenv()`` call)
+which is then propagated through function calls and being used as arguments of
+sensitive operations, also called as taint sinks (e.g. ``system()`` call).
+
+One can defend against this type of vulnerability by always checking and
+sanitizing the potentially malicious, untrusted user input.
+
+The goal of the checker is to discover and show to the user these potential
+taint source-sink pairs and the propagation call chain.
+
+The most notable examples of taint sources are:
+
+  - data from network
+  - files or standard input
+  - environment variables
+  - data from databases
+
+Let us examine a practical example of a Command Injection attack.
 
 .. code-block:: c
 
- void test() {
-   char x = getchar(); // 'x' marked as tainted
-   system(&x); // warn: untrusted data is passed to a system call
- }
+  // Command Injection Vulnerability Example
+  int main(int argc, char** argv) {
+    char cmd[2048] = "/bin/cat ";
+    char filename[1024];
+    printf("Filename:");
+    scanf (" %1023[^\n]", filename); // The attacker can inject a shell escape here
+    strcat(cmd, filename);
+    system(cmd); // Warning: Untrusted data is passed to a system call
+  }
 
- // note: compiler internally checks if the second param to
- // sprintf is a string literal or not.
- // Use -Wno-format-security to suppress compiler warning.
- void test() {
-   char s[10], buf[10];
-   fscanf(stdin, "%s", s); // 's' marked as tainted
+The program prints the content of any user specified file.
+Unfortunately the attacker can execute arbitrary commands
+with shell escapes. For example with the following input the `ls` command is also
+executed after the contents of `/etc/shadow` is printed.
+`Input: /etc/shadow ; ls /`
 
-   sprintf(buf, s); // warn: untrusted data as a format string
- }
+The analysis implemented in this checker points out this problem.
 
- void test() {
-   size_t ts;
-   scanf("%zd", &ts); // 'ts' marked as tainted
-   int *p = (int *)malloc(ts * sizeof(int));
-     // warn: untrusted data as buffer size
- }
+One can protect against such attack by for example checking if the provided
+input refers to a valid file and removing any invalid user input.
+
+.. code-block:: c
+
+  // No vulnerability anymore, but we still get the warning
+  void sanitizeFileName(char* filename){
+    if (access(filename,F_OK)){// Verifying user input
+      printf("File does not exist\n");
+      filename[0]='\0';
+      }
+  }
+  int main(int argc, char** argv) {
+    char cmd[2048] = "/bin/cat ";
+    char filename[1024];
+    printf("Filename:");
+    scanf (" %1023[^\n]", filename); // The attacker can inject a shell escape here
+    sanitizeFileName(filename);// filename is safe after this point
+    if (!filename[0])
+      return -1;
+    strcat(cmd, filename);
+    system(cmd); // Superfluous Warning: Untrusted data is passed to a system call
+  }
+
+Unfortunately, the checker cannot discover automatically that the programmer
+have performed data sanitation, so it still emits the warning.
+
+One can get rid of this superfluous warning by telling by specifying the
+sanitation functions in the taint configuration file (see
+:doc:`user-docs/TaintAnalysisConfiguration`).
+
+.. code-block:: YAML
+
+  Filters:
+  - Name: sanitizeFileName
+    Args: [0]
+
+The clang invocation to pass the configuration file location:
+
+.. code-block:: bash
+
+  clang  --analyze -Xclang -analyzer-config  -Xclang alpha.security.taint.TaintPropagation:Config=`pwd`/taint_config.yml ...
+
+If you are validating your inputs instead of sanitizing them, or don't want to
+mention each sanitizing function in our configuration,
+you can use a more generic approach.
+
+Introduce a generic no-op `csa_mark_sanitized(..)` function to
+tell the Clang Static Analyzer
+that the variable is safe to be used on that analysis path.
+
+.. code-block:: c
+
+  // Marking sanitized variables safe.
+  // No vulnerability anymore, no warning.
+
+  // User csa_mark_sanitize function is for the analyzer only
+  #ifdef __clang_analyzer__
+    void csa_mark_sanitized(const void *);
+  #endif
+
+  int main(int argc, char** argv) {
+    char cmd[2048] = "/bin/cat ";
+    char filename[1024];
+    printf("Filename:");
+    scanf (" %1023[^\n]", filename);
+    if (access(filename,F_OK)){// Verifying user input
+      printf("File does not exist\n");
+      return -1;
+    }
+    #ifdef __clang_analyzer__
+      csa_mark_sanitized(filename); // Indicating to CSA that filename variable is safe to be used after this point
+    #endif
+    strcat(cmd, filename);
+    system(cmd); // No warning
+  }
+
+Similarly to the previous example, you need to
+define a `Filter` function in a `YAML` configuration file
+and add the `csa_mark_sanitized` function.
+
+.. code-block:: YAML
+
+  Filters:
+  - Name: csa_mark_sanitized
+    Args: [0]
+
+Then calling `csa_mark_sanitized(X)` will tell the analyzer that `X` is safe to
+be used after this point, because its contents are verified. It is the
+responsibility of the programmer to ensure that this verification was indeed
+correct. Please note that `csa_mark_sanitized` function is only declared and
+used during Clang Static Analysis and skipped in (production) builds.
+
+Further examples of injection vulnerabilities this checker can find.
+
+.. code-block:: c
+
+  void test() {
+    char x = getchar(); // 'x' marked as tainted
+    system(&x); // warn: untrusted data is passed to a system call
+  }
+
+  // note: compiler internally checks if the second param to
+  // sprintf is a string literal or not.
+  // Use -Wno-format-security to suppress compiler warning.
+  void test() {
+    char s[10], buf[10];
+    fscanf(stdin, "%s", s); // 's' marked as tainted
+
+    sprintf(buf, s); // warn: untrusted data used as a format string
+  }
+
+  void test() {
+    size_t ts;
+    scanf("%zd", &ts); // 'ts' marked as tainted
+    int *p = (int *)malloc(ts * sizeof(int));
+      // warn: untrusted data used as buffer size
+  }
+
+There are built-in sources, propagations and sinks even if no external taint
+configuration is provided.
+
+Default sources:
+ ``_IO_getc``, ``fdopen``, ``fopen``, ``freopen``, ``get_current_dir_name``,
+ ``getch``, ``getchar``, ``getchar_unlocked``, ``getwd``, ``getcwd``,
+ ``getgroups``, ``gethostname``, ``getlogin``, ``getlogin_r``, ``getnameinfo``,
+ ``gets``, ``gets_s``, ``getseuserbyname``, ``readlink``, ``readlinkat``,
+ ``scanf``, ``scanf_s``, ``socket``, ``wgetch``
+
+Default propagations rules:
+ ``atoi``, ``atol``, ``atoll``, ``basename``, ``dirname``, ``fgetc``,
+ ``fgetln``, ``fgets``, ``fnmatch``, ``fread``, ``fscanf``, ``fscanf_s``,
+ ``index``, ``inflate``, ``isalnum``, ``isalpha``, ``isascii``, ``isblank``,
+ ``iscntrl``, ``isdigit``, ``isgraph``, ``islower``, ``isprint``, ``ispunct``,
+ ``isspace``, ``isupper``, ``isxdigit``, ``memchr``, ``memrchr``, ``sscanf``,
+ ``getc``, ``getc_unlocked``, ``getdelim``, ``getline``, ``getw``, ``memcmp``,
+ ``memcpy``, ``memmem``, ``memmove``, ``mbtowc``, ``pread``, ``qsort``,
+ ``qsort_r``, ``rawmemchr``, ``read``, ``recv``, ``recvfrom``, ``rindex``,
+ ``strcasestr``, ``strchr``, ``strchrnul``, ``strcasecmp``, ``strcmp``,
+ ``strcspn``, ``strncasecmp``, ``strncmp``, ``strndup``,
+ ``strndupa``, ``strpbrk``, ``strrchr``, ``strsep``, ``strspn``,
+ ``strstr``, ``strtol``, ``strtoll``, ``strtoul``, ``strtoull``, ``tolower``,
+ ``toupper``, ``ttyname``, ``ttyname_r``, ``wctomb``, ``wcwidth``
+
+Default sinks:
+ ``printf``, ``setproctitle``, ``system``, ``popen``, ``execl``, ``execle``,
+ ``execlp``, ``execv``, ``execvp``, ``execvP``, ``execve``, ``dlopen``,
+ ``memcpy``, ``memmove``, ``strncpy``, ``strndup``, ``malloc``, ``calloc``,
+ ``alloca``, ``memccpy``, ``realloc``, ``bcopy``
+
+Please note that there are no built-in filter functions.
+
+One can configure their own taint sources, sinks, and propagation rules by
+providing a configuration file via checker option
+``alpha.security.taint.TaintPropagation:Config``. The configuration file is in
+`YAML <http://llvm.org/docs/YamlIO.html#introduction-to-yaml>`_ format. The
+taint-related options defined in the config file extend but do not override the
+built-in sources, rules, sinks. The format of the external taint configuration
+file is not stable, and could change without any notice even in a non-backward
+compatible way.
+
+For a more detailed description of configuration options, please see the
+:doc:`user-docs/TaintAnalysisConfiguration`. For an example see
+:ref:`clangsa-taint-configuration-example`.
+
+**Configuration**
+
+* `Config`  Specifies the name of the YAML configuration file. The user can
+  define their own taint sources and sinks.
+
+**Related Guidelines**
+
+* `CWE Data Neutralization Issues
+  <https://cwe.mitre.org/data/definitions/137.html>`_
+* `SEI Cert STR02-C. Sanitize data passed to complex subsystems
+  <https://wiki.sei.cmu.edu/confluence/display/c/STR02-C.+Sanitize+data+passed+to+complex+subsystems>`_
+* `SEI Cert ENV33-C. Do not call system()
+  <https://wiki.sei.cmu.edu/confluence/pages/viewpage.action?pageId=87152177>`_
+* `ENV03-C. Sanitize the environment when invoking external programs
+  <https://wiki.sei.cmu.edu/confluence/display/c/ENV03-C.+Sanitize+the+environment+when+invoking+external+programs>`_
+
+**Limitations**
+
+* The taintedness property is not propagated through function calls which are
+  unknown (or too complex) to the analyzer, unless there is a specific
+  propagation rule built-in to the checker or given in the YAML configuration
+  file. This causes potential true positive findings to be lost.
 
 alpha.unix
 ^^^^^^^^^^^
+
+.. _alpha-unix-StdCLibraryFunctions:
+
+alpha.unix.StdCLibraryFunctions (C)
+"""""""""""""""""""""""""""""""""""
+Check for calls of standard library functions that violate predefined argument
+constraints. For example, it is stated in the C standard that for the ``int
+isalnum(int ch)`` function the behavior is undefined if the value of ``ch`` is
+not representable as unsigned char and is not equal to ``EOF``.
+
+.. code-block:: c
+
+  #define EOF -1
+  void test_alnum_concrete(int v) {
+    int ret = isalnum(256); // \
+    // warning: Function argument outside of allowed range
+    (void)ret;
+  }
+
+  void buffer_size_violation(FILE *file) {
+    enum { BUFFER_SIZE = 1024 };
+    wchar_t wbuf[BUFFER_SIZE];
+
+    const size_t size = sizeof(*wbuf);   // 4
+    const size_t nitems = sizeof(wbuf);  // 4096
+
+    // Below we receive a warning because the 3rd parameter should be the
+    // number of elements to read, not the size in bytes. This case is a known
+    // vulnerability described by the ARR38-C SEI-CERT rule.
+    fread(wbuf, size, nitems, file);
+  }
+
+You can think of this checker as defining restrictions (pre- and postconditions)
+on standard library functions. Preconditions are checked, and when they are
+violated, a warning is emitted. Post conditions are added to the analysis, e.g.
+that the return value must be no greater than 255.
+
+For example if an argument to a function must be in between 0 and 255, but the
+value of the argument is unknown, the analyzer will conservatively assume that
+it is in this interval. Similarly, if a function mustn't be called with a null
+pointer and the null value of the argument can not be proven, the analyzer will
+assume that it is non-null.
+
+These are the possible checks on the values passed as function arguments:
+ - The argument has an allowed range (or multiple ranges) of values. The checker
+   can detect if a passed value is outside of the allowed range and show the
+   actual and allowed values.
+ - The argument has pointer type and is not allowed to be null pointer. Many
+   (but not all) standard functions can produce undefined behavior if a null
+   pointer is passed, these cases can be detected by the checker.
+ - The argument is a pointer to a memory block and the minimal size of this
+   buffer is determined by another argument to the function, or by
+   multiplication of two arguments (like at function ``fread``), or is a fixed
+   value (for example ``asctime_r`` requires at least a buffer of size 26). The
+   checker can detect if the buffer size is too small and in optimal case show
+   the size of the buffer and the values of the corresponding arguments.
+
+.. code-block:: c
+
+  int test_alnum_symbolic(int x) {
+    int ret = isalnum(x);
+    // after the call, ret is assumed to be in the range [-1, 255]
+
+    if (ret > 255)      // impossible (infeasible branch)
+      if (x == 0)
+        return ret / x; // division by zero is not reported
+    return ret;
+  }
+
+Additionally to the argument and return value conditions, this checker also adds
+state of the value ``errno`` if applicable to the analysis. Many system
+functions set the ``errno`` value only if an error occurs (together with a
+specific return value of the function), otherwise it becomes undefined. This
+checker changes the analysis state to contain such information. This data is
+used by other checkers, for example :ref:`alpha-unix-Errno`.
+
+**Limitations**
+
+The checker can not always provide notes about the values of the arguments.
+Without this information it is hard to confirm if the constraint is indeed
+violated. The argument values are shown if they are known constants or the value
+is determined by previous (not too complicated) assumptions.
+
+The checker can produce false positives in cases such as if the program has
+invariants not known to the analyzer engine or the bug report path contains
+calls to unknown functions. In these cases the analyzer fails to detect the real
+range of the argument.
+
+**Parameters**
+
+The checker models functions (and emits diagnostics) from the C standard by
+default. The ``ModelPOSIX`` option enables modeling (and emit diagnostics) of
+additional functions that are defined in the POSIX standard. This option is
+disabled by default.
 
 .. _alpha-unix-BlockInCriticalSection:
 
@@ -2270,6 +2777,76 @@ Check improper use of chroot.
    chroot("/usr/local");
    f(); // warn: no call of chdir("/") immediately after chroot
  }
+
+.. _alpha-unix-Errno:
+
+alpha.unix.Errno (C)
+""""""""""""""""""""
+
+Check for improper use of ``errno``.
+This checker implements partially CERT rule
+`ERR30-C. Set errno to zero before calling a library function known to set errno,
+and check errno only after the function returns a value indicating failure
+<https://wiki.sei.cmu.edu/confluence/pages/viewpage.action?pageId=87152351>`_.
+The checker can find the first read of ``errno`` after successful standard
+function calls.
+
+The C and POSIX standards often do not define if a standard library function
+may change value of ``errno`` if the call does not fail.
+Therefore, ``errno`` should only be used if it is known from the return value
+of a function that the call has failed.
+There are exceptions to this rule (for example ``strtol``) but the affected
+functions are not yet supported by the checker.
+The return values for the failure cases are documented in the standard Linux man
+pages of the functions and in the `POSIX standard <https://pubs.opengroup.org/onlinepubs/9699919799/>`_.
+
+.. code-block:: c
+
+ int unsafe_errno_read(int sock, void *data, int data_size) {
+   if (send(sock, data, data_size, 0) != data_size) {
+     // 'send' can be successful even if not all data was sent
+     if (errno == 1) { // An undefined value may be read from 'errno'
+       return 0;
+     }
+   }
+   return 1;
+ }
+
+The checker :ref:`alpha-unix-StdCLibraryFunctions` must be turned on to get the
+warnings from this checker. The supported functions are the same as by
+:ref:`alpha-unix-StdCLibraryFunctions`. The ``ModelPOSIX`` option of that
+checker affects the set of checked functions.
+
+**Parameters**
+
+The ``AllowErrnoReadOutsideConditionExpressions`` option allows read of the
+errno value if the value is not used in a condition (in ``if`` statements,
+loops, conditional expressions, ``switch`` statements). For example ``errno``
+can be stored into a variable without getting a warning by the checker.
+
+.. code-block:: c
+
+ int unsafe_errno_read(int sock, void *data, int data_size) {
+   if (send(sock, data, data_size, 0) != data_size) {
+     int err = errno;
+     // warning if 'AllowErrnoReadOutsideConditionExpressions' is false
+     // no warning if 'AllowErrnoReadOutsideConditionExpressions' is true
+   }
+   return 1;
+ }
+
+Default value of this option is ``true``. This allows save of the errno value
+for possible later error handling.
+
+**Limitations**
+
+ - Only the very first usage of ``errno`` is checked after an affected function
+   call. Value of ``errno`` is not followed when it is stored into a variable
+   or returned from a function.
+ - Documentation of function ``lseek`` is not clear about what happens if the
+   function returns different value than the expected file position but not -1.
+   To avoid possible false-positives ``errno`` is allowed to be used in this
+   case.
 
 .. _alpha-unix-PthreadLock:
 
@@ -2381,7 +2958,7 @@ Check stream handling functions: ``fopen, tmpfile, fclose, fread, fwrite, fseek,
 
 alpha.unix.cstring.BufferOverlap (C)
 """"""""""""""""""""""""""""""""""""
-Checks for overlap in two buffer arguments. Applies to:  ``memcpy, mempcpy``.
+Checks for overlap in two buffer arguments. Applies to:  ``memcpy, mempcpy, wmemcpy, wmempcpy``.
 
 .. code-block:: c
 
@@ -2394,7 +2971,7 @@ Checks for overlap in two buffer arguments. Applies to:  ``memcpy, mempcpy``.
 
 alpha.unix.cstring.NotNullTerminated (C)
 """"""""""""""""""""""""""""""""""""""""
-Check for arguments which are not null-terminated strings; applies to: ``strlen, strnlen, strcpy, strncpy, strcat, strncat``.
+Check for arguments which are not null-terminated strings; applies to: ``strlen, strnlen, strcpy, strncpy, strcat, strncat, wcslen, wcsnlen``.
 
 .. code-block:: c
 
@@ -2406,14 +2983,58 @@ Check for arguments which are not null-terminated strings; applies to: ``strlen,
 
 alpha.unix.cstring.OutOfBounds (C)
 """"""""""""""""""""""""""""""""""
-Check for out-of-bounds access in string functions; applies to:`` strncopy, strncat``.
+Check for out-of-bounds access in string functions, such as:
+``memcpy, bcopy, strcpy, strncpy, strcat, strncat, memmove, memcmp, memset`` and more.
 
+This check also works with string literals, except there is a known bug in that
+the analyzer cannot detect embedded NULL characters when determining the string length.
+
+.. code-block:: c
+
+ void test1() {
+   const char str[] = "Hello world";
+   char buffer[] = "Hello world";
+   memcpy(buffer, str, sizeof(str) + 1); // warn
+ }
+
+ void test2() {
+   const char str[] = "Hello world";
+   char buffer[] = "Helloworld";
+   memcpy(buffer, str, sizeof(str)); // warn
+ }
+
+.. _alpha-unix-cstring-UninitializedRead:
+
+alpha.unix.cstring.UninitializedRead (C)
+""""""""""""""""""""""""""""""""""""""""
+Check for uninitialized reads from common memory copy/manipulation functions such as:
+ ``memcpy, mempcpy, memmove, memcmp, strcmp, strncmp, strcpy, strlen, strsep`` and many more.
 
 .. code-block:: c
 
  void test() {
-   int y = strlen((char *)&test); // warn
+  char src[10];
+  char dst[5];
+  memcpy(dst,src,sizeof(dst)); // warn: Bytes string function accesses uninitialized/garbage values
  }
+
+Limitations:
+
+   - Due to limitations of the memory modeling in the analyzer, one can likely
+     observe a lot of false-positive reports like this:
+
+      .. code-block:: c
+
+        void false_positive() {
+          int src[] = {1, 2, 3, 4};
+          int dst[5] = {0};
+          memcpy(dst, src, 4 * sizeof(int)); // false-positive:
+          // The 'src' buffer was correctly initialized, yet we cannot conclude
+          // that since the analyzer could not see a direct initialization of the
+          // very last byte of the source buffer.
+        }
+
+     More details at the corresponding `GitHub issue <https://github.com/llvm/llvm-project/issues/43459>`_.
 
 .. _alpha-nondeterminism-PointerIteration:
 
@@ -2682,4 +3303,3 @@ View Call Graph using GraphViz.
 debug.ViewExplodedGraph
 """""""""""""""""""""""
 View Exploded Graphs using GraphViz.
-

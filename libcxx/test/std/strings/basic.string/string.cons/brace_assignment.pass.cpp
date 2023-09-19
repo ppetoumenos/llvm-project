@@ -11,27 +11,35 @@
 // <string>
 
 // basic_string<charT,traits,Allocator>&
-//   operator=(basic_string<charT,traits,Allocator>&& str);
+//   operator=(basic_string<charT,traits,Allocator>&& str); // constexpr since C++20
 
 #include <string>
 #include <cassert>
 
 #include "test_macros.h"
 
-int main(int, char**)
-{
+TEST_CONSTEXPR_CXX20 bool test() {
   // Test that assignment from {} and {ptr, len} are allowed and are not
   // ambiguous.
   {
     std::string s = "hello world";
-    s = {};
+    s             = {};
     assert(s.empty());
   }
   {
     std::string s = "hello world";
-    s = {"abc", 2};
+    s             = {"abc", 2};
     assert(s == "ab");
   }
+
+  return true;
+}
+
+int main(int, char**) {
+  test();
+#if TEST_STD_VER > 17
+  static_assert(test());
+#endif
 
   return 0;
 }

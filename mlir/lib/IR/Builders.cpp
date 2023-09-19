@@ -9,19 +9,16 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
-
-Identifier Builder::getIdentifier(const Twine &str) {
-  return Identifier::get(str, context);
-}
 
 //===----------------------------------------------------------------------===//
 // Locations.
@@ -37,9 +34,31 @@ Location Builder::getFusedLoc(ArrayRef<Location> locs, Attribute metadata) {
 // Types.
 //===----------------------------------------------------------------------===//
 
+FloatType Builder::getFloat8E5M2Type() {
+  return FloatType::getFloat8E5M2(context);
+}
+
+FloatType Builder::getFloat8E4M3FNType() {
+  return FloatType::getFloat8E4M3FN(context);
+}
+
+FloatType Builder::getFloat8E5M2FNUZType() {
+  return FloatType::getFloat8E5M2FNUZ(context);
+}
+
+FloatType Builder::getFloat8E4M3FNUZType() {
+  return FloatType::getFloat8E4M3FNUZ(context);
+}
+
+FloatType Builder::getFloat8E4M3B11FNUZType() {
+  return FloatType::getFloat8E4M3B11FNUZ(context);
+}
+
 FloatType Builder::getBF16Type() { return FloatType::getBF16(context); }
 
 FloatType Builder::getF16Type() { return FloatType::getF16(context); }
+
+FloatType Builder::getTF32Type() { return FloatType::getTF32(context); }
 
 FloatType Builder::getF32Type() { return FloatType::getF32(context); }
 
@@ -53,7 +72,13 @@ IndexType Builder::getIndexType() { return IndexType::get(context); }
 
 IntegerType Builder::getI1Type() { return IntegerType::get(context, 1); }
 
+IntegerType Builder::getI2Type() { return IntegerType::get(context, 2); }
+
+IntegerType Builder::getI4Type() { return IntegerType::get(context, 4); }
+
 IntegerType Builder::getI8Type() { return IntegerType::get(context, 8); }
+
+IntegerType Builder::getI16Type() { return IntegerType::get(context, 16); }
 
 IntegerType Builder::getI32Type() { return IntegerType::get(context, 32); }
 
@@ -83,7 +108,7 @@ NoneType Builder::getNoneType() { return NoneType::get(context); }
 //===----------------------------------------------------------------------===//
 
 NamedAttribute Builder::getNamedAttr(StringRef name, Attribute val) {
-  return NamedAttribute(getIdentifier(name), val);
+  return NamedAttribute(getStringAttr(name), val);
 }
 
 UnitAttr Builder::getUnitAttr() { return UnitAttr::get(context); }
@@ -126,6 +151,45 @@ DenseIntElementsAttr Builder::getIndexVectorAttr(ArrayRef<int64_t> values) {
   return DenseIntElementsAttr::get(
       VectorType::get(static_cast<int64_t>(values.size()), getIndexType()),
       values);
+}
+
+DenseFPElementsAttr Builder::getF32VectorAttr(ArrayRef<float> values) {
+  return DenseFPElementsAttr::get(
+      VectorType::get(static_cast<float>(values.size()), getF32Type()), values);
+}
+
+DenseFPElementsAttr Builder::getF64VectorAttr(ArrayRef<double> values) {
+  return DenseFPElementsAttr::get(
+      VectorType::get(static_cast<double>(values.size()), getF64Type()),
+      values);
+}
+
+DenseBoolArrayAttr Builder::getDenseBoolArrayAttr(ArrayRef<bool> values) {
+  return DenseBoolArrayAttr::get(context, values);
+}
+
+DenseI8ArrayAttr Builder::getDenseI8ArrayAttr(ArrayRef<int8_t> values) {
+  return DenseI8ArrayAttr::get(context, values);
+}
+
+DenseI16ArrayAttr Builder::getDenseI16ArrayAttr(ArrayRef<int16_t> values) {
+  return DenseI16ArrayAttr::get(context, values);
+}
+
+DenseI32ArrayAttr Builder::getDenseI32ArrayAttr(ArrayRef<int32_t> values) {
+  return DenseI32ArrayAttr::get(context, values);
+}
+
+DenseI64ArrayAttr Builder::getDenseI64ArrayAttr(ArrayRef<int64_t> values) {
+  return DenseI64ArrayAttr::get(context, values);
+}
+
+DenseF32ArrayAttr Builder::getDenseF32ArrayAttr(ArrayRef<float> values) {
+  return DenseF32ArrayAttr::get(context, values);
+}
+
+DenseF64ArrayAttr Builder::getDenseF64ArrayAttr(ArrayRef<double> values) {
+  return DenseF64ArrayAttr::get(context, values);
 }
 
 DenseIntElementsAttr Builder::getI32TensorAttr(ArrayRef<int32_t> values) {
@@ -210,85 +274,70 @@ ArrayAttr Builder::getArrayAttr(ArrayRef<Attribute> value) {
   return ArrayAttr::get(context, value);
 }
 
-FlatSymbolRefAttr Builder::getSymbolRefAttr(Operation *value) {
-  auto symName =
-      value->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName());
-  assert(symName && "value does not have a valid symbol name");
-  return getSymbolRefAttr(symName.getValue());
-}
-FlatSymbolRefAttr Builder::getSymbolRefAttr(StringRef value) {
-  return SymbolRefAttr::get(getContext(), value);
-}
-SymbolRefAttr
-Builder::getSymbolRefAttr(StringRef value,
-                          ArrayRef<FlatSymbolRefAttr> nestedReferences) {
-  return SymbolRefAttr::get(getContext(), value, nestedReferences);
-}
-
 ArrayAttr Builder::getBoolArrayAttr(ArrayRef<bool> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](bool v) -> Attribute { return getBoolAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](bool v) -> Attribute { return getBoolAttr(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getI32ArrayAttr(ArrayRef<int32_t> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](int32_t v) -> Attribute { return getI32IntegerAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](int32_t v) -> Attribute { return getI32IntegerAttr(v); });
   return getArrayAttr(attrs);
 }
 ArrayAttr Builder::getI64ArrayAttr(ArrayRef<int64_t> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](int64_t v) -> Attribute { return getI64IntegerAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](int64_t v) -> Attribute { return getI64IntegerAttr(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getIndexArrayAttr(ArrayRef<int64_t> values) {
-  auto attrs = llvm::to_vector<8>(
-      llvm::map_range(values, [this](int64_t v) -> Attribute {
-        return getIntegerAttr(IndexType::get(getContext()), v);
-      }));
+  auto attrs = llvm::map_to_vector<8>(values, [this](int64_t v) -> Attribute {
+    return getIntegerAttr(IndexType::get(getContext()), v);
+  });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getF32ArrayAttr(ArrayRef<float> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](float v) -> Attribute { return getF32FloatAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](float v) -> Attribute { return getF32FloatAttr(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getF64ArrayAttr(ArrayRef<double> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](double v) -> Attribute { return getF64FloatAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](double v) -> Attribute { return getF64FloatAttr(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getStrArrayAttr(ArrayRef<StringRef> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [this](StringRef v) -> Attribute { return getStringAttr(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [this](StringRef v) -> Attribute { return getStringAttr(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getTypeArrayAttr(TypeRange values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [](Type v) -> Attribute { return TypeAttr::get(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [](Type v) -> Attribute { return TypeAttr::get(v); });
   return getArrayAttr(attrs);
 }
 
 ArrayAttr Builder::getAffineMapArrayAttr(ArrayRef<AffineMap> values) {
-  auto attrs = llvm::to_vector<8>(llvm::map_range(
-      values, [](AffineMap v) -> Attribute { return AffineMapAttr::get(v); }));
+  auto attrs = llvm::map_to_vector<8>(
+      values, [](AffineMap v) -> Attribute { return AffineMapAttr::get(v); });
   return getArrayAttr(attrs);
 }
 
-Attribute Builder::getZeroAttr(Type type) {
-  if (type.isa<FloatType>())
+TypedAttr Builder::getZeroAttr(Type type) {
+  if (llvm::isa<FloatType>(type))
     return getFloatAttr(type, 0.0);
-  if (type.isa<IndexType>())
+  if (llvm::isa<IndexType>(type))
     return getIndexAttr(0);
-  if (auto integerType = type.dyn_cast<IntegerType>())
-    return getIntegerAttr(type, APInt(type.cast<IntegerType>().getWidth(), 0));
-  if (type.isa<RankedTensorType, VectorType>()) {
-    auto vtType = type.cast<ShapedType>();
+  if (llvm::dyn_cast<IntegerType>(type))
+    return getIntegerAttr(type,
+                          APInt(llvm::cast<IntegerType>(type).getWidth(), 0));
+  if (llvm::isa<RankedTensorType, VectorType>(type)) {
+    auto vtType = llvm::cast<ShapedType>(type);
     auto element = getZeroAttr(vtType.getElementType());
     if (!element)
       return {};
@@ -357,8 +406,6 @@ AffineMap Builder::getShiftedAffineMap(AffineMap map, int64_t shift) {
 // OpBuilder
 //===----------------------------------------------------------------------===//
 
-OpBuilder::Listener::~Listener() {}
-
 /// Insert the given operation at the current insertion point and return it.
 Operation *OpBuilder::insert(Operation *op) {
   if (block)
@@ -369,12 +416,10 @@ Operation *OpBuilder::insert(Operation *op) {
   return op;
 }
 
-/// Add new block with 'argTypes' arguments and set the insertion point to the
-/// end of it. The block is inserted at the provided insertion point of
-/// 'parent'.
 Block *OpBuilder::createBlock(Region *parent, Region::iterator insertPt,
                               TypeRange argTypes, ArrayRef<Location> locs) {
   assert(parent && "expected valid parent region");
+  assert(argTypes.size() == locs.size() && "argument location mismatch");
   if (insertPt == Region::iterator())
     insertPt = parent->end();
 
@@ -398,8 +443,19 @@ Block *OpBuilder::createBlock(Block *insertBefore, TypeRange argTypes,
 }
 
 /// Create an operation given the fields represented as an OperationState.
-Operation *OpBuilder::createOperation(const OperationState &state) {
+Operation *OpBuilder::create(const OperationState &state) {
   return insert(Operation::create(state));
+}
+
+/// Creates an operation with the given fields.
+Operation *OpBuilder::create(Location loc, StringAttr opName,
+                             ValueRange operands, TypeRange types,
+                             ArrayRef<NamedAttribute> attributes,
+                             BlockRange successors,
+                             MutableArrayRef<std::unique_ptr<Region>> regions) {
+  OperationState state(loc, opName, operands, types, attributes, successors,
+                       regions);
+  return create(state);
 }
 
 /// Attempts to fold the given operation and places new results within
@@ -407,9 +463,11 @@ Operation *OpBuilder::createOperation(const OperationState &state) {
 /// Note: This function does not erase the operation on a successful fold.
 LogicalResult OpBuilder::tryFold(Operation *op,
                                  SmallVectorImpl<Value> &results) {
-  results.reserve(op->getNumResults());
+  ResultRange opResults = op->getResults();
+
+  results.reserve(opResults.size());
   auto cleanupFailure = [&] {
-    results.assign(op->result_begin(), op->result_end());
+    results.assign(opResults.begin(), opResults.end());
     return failure();
   };
 
@@ -417,15 +475,9 @@ LogicalResult OpBuilder::tryFold(Operation *op,
   if (matchPattern(op, m_Constant()))
     return cleanupFailure();
 
-  // Check to see if any operands to the operation is constant and whether
-  // the operation knows how to constant fold itself.
-  SmallVector<Attribute, 4> constOperands(op->getNumOperands());
-  for (unsigned i = 0, e = op->getNumOperands(); i != e; ++i)
-    matchPattern(op->getOperand(i), m_Constant(&constOperands[i]));
-
   // Try to fold the operation.
   SmallVector<OpFoldResult, 4> foldResults;
-  if (failed(op->fold(constOperands, foldResults)) || foldResults.empty())
+  if (failed(op->fold(foldResults)) || foldResults.empty())
     return cleanupFailure();
 
   // A temporary builder used for creating constants during folding.
@@ -434,9 +486,14 @@ LogicalResult OpBuilder::tryFold(Operation *op,
 
   // Populate the results with the folded results.
   Dialect *dialect = op->getDialect();
-  for (auto &it : llvm::enumerate(foldResults)) {
+  for (auto it : llvm::zip(foldResults, opResults.getTypes())) {
+    Type expectedType = std::get<1>(it);
+
     // Normal values get pushed back directly.
-    if (auto value = it.value().dyn_cast<Value>()) {
+    if (auto value = llvm::dyn_cast_if_present<Value>(std::get<0>(it))) {
+      if (value.getType() != expectedType)
+        return cleanupFailure();
+
       results.push_back(value);
       continue;
     }
@@ -446,9 +503,9 @@ LogicalResult OpBuilder::tryFold(Operation *op,
       return cleanupFailure();
 
     // Ask the dialect to materialize a constant operation for this value.
-    Attribute attr = it.value().get<Attribute>();
-    auto *constOp = dialect->materializeConstant(
-        cstBuilder, attr, op->getResult(it.index()).getType(), op->getLoc());
+    Attribute attr = std::get<0>(it).get<Attribute>();
+    auto *constOp = dialect->materializeConstant(cstBuilder, attr, expectedType,
+                                                 op->getLoc());
     if (!constOp) {
       // Erase any generated constants.
       for (Operation *cst : generatedConstants)
@@ -468,7 +525,7 @@ LogicalResult OpBuilder::tryFold(Operation *op,
   return success();
 }
 
-Operation *OpBuilder::clone(Operation &op, BlockAndValueMapping &mapper) {
+Operation *OpBuilder::clone(Operation &op, IRMapping &mapper) {
   Operation *newOp = op.clone(mapper);
   // The `insert` call below handles the notification for inserting `newOp`
   // itself. But if `newOp` has any regions, we need to notify the listener
@@ -484,6 +541,6 @@ Operation *OpBuilder::clone(Operation &op, BlockAndValueMapping &mapper) {
 }
 
 Operation *OpBuilder::clone(Operation &op) {
-  BlockAndValueMapping mapper;
+  IRMapping mapper;
   return clone(op, mapper);
 }

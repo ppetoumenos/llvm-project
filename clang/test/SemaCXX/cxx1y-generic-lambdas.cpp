@@ -215,8 +215,9 @@ namespace conversion_operator {
     auto L = [](auto a) -> int { return a; }; // expected-error {{cannot initialize}}
     int (*fp)(int) = L; 
     int (&fp2)(int) = [](auto a) { return a; };  // expected-error{{non-const lvalue}}
-    int (&&fp3)(int) = [](auto a) { return a; };  // expected-error{{no viable conversion}}\
-                                                  //expected-note{{candidate}}
+    int (&&fp3)(int) = [](auto a) { return a; };
+    // expected-error@-1   {{no viable conversion}}
+    // expected-note-re@-2 {{candidate template ignored: could not match 'auto (*)(type-parameter-0-0){{.*}}' against 'int (int)'}}
 
     using F = int(int);
     using G = int(void*);
@@ -258,7 +259,7 @@ int test() {
 {
   int i = 10; //expected-note 3{{declared here}}
   auto L = [](auto a) {
-    return [](auto b) { //expected-note 3{{begins here}} expected-note 6 {{capture 'i' by}} expected-note 6 {{default capture by}}
+    return [](auto b) { //expected-note 3{{begins here}} expected-note 6 {{capture 'i' by}} expected-note 6 {{default capture by}} expected-note {{while substituting into a lambda}}
       i = b;  //expected-error 3{{cannot be implicitly captured}}
       return b;
     };
@@ -290,8 +291,9 @@ int test() {
 {
   auto L = [](auto a) ->decltype(a) {
     print("a = ", a, "\n");
-    return [](auto b) ->decltype(a) { //expected-error{{no viable conversion}}\
-                                      //expected-note{{candidate template ignored}}
+    return [](auto b) ->decltype(a) {
+      // expected-error@-1   {{no viable conversion}}
+      // expected-note-re@-2 {{candidate template ignored: could not match 'int (*)(type-parameter-0-0){{.*}}' against 'int'}}
       print("b = ", b, "\n");
       return b;
     };
@@ -1023,4 +1025,12 @@ namespace PR46637 {
   int f();
   void *v = x(f); // expected-error {{cannot initialize a variable of type 'void *' with an rvalue of type 'int'}}
   void *w = y(f); // expected-error {{cannot initialize a variable of type 'void *' with an rvalue of type 'int'}}
+}
+
+namespace GH37792 {
+struct A { int x; };
+
+void f() {
+  [](auto t) -> decltype(decltype(t)::x) { return 0; }(A());
+}
 }

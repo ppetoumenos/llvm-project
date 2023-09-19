@@ -7,9 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03
+// UNSUPPORTED: availability-filesystem-missing
 
 // These tests require locale for non-char paths
-// UNSUPPORTED: libcpp-has-no-localization
+// UNSUPPORTED: no-localization
 
 // <filesystem>
 
@@ -23,14 +24,16 @@
 
 
 #include "filesystem_include.h"
-#include <type_traits>
 #include <cassert>
+#include <string>
+#include <type_traits>
 
-#include "test_macros.h"
-#include "test_iterators.h"
+#include "assert_macros.h"
 #include "count_new.h"
+#include "make_string.h"
 #include "min_allocator.h"
-#include "filesystem_test_helper.h"
+#include "test_iterators.h"
+#include "test_macros.h"
 
 
 MultiStringType longString = MKSTR("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ/123456789/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
@@ -56,10 +59,12 @@ int main(int, char**)
     assert(s == (const char*)MS);
 #endif
   }
+#ifndef TEST_HAS_NO_WIDE_CHARACTERS
   {
     std::wstring s = p.wstring();
     assert(s == (const wchar_t*)MS);
   }
+#endif
   {
     std::u16string s = p.u16string();
     assert(s == (const char16_t*)MS);

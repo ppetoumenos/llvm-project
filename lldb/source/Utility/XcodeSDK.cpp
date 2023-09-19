@@ -11,7 +11,7 @@
 
 #include "lldb/lldb-types.h"
 
-#include "llvm/ADT/Triple.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <string>
 
@@ -54,10 +54,7 @@ XcodeSDK::XcodeSDK(XcodeSDK::Info info) : m_name(GetName(info.type).str()) {
   }
 }
 
-XcodeSDK &XcodeSDK::operator=(const XcodeSDK &other) {
-  m_name = other.m_name;
-  return *this;
-}
+XcodeSDK &XcodeSDK::operator=(const XcodeSDK &other) = default;
 
 bool XcodeSDK::operator==(const XcodeSDK &other) {
   return m_name == other.m_name;
@@ -245,7 +242,7 @@ bool XcodeSDK::SupportsSwift() const {
 
 bool XcodeSDK::SDKSupportsModules(XcodeSDK::Type desired_type,
                                   const FileSpec &sdk_path) {
-  ConstString last_path_component = sdk_path.GetLastPathComponent();
+  ConstString last_path_component = sdk_path.GetFilename();
 
   if (!last_path_component)
     return false;

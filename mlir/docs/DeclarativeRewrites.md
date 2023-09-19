@@ -2,7 +2,7 @@
 
 In addition to subclassing the `mlir::RewritePattern` C++ class, MLIR also
 supports defining rewrite rules in a declarative manner. Similar to
-[Op Definition Specification](OpDefinitions.md) (ODS), this is achieved via
+[Op Definition Specification](DefiningDialects/Operations.md) (ODS), this is achieved via
 [TableGen][TableGen], which is a language to maintain records of domain-specific
 information. The rewrite rules are specified concisely in a TableGen record,
 which will be expanded into an equivalent `mlir::RewritePattern` subclass at
@@ -15,7 +15,9 @@ instead of a tutorial. Please refer to
 for the latter.
 
 Given that declarative rewrite rules depend on op definition specification, this
-manual assumes knowledge of the [ODS](OpDefinitions.md) doc.
+manual assumes knowledge of the [ODS](DefiningDialects/Operations.md) doc.
+
+[TOC]
 
 ## Benefits
 
@@ -57,19 +59,20 @@ features:
 ## Rule Definition
 
 The core construct for defining a rewrite rule is defined in
-[`OpBase.td`][OpBase] as
+[`PatternBase.td`][PatternBase] as
 
 ```tablegen
 class Pattern<
     dag sourcePattern, list<dag> resultPatterns,
     list<dag> additionalConstraints = [],
+    list<dag> supplementalPatterns = [],
     dag benefitsAdded = (addBenefit 0)>;
 ```
 
 A declarative rewrite rule contains two main components:
 
-*   A _source pattern_, which is used for matching a DAG of operations.
-*   One or more _result patterns_, which are used for generating DAGs of
+*   A *source pattern*, which is used for matching a DAG of operations.
+*   One or more *result patterns*, which are used for generating DAGs of
     operations to replace the matched DAG of operations.
 
 We allow multiple result patterns to support
@@ -355,7 +358,7 @@ def OneAttrOp : Op<"one_attr_op"> {
 We can write a C++ helper function:
 
 ```c++
-Attribute createArrayAttr(Builder &builder, Attribute a, Attribute b) {
+ArrayAttr createArrayAttr(Builder &builder, Attribute a, Attribute b) {
   return builder.getArrayAttr({a, b});
 }
 ```
@@ -380,8 +383,8 @@ array attribute). Typically the string should be a function call.
 ##### `NativeCodeCall` placeholders
 
 In `NativeCodeCall`, we can use placeholders like `$_builder`, `$N` and `$N...`.
-The former is called _special placeholder_, while the latter is called
-_positional placeholder_ and _positional range placeholder_.
+The former is called *special placeholder*, while the latter is called
+*positional placeholder* and *positional range placeholder*.
 
 `NativeCodeCall` right now only supports three special placeholders:
 `$_builder`, `$_loc`, and `$_self`:
@@ -405,15 +408,16 @@ def : Pat<(OneAttrOp (NativeCodeCall<"Foo($_self, &$0)"> I32Attr:$val)),
 ```
 
 In the above, `$_self` is substituted by the defining operation of the first
-operand of OneAttrOp. Note that we don't support binding name to NativeCodeCall
-in the source pattern. To carry some return values from helper function, put the
-names (constraint is optional) in the parameter list and they will be bound to
-the variables with correspoding type. Then these named must be either passed by
-reference or a pointer to variable used as argument so that the matched value
-can be returned. In the same example, `$val` will be bound to a variable with
-`Attribute` type(as `I32Attr`) and the type of the second argument in Foo()
-could be `Attribute&` or `Attribute*`. Names with attribute constraints will be
-captured as Attributes while everything else will be treated as Value.
+operand of OneAttrOp. Note that we don't support binding name to
+`NativeCodeCall` in the source pattern. To carry some return values from a
+helper function, put the names (constraint is optional) in the parameter list
+and they will be bound to the variables with corresponding type. Then these names
+must be either passed by reference or pointer to the variable used as argument
+so that the matched value can be returned. In the same example, `$val` will be
+bound to a variable with `Attribute` type (as `I32Attr`) and the type of the
+second argument in `Foo()` could be `Attribute&` or `Attribute*`. Names with
+attribute constraints will be captured as `Attribute`s while everything else
+will be treated as `Value`s.
 
 Positional placeholders will be substituted by the `dag` object parameters at
 the `NativeCodeCall` use site. For example, if we define `SomeCall :
@@ -440,14 +444,14 @@ def : Pattern<(TwoResultOp $attr1, $attr2),
 
 ```
 
-Use `NativeCodeCallVoid` for case has no return value.
+Use `NativeCodeCallVoid` for cases with no return value.
 
 The correct number of returned value specified in NativeCodeCall is important.
-It will be used to verify the consistency of the number of result values.
-Additionally, `mlir-tblgen` will try to capture the return value of
-NativeCodeCall in the generated code so that it will trigger a later compilation
-error if a NativeCodeCall that doesn't return a result isn't labeled with 0
-returns.
+It will be used to verify the consistency of the number of return values.
+Additionally, `mlir-tblgen` will try to capture the return values of
+`NativeCodeCall` in the generated code so that it will trigger a later
+compilation error if a `NativeCodeCall` that doesn't return any result isn't
+labeled with 0 returns.
 
 ##### Customizing entire op building
 
@@ -471,7 +475,7 @@ def : Pat<(... $input, $attr), (createMyOp $input, $attr)>;
 ### Supporting auxiliary ops
 
 A declarative rewrite rule supports multiple result patterns. One of the
-purposes is to allow generating _auxiliary ops_. Auxiliary ops are operations
+purposes is to allow generating *auxiliary ops*. Auxiliary ops are operations
 used for building the replacement ops; but they are not directly used for
 replacement themselves.
 
@@ -486,17 +490,17 @@ argument to consuming op. But that is not always possible. For example, if we
 want to allocate memory and store some computation (in pseudocode):
 
 ```mlir
-%dst = addi %lhs, %rhs
+%dst = arith.addi %lhs, %rhs
 ```
 
 into
 
 ```mlir
 %shape = shape %lhs
-%mem = alloc %shape
-%sum = addi %lhs, %rhs
-store %mem, %sum
-%dst = load %mem
+%mem = memref.alloc %shape
+%sum = arith.addi %lhs, %rhs
+memref.store %mem, %sum
+%dst = memref.load %mem
 ```
 
 We cannot fit in with just one result pattern given `store` does not return a
@@ -531,9 +535,9 @@ def ThreeResultOp : Op<"three_result_op"> {
     let arguments = (ins ...);
 
     let results = (outs
-      AnyTensor:$op_output1,
-      AnyTensor:$op_output2,
-      AnyTensor:$op_output3
+      AnyTensor:$output1,
+      AnyTensor:$output2,
+      AnyTensor:$output3
     );
 }
 
@@ -542,7 +546,7 @@ def : Pattern<(ThreeResultOp:$results ...),
 ```
 
 In the above pattern we bind `$results` to all the results generated by
-`ThreeResultOp` and references its `$input1` and `$input3` later in the result
+`ThreeResultOp` and references its `$output1` and `$output3` later in the result
 patterns.
 
 We can also bind a symbol and reference one of its specific result at the same
@@ -610,10 +614,10 @@ def : Pattern<(ThreeResultOp ...),
 Before going into details on variadic op support, we need to define a few terms
 regarding an op's values.
 
-*   _Value_: either an operand or a result
-*   _Declared operand/result/value_: an operand/result/value statically declared
+*   *Value*: either an operand or a result
+*   *Declared operand/result/value*: an operand/result/value statically declared
     in ODS of the op
-*   _Actual operand/result/value_: an operand/result/value of an op instance at
+*   *Actual operand/result/value*: an operand/result/value of an op instance at
     runtime
 
 The above terms are needed because ops can have multiple results, and some of
@@ -642,6 +646,50 @@ A variadic operand/result is a considered as a declared value that can
 correspond to multiple actual values.
 
 [TODO]
+
+#### Match variadic operand
+
+Use the `variadic` DAG node to match a variadic operand with a fixed number of
+actual sub-operands.
+
+For example, assume that `ConcatenateOp` is an operation with a variadic
+operand:
+
+```tablegen
+def ConcatenateOp : TEST_Op<"concatenate"> {
+  let arguments = (ins
+    Variadic<AnyTensor>:$inputs,
+    I32Attr:$axis
+  );
+
+  let results = (outs
+    AnyTensor$output
+  );
+}
+```
+
+We can match `ConcatenateOp` with exactly 2 actual operands with:
+
+```tablegen
+def : Pat<(ConcatenateOp (variadic $input0, $input1), $axis),
+          ...>;
+```
+
+The variadic sub-operands can be sub-DAGs to be matched:
+
+```tablegen
+def : Pat<(ConcatenateOp (variadic (SomeOp $a), (AnotherOp $b, $c)), $axis),
+          (OtherOp $a, $b, $c)>;
+```
+
+The variadic DAG can be bound to a symbol, which refers to the full
+`operand_range`:
+
+```tablegen
+def : Pat<(ConcatenateOp (variadic:$inputs $input0, $input1),
+                         ConstantAttr<I32Attr, "0">),
+          (VStackOp $inputs)>;
+```
 
 ### Supplying additional constraints
 
@@ -674,6 +722,36 @@ You can
     `TwoResultOp` must has no use);
 *   Apply constraints on multiple bound symbols (`$input` and `TwoResultOp`'s
     first result must have the same element type).
+
+### Supplying additional result patterns
+
+Sometimes we need to add additional code after the result patterns, e.g. coping
+the attributes of the source op to the result ops. These can be specified via
+`SupplementalPatterns` parameter. Similar to auxiliary patterns, they are not
+for replacing results in the source pattern.
+
+For example, we can write
+
+```tablegen
+def GetOwner: NativeCodeCall<"$0.getOwner()">;
+
+def CopyAttrFoo: NativeCodeCallVoid<
+  "$1->setAttr($_builder.getStringAttr(\"foo\"), $0->getInherentAttr(\"foo\"))">;
+
+def CopyAttrBar: NativeCodeCallVoid<
+  "$1->setAttr($_builder.getStringAttr(\"bar\"), $0->getInherentAttr(\"bar\"))">;
+
+
+def : Pattern<
+  (ThreeResultOp:$src ...),
+  [(ZeroResultOp:$dest1 ...), (ThreeResultOp:$dest2 ...)],
+  [(CopyAttrFoo (GetOwner $src), $dest1),
+    (CopyAttrBar (GetOwner $src), (GetOwner $dest2))]>;
+```
+
+This will copy the attribute `foo` and `bar` of `ThreeResultOp` in the source
+pattern to `ZeroResultOp` and `ThreeResultOp` in the result patterns respectively.
+The patterns are executed in specified order.
 
 ### Adjusting benefits
 
@@ -714,7 +792,7 @@ string may be specified as an attribute. The following locations are created:
 *   If no symbol is specified then string must be specified and a NamedLoc is
     created instead;
 
-`location` must be used as the last argument to an op creation. For example,
+`location` must be used as a trailing argument to an op creation. For example,
 
 ```tablegen
 def : Pat<(LocSrc1Op:$src1 (LocSrc2Op:$src2 ...),
@@ -728,7 +806,7 @@ In the above pattern, the generated `LocDst2Op` will use the matched location of
 ### `replaceWithValue`
 
 The `replaceWithValue` directive is used to eliminate a matched op by replacing
-all of it uses with a captured value. It is of the following syntax:
+all of its uses with a captured value. It is of the following syntax:
 
 ```tablegen
 (replaceWithValue $symbol)
@@ -744,6 +822,51 @@ def : Pat<(Foo $input), (replaceWithValue $input)>;
 
 The above pattern removes the `Foo` and replaces all uses of `Foo` with
 `$input`.
+
+### `returnType`
+
+The `returnType` directive allows patterns to directly specify return types for
+replacement ops that lack return type inference with op traits or user-defined
+builders with return type deduction.
+
+The `returnType` directive must be used as a trailing argument to a node
+describing a replacement op. The directive comes in three forms:
+
+*   `(returnType $value)`: copy the type of the operand or result bound to
+    `value`.
+*   `(returnType "$_builder.getI32Type()")`: a string literal embedding C++. The
+    embedded snippet is expected to return a `Type` or a `TypeRange`.
+*   `(returnType (NativeCodeCall<"myFunc($0)"> $value))`: a DAG node with a
+    native code call that can be passed any bound variables arguments.
+
+Specify multiple return types with a mix of any of the above. Example:
+
+```tablegen
+def : Pat<(SourceOp $arg0, $arg1),
+          (OpA $arg0, (TwoResultOp:$res__1 $arg1,
+                         (returnType $arg1, "$_builder.getI64Type()")))>;
+```
+
+Explicitly-specified return types will take precedence over return types
+inferred from op traits or user-defined builders. The return types of values
+replacing root op results cannot be overridden.
+
+### `either`
+
+The `either` directive is used to specify the operands may be matched in either
+order.
+
+```tablegen
+def : Pat<(TwoArgOp (either $firstArg, (AnOp $secondArg))),
+          (...)>;
+```
+
+The above pattern will accept either `"test.TwoArgOp"(%I32Arg, %AnOpArg)` and
+`"test.TwoArgOp"(%AnOpArg, %I32Arg)`.
+
+Only operand is supported with `either` and note that an operation with
+`Commutative` trait doesn't imply that it'll have the same behavior than
+`either` while pattern matching.
 
 ## Debugging Tips
 

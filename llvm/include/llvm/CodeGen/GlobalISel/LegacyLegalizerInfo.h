@@ -16,8 +16,8 @@
 #define LLVM_CODEGEN_GLOBALISEL_LEGACYLEGALIZERINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
-#include "llvm/Support/LowLevelTypeImpl.h"
 #include <unordered_map>
 
 namespace llvm {
@@ -465,7 +465,7 @@ private:
       ScalarSizeChangeStrategies[LastOp - FirstOp + 1];
   SmallVector<SizeChangeStrategy, 1>
       VectorElementSizeChangeStrategies[LastOp - FirstOp + 1];
-  bool TablesInitialized;
+  bool TablesInitialized = false;
 
   // Data structures used by getAction:
   SmallVector<SizeAndActionsVec, 1> ScalarActions[LastOp - FirstOp + 1];

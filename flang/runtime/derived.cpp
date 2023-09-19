@@ -7,10 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "derived.h"
-#include "descriptor.h"
 #include "stat.h"
 #include "terminator.h"
+#include "tools.h"
 #include "type-info.h"
+#include "flang/Runtime/descriptor.h"
 
 namespace Fortran::runtime {
 
@@ -20,8 +21,8 @@ int Initialize(const Descriptor &instance, const typeInfo::DerivedType &derived,
   std::size_t elements{instance.Elements()};
   std::size_t byteStride{instance.ElementBytes()};
   int stat{StatOk};
-  // Initialize data components in each element; the per-element iteration
-  // constitutes the inner loops, not outer
+  // Initialize data components in each element; the per-element iterations
+  // constitute the inner loops, not the outer ones
   std::size_t myComponents{componentDesc.Elements()};
   for (std::size_t k{0}; k < myComponents; ++k) {
     const auto &comp{
@@ -36,7 +37,14 @@ int Initialize(const Descriptor &instance, const typeInfo::DerivedType &derived,
         if (comp.genre() == typeInfo::Component::Genre::Automatic) {
           stat = ReturnError(terminator, allocDesc.Allocate(), errMsg, hasStat);
           if (stat == StatOk) {
-            stat = Initialize(allocDesc, derived, terminator, hasStat, errMsg);
+            if (const DescriptorAddendum * addendum{allocDesc.Addendum()}) {
+              if (const auto *derived{addendum->derivedType()}) {
+                if (!derived->noInitializationNeeded()) {
+                  stat = Initialize(
+                      allocDesc, *derived, terminator, hasStat, errMsg);
+                }
+              }
+            }
           }
           if (stat != StatOk) {
             break;
@@ -48,8 +56,18 @@ int Initialize(const Descriptor &instance, const typeInfo::DerivedType &derived,
       // non-allocatable non-automatic components
       std::size_t bytes{comp.SizeInBytes(instance)};
       for (std::size_t j{0}; j < elements; ++j) {
-        char *ptr{instance.OffsetElement<char>(j * byteStride + comp.offset())};
+        char *ptr{instance.ZeroBasedIndexedElement<char>(j) + comp.offset()};
         std::memcpy(ptr, init, bytes);
+      }
+    } else if (comp.genre() == typeInfo::Component::Genre::Pointer) {
+      // Data pointers without explicit initialization are established
+      // so that they are valid right-hand side targets of pointer
+      // assignment statements.
+      for (std::size_t j{0}; j < elements; ++j) {
+        Descriptor &ptrDesc{*instance.OffsetElement<Descriptor>(
+            j * byteStride + comp.offset())};
+        comp.EstablishDescriptor(ptrDesc, instance, terminator);
+        ptrDesc.raw().attribute = CFI_attribute_pointer;
       }
     } else if (comp.genre() == typeInfo::Component::Genre::Data &&
         comp.derivedType() && !comp.derivedType()->noInitializationNeeded()) {
@@ -95,34 +113,21 @@ int Initialize(const Descriptor &instance, const typeInfo::DerivedType &derived,
 
 static const typeInfo::SpecialBinding *FindFinal(
     const typeInfo::DerivedType &derived, int rank) {
-  const typeInfo::SpecialBinding *elemental{nullptr};
-  const Descriptor &specialDesc{derived.special()};
-  std::size_t totalSpecialBindings{specialDesc.Elements()};
-  for (std::size_t j{0}; j < totalSpecialBindings; ++j) {
-    const auto &special{
-        *specialDesc.ZeroBasedIndexedElement<typeInfo::SpecialBinding>(j)};
-    switch (special.which()) {
-    case typeInfo::SpecialBinding::Which::Final:
-      if (special.rank() == rank) {
-        return &special;
-      }
-      break;
-    case typeInfo::SpecialBinding::Which::ElementalFinal:
-      elemental = &special;
-      break;
-    case typeInfo::SpecialBinding::Which::AssumedRankFinal:
-      return &special;
-    default:;
-    }
+  if (const auto *ranked{derived.FindSpecialBinding(
+          typeInfo::SpecialBinding::RankFinal(rank))}) {
+    return ranked;
+  } else if (const auto *assumed{derived.FindSpecialBinding(
+                 typeInfo::SpecialBinding::Which::AssumedRankFinal)}) {
+    return assumed;
+  } else {
+    return derived.FindSpecialBinding(
+        typeInfo::SpecialBinding::Which::ElementalFinal);
   }
-  return elemental;
 }
 
-static void CallFinalSubroutine(
-    const Descriptor &descriptor, const typeInfo::DerivedType &derived) {
+static void CallFinalSubroutine(const Descriptor &descriptor,
+    const typeInfo::DerivedType &derived, Terminator *terminator) {
   if (const auto *special{FindFinal(derived, descriptor.rank())}) {
-    // The following code relies on the fact that finalizable objects
-    // must be contiguous.
     if (special->which() == typeInfo::SpecialBinding::Which::ElementalFinal) {
       std::size_t byteStride{descriptor.ElementBytes()};
       std::size_t elements{descriptor.Elements()};
@@ -144,67 +149,88 @@ static void CallFinalSubroutine(
           p(descriptor.OffsetElement<char>(j * byteStride));
         }
       }
-    } else if (special->IsArgDescriptor(0)) {
-      StaticDescriptor<maxRank, true, 8 /*?*/> statDesc;
-      Descriptor &tmpDesc{statDesc.descriptor()};
-      tmpDesc = descriptor;
-      tmpDesc.raw().attribute = CFI_attribute_pointer;
-      tmpDesc.Addendum()->set_derivedType(&derived);
-      auto *p{special->GetProc<void (*)(const Descriptor &)>()};
-      p(tmpDesc);
     } else {
-      auto *p{special->GetProc<void (*)(char *)>()};
-      p(descriptor.OffsetElement<char>());
+      StaticDescriptor<maxRank, true, 10> statDesc;
+      Descriptor &copy{statDesc.descriptor()};
+      const Descriptor *argDescriptor{&descriptor};
+      if (descriptor.rank() > 0 && special->IsArgContiguous(0) &&
+          !descriptor.IsContiguous()) {
+        // The FINAL subroutine demands a contiguous array argument, but
+        // this INTENT(OUT) or intrinsic assignment LHS isn't contiguous.
+        // Finalize a shallow copy of the data.
+        copy = descriptor;
+        copy.set_base_addr(nullptr);
+        copy.raw().attribute = CFI_attribute_allocatable;
+        Terminator stubTerminator{"CallFinalProcedure() in Fortran runtime", 0};
+        RUNTIME_CHECK(terminator ? *terminator : stubTerminator,
+            copy.Allocate() == CFI_SUCCESS);
+        ShallowCopyDiscontiguousToContiguous(copy, descriptor);
+        argDescriptor = &copy;
+      }
+      if (special->IsArgDescriptor(0)) {
+        StaticDescriptor<maxRank, true, 8 /*?*/> statDesc;
+        Descriptor &tmpDesc{statDesc.descriptor()};
+        tmpDesc = *argDescriptor;
+        tmpDesc.raw().attribute = CFI_attribute_pointer;
+        tmpDesc.Addendum()->set_derivedType(&derived);
+        auto *p{special->GetProc<void (*)(const Descriptor &)>()};
+        p(tmpDesc);
+      } else {
+        auto *p{special->GetProc<void (*)(char *)>()};
+        p(argDescriptor->OffsetElement<char>());
+      }
+      if (argDescriptor == &copy) {
+        ShallowCopyContiguousToDiscontiguous(descriptor, copy);
+        copy.Deallocate();
+      }
     }
   }
 }
 
-// The order of finalization follows Fortran 2018 7.5.6.2, with
-// deallocation of non-parent components (and their consequent finalization)
-// taking place before parent component finalization.
-void Destroy(const Descriptor &descriptor, bool finalize,
-    const typeInfo::DerivedType &derived) {
-  if (finalize) {
-    CallFinalSubroutine(descriptor, derived);
+// Fortran 2018 subclause 7.5.6.2
+void Finalize(const Descriptor &descriptor,
+    const typeInfo::DerivedType &derived, Terminator *terminator) {
+  if (derived.noFinalizationNeeded() || !descriptor.IsAllocated()) {
+    return;
   }
+  CallFinalSubroutine(descriptor, derived, terminator);
+  const auto *parentType{derived.GetParentType()};
+  bool recurse{parentType && !parentType->noFinalizationNeeded()};
+  // If there's a finalizable parent component, handle it last, as required
+  // by the Fortran standard (7.5.6.2), and do so recursively with the same
+  // descriptor so that the rank is preserved.
   const Descriptor &componentDesc{derived.component()};
   std::size_t myComponents{componentDesc.Elements()};
   std::size_t elements{descriptor.Elements()};
   std::size_t byteStride{descriptor.ElementBytes()};
-  // If there's a finalizable parent component, handle it last, as required
-  // by the Fortran standard (7.5.6.2), and do so recursively with the same
-  // descriptor so that the rank is preserved.  Otherwise, destroy the parent
-  // component like any other.
-  const auto *parentType{derived.GetParentType()};
-  bool recurse{finalize && parentType && !parentType->noDestructionNeeded()};
-  for (auto k{recurse
-               ? std::size_t{1} /* skip first component, it's the parent */
-               : 0};
+  for (auto k{recurse ? std::size_t{1}
+                      /* skip first component, it's the parent */
+                      : 0};
        k < myComponents; ++k) {
     const auto &comp{
         *componentDesc.ZeroBasedIndexedElement<typeInfo::Component>(k)};
     if (comp.genre() == typeInfo::Component::Genre::Allocatable ||
         comp.genre() == typeInfo::Component::Genre::Automatic) {
       if (const typeInfo::DerivedType * compType{comp.derivedType()}) {
-        if (!compType->noDestructionNeeded()) {
+        if (!compType->noFinalizationNeeded()) {
           for (std::size_t j{0}; j < elements; ++j) {
-            Destroy(*descriptor.OffsetElement<Descriptor>(
-                        j * byteStride + comp.offset()),
-                finalize, *compType);
+            const Descriptor &compDesc{*descriptor.OffsetElement<Descriptor>(
+                j * byteStride + comp.offset())};
+            if (compDesc.IsAllocated()) {
+              Finalize(compDesc, *compType, terminator);
+            }
           }
         }
       }
-      for (std::size_t j{0}; j < elements; ++j) {
-        descriptor.OffsetElement<Descriptor>(j * byteStride + comp.offset())
-            ->Deallocate();
-      }
     } else if (comp.genre() == typeInfo::Component::Genre::Data &&
-        comp.derivedType() && !comp.derivedType()->noDestructionNeeded()) {
+        comp.derivedType() && !comp.derivedType()->noFinalizationNeeded()) {
       SubscriptValue extent[maxRank];
       const typeInfo::Value *bounds{comp.bounds()};
       for (int dim{0}; dim < comp.rank(); ++dim) {
-        extent[dim] = bounds[2 * dim].GetValue(&descriptor).value_or(0) -
-            bounds[2 * dim + 1].GetValue(&descriptor).value_or(0) + 1;
+        SubscriptValue lb{bounds[2 * dim].GetValue(&descriptor).value_or(0)};
+        SubscriptValue ub{
+            bounds[2 * dim + 1].GetValue(&descriptor).value_or(0)};
+        extent[dim] = ub >= lb ? ub - lb + 1 : 0;
       }
       StaticDescriptor<maxRank, true, 0> staticDescriptor;
       Descriptor &compDesc{staticDescriptor.descriptor()};
@@ -213,15 +239,63 @@ void Destroy(const Descriptor &descriptor, bool finalize,
         compDesc.Establish(compType,
             descriptor.OffsetElement<char>(j * byteStride + comp.offset()),
             comp.rank(), extent);
-        Destroy(compDesc, finalize, compType);
+        Finalize(compDesc, compType, terminator);
       }
     }
   }
   if (recurse) {
-    Destroy(descriptor, finalize, *parentType);
+    Finalize(descriptor, *parentType, terminator);
   }
 }
 
-// TODO: Assign()
+// The order of finalization follows Fortran 2018 7.5.6.2, with
+// elementwise finalization of non-parent components taking place
+// before parent component finalization, and with all finalization
+// preceding any deallocation.
+void Destroy(const Descriptor &descriptor, bool finalize,
+    const typeInfo::DerivedType &derived, Terminator *terminator) {
+  if (derived.noDestructionNeeded() || !descriptor.IsAllocated()) {
+    return;
+  }
+  if (finalize && !derived.noFinalizationNeeded()) {
+    Finalize(descriptor, derived, terminator);
+  }
+  const Descriptor &componentDesc{derived.component()};
+  std::size_t myComponents{componentDesc.Elements()};
+  std::size_t elements{descriptor.Elements()};
+  SubscriptValue at[maxRank];
+  descriptor.GetLowerBounds(at);
+  for (std::size_t k{0}; k < myComponents; ++k) {
+    const auto &comp{
+        *componentDesc.ZeroBasedIndexedElement<typeInfo::Component>(k)};
+    if (comp.genre() == typeInfo::Component::Genre::Allocatable ||
+        comp.genre() == typeInfo::Component::Genre::Automatic) {
+      for (std::size_t j{0}; j < elements; ++j) {
+        Descriptor *d{reinterpret_cast<Descriptor *>(
+            descriptor.Element<char>(at) + comp.offset())};
+        d->Deallocate();
+        descriptor.IncrementSubscripts(at);
+      }
+    }
+  }
+}
+
+bool HasDynamicComponent(const Descriptor &descriptor) {
+  if (const DescriptorAddendum * addendum{descriptor.Addendum()}) {
+    if (const auto *derived = addendum->derivedType()) {
+      const Descriptor &componentDesc{derived->component()};
+      std::size_t myComponents{componentDesc.Elements()};
+      for (std::size_t k{0}; k < myComponents; ++k) {
+        const auto &comp{
+            *componentDesc.ZeroBasedIndexedElement<typeInfo::Component>(k)};
+        if (comp.genre() == typeInfo::Component::Genre::Allocatable ||
+            comp.genre() == typeInfo::Component::Genre::Automatic) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
 
 } // namespace Fortran::runtime

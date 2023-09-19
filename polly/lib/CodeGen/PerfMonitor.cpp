@@ -11,9 +11,9 @@
 #include "polly/CodeGen/PerfMonitor.h"
 #include "polly/CodeGen/RuntimeDebugBuilder.h"
 #include "polly/ScopInfo.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/IntrinsicsX86.h"
+#include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
 using namespace polly;
@@ -103,7 +103,7 @@ void PerfMonitor::addGlobalVariables() {
   TryRegisterGlobal(M, "__polly_perf_cycles_total_start", Builder.getInt64(0),
                     &CyclesTotalStartPtr);
 
-  TryRegisterGlobal(M, "__polly_perf_initialized", Builder.getInt1(0),
+  TryRegisterGlobal(M, "__polly_perf_initialized", Builder.getInt1(false),
                     &AlreadyInitializedPtr);
 
   TryRegisterGlobal(M, "__polly_perf_cycles_in_scops", Builder.getInt64(0),

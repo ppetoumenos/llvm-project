@@ -117,11 +117,11 @@ void test_partially_initialized() {
 
   constexpr pad pir{4, 4};
   // expected-error@+2 {{constexpr variable 'piw' must be initialized by a constant expression}}
-  // expected-note@+1 {{in call to 'bit_cast(pir)'}}
+  // expected-note@+1 {{in call to 'bit_cast<no_pad, pad>(pir)'}}
   constexpr int piw = bit_cast<no_pad>(pir).x;
 
   // expected-error@+2 {{constexpr variable 'bad' must be initialized by a constant expression}}
-  // expected-note@+1 {{in call to 'bit_cast(pir)'}}
+  // expected-note@+1 {{in call to 'bit_cast<no_pad, pad>(pir)'}}
   constexpr no_pad bad = bit_cast<no_pad>(pir);
 
   constexpr pad fine = bit_cast<pad>(no_pad{1, 2, 3, 4, 5});
@@ -204,7 +204,7 @@ void backtrace() {
   };
 
   struct B {
-    // expected-note@+1 {{invalid type 'A [10]' is a member of 'B'}}
+    // expected-note@+1 {{invalid type 'A[10]' is a member of 'B'}}
     A as[10];
   };
 
@@ -446,7 +446,7 @@ constexpr bool f(bool read_uninit) {
 }
 
 static_assert(f(/*read_uninit=*/false), "");
-static_assert(f(/*read_uninit=*/true), ""); // expected-error{{static_assert expression is not an integral constant expression}} expected-note{{in call to 'f(true)'}}
+static_assert(f(/*read_uninit=*/true), ""); // expected-error{{static assertion expression is not an integral constant expression}} expected-note{{in call to 'f(true)'}}
 
 constexpr bytes ld539 = {
   0x0, 0x0,  0x0,  0x0,

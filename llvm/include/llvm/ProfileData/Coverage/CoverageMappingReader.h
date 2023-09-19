@@ -56,10 +56,10 @@ public:
   using reference = value_type &;
 
   CoverageMappingIterator()
-      : Reader(nullptr), Record(), ReadErr(coveragemap_error::success) {}
+      : Reader(nullptr), ReadErr(coveragemap_error::success) {}
 
   CoverageMappingIterator(CoverageMappingReader *Reader)
-      : Reader(Reader), Record(), ReadErr(coveragemap_error::success) {
+      : Reader(Reader), ReadErr(coveragemap_error::success) {
     increment();
   }
 
@@ -203,9 +203,12 @@ public:
   BinaryCoverageReader &operator=(const BinaryCoverageReader &) = delete;
 
   static Expected<std::vector<std::unique_ptr<BinaryCoverageReader>>>
-  create(MemoryBufferRef ObjectBuffer, StringRef Arch,
+  create(MemoryBufferRef ObjectBuffer,
+         StringRef Arch,
          SmallVectorImpl<std::unique_ptr<MemoryBuffer>> &ObjectFileBuffers,
-         StringRef CompilationDir = "");
+         InstrProfSymtab& IndexedProfSymTab,
+         StringRef CompilationDir = "",
+         SmallVectorImpl<object::BuildIDRef> *BinaryIDs = nullptr);
 
   static Expected<std::unique_ptr<BinaryCoverageReader>>
   createCoverageReaderFromBuffer(StringRef Coverage,

@@ -9,13 +9,13 @@
 #ifndef LLDB_SYMBOL_COMPILEUNIT_H
 #define LLDB_SYMBOL_COMPILEUNIT_H
 
-#include "lldb/Core/FileSpecList.h"
 #include "lldb/Core/ModuleChild.h"
 #include "lldb/Core/SourceLocationSpec.h"
 #include "lldb/Symbol/DebugMacros.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/SourceModule.h"
+#include "lldb/Utility/FileSpecList.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/UserID.h"
 #include "lldb/lldb-enumerations.h"
@@ -208,9 +208,9 @@ public:
   ///     unit file.
   ///
   /// \param[in] exact
-  ///     If \btrue match only if there is a line table entry for this line
+  ///     If \b true match only if there is a line table entry for this line
   ///     number.
-  ///     If \bfalse, find the line table entry equal to or after this line
+  ///     If \b false, find the line table entry equal to or after this line
   ///     number.
   ///
   /// \param[out] line_entry

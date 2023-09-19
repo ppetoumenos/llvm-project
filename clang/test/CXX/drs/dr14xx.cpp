@@ -18,7 +18,7 @@ namespace dr1413 { // dr1413: 12
       Check<true ? 0 : A::unknown_spec>::type *var1; // expected-error {{undeclared identifier 'var1'}}
       Check<true ? 0 : a>::type *var2; // ok, variable declaration  expected-note 0+{{here}}
       Check<true ? 0 : b>::type *var3; // expected-error {{undeclared identifier 'var3'}}
-      Check<true ? 0 : (c, 0)>::type *var4; // expected-error {{undeclared identifier 'var4'}}
+      Check<true ? 0 : ((void)c, 0)>::type *var4; // expected-error {{undeclared identifier 'var4'}}
       // value-dependent because of the implied type-dependent 'this->', not because of 'd'
       Check<true ? 0 : (d(), 0)>::type *var5; // expected-error {{undeclared identifier 'var5'}}
       // value-dependent because of the value-dependent '&' operator, not because of 'A::d'
@@ -36,14 +36,35 @@ namespace dr1423 { // dr1423: 11
 #endif
 }
 
+// dr1425: na abi
+
+namespace dr1432 { // dr1432: 16
+#if __cplusplus >= 201103L
+  template<typename T> T declval();
+
+  template <class... T>
+  struct common_type;
+
+  template <class T, class U>
+  struct common_type<T, U> {
+   typedef decltype(true ? declval<T>() : declval<U>()) type;
+  };
+
+  template <class T, class U, class... V>
+  struct common_type<T, U, V...> {
+   typedef typename common_type<typename common_type<T, U>::type, V...>::type type;
+  };
+
+  template struct common_type<int, double>;
+#endif
+}
+
 namespace dr1443 { // dr1443: yes
 struct A {
   int i;
   A() { void foo(int=i); } // expected-error {{default argument references 'this'}}
 };
 }
-
-// dr1425: na abi
 
 namespace dr1460 { // dr1460: 3.5
 #if __cplusplus >= 201103L
@@ -463,12 +484,27 @@ namespace dr1467 {  // dr1467: 3.7 c++11
 #endif
 } // dr1467
 
+namespace dr1479 { // dr1479: yes
+  int operator"" _a(const char*, std::size_t = 0); // expected-error {{literal operator cannot have a default argument}}
+}
+
+namespace dr1482 { // dr1482: yes
+                   // NB: sup 2516, test reused there
+#if __cplusplus >= 201103L
+template <typename T> struct S {
+  typedef char I;
+};
+enum E2 : S<E2>::I { e };
+// expected-error@-1 {{use of undeclared identifier 'E2'}}
+#endif
+} // namespace dr1482
+
 namespace dr1490 {  // dr1490: 3.7 c++11
   // List-initialization from a string literal
 
   char s[4]{"abc"};                   // Ok
   std::initializer_list<char>{"abc"}; // expected-error {{expected unqualified-id}}}
-} // dr190
+} // dr1490
 
 namespace dr1495 { // dr1495: 4
   // Deduction succeeds in both directions.
@@ -497,4 +533,16 @@ namespace dr1495 { // dr1495: 4
   template<typename ...Ts> int c<0, Ts...>; // expected-error {{not more specialized}}
 #endif
 }
+
+namespace dr1496 { // dr1496: no
+#if __cplusplus >= 201103L
+struct A {
+    A() = delete;
+};
+// FIXME: 'A' should not be trivial because the class lacks at least one
+// default constructor which is not deleted.
+static_assert(__is_trivial(A), "");
+#endif
+}
+
 #endif

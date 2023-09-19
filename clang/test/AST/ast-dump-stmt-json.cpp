@@ -126,6 +126,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // using --filters=FunctionDecl,FunctionTemplateDecl,UsingDecl,UsingShadowDecl
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 125,
@@ -172,6 +173,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "UsingDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 164,
@@ -195,6 +197,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "UsingShadowDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 164,
@@ -225,6 +228,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "UsingDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 183,
@@ -248,6 +252,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "UsingShadowDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 183,
@@ -277,6 +282,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  }
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 198,
@@ -359,7 +366,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:         }
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "name": "f",
-// CHECK-NEXT:        "mangledName": "_ZZ12TestFunctionvE1f",
 // CHECK-NEXT:        "type": {
 // CHECK-NEXT:         "qualType": "void (*)()"
 // CHECK-NEXT:        },
@@ -510,6 +516,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 266,
@@ -630,7 +638,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "x",
-// CHECK-NEXT:          "mangledName": "_ZZ10TestCatch1vE1x",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          }
@@ -662,6 +669,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 323,
@@ -790,6 +798,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 378,
@@ -873,7 +883,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "isUsed": true,
 // CHECK-NEXT:        "name": "p",
-// CHECK-NEXT:        "mangledName": "_ZZ19TestAllocationExprsvE1p",
 // CHECK-NEXT:        "type": {
 // CHECK-NEXT:         "qualType": "int *"
 // CHECK-NEXT:        }
@@ -1422,6 +1431,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1456,7 +1467,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   },
 // CHECK-NEXT:   {
 // CHECK-NEXT:    "id": "0x{{.*}}",
@@ -1480,6 +1492,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1526,7 +1539,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   },
 // CHECK-NEXT:   {
 // CHECK-NEXT:    "id": "0x{{.*}}",
@@ -1559,6 +1573,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1593,7 +1608,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   },
 // CHECK-NEXT:   {
 // CHECK-NEXT:    "id": "0x{{.*}}",
@@ -1617,6 +1633,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1663,7 +1680,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   },
 // CHECK-NEXT:   {
 // CHECK-NEXT:    "id": "0x{{.*}}",
@@ -1696,6 +1714,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1730,12 +1749,14 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   }
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1782,12 +1803,14 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   }
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1822,12 +1845,14 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   }
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
 
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {},
 // CHECK-NEXT:  "range": {
@@ -1874,11 +1899,14 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:     "begin": {},
 // CHECK-NEXT:     "end": {}
 // CHECK-NEXT:    },
-// CHECK-NEXT:    "implicit": true
+// CHECK-NEXT:    "implicit": true,
+// CHECK-NEXT:    "visibility": "default"
 // CHECK-NEXT:   }
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionTemplateDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 598,
@@ -2013,7 +2041,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isReferenced": true,
 // CHECK-NEXT:          "name": "p",
-// CHECK-NEXT:          "mangledName": "_ZZ27TestDependentAllocationExprvE1p",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "T *"
 // CHECK-NEXT:          },
@@ -2101,6 +2128,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionTemplateDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 766,
@@ -2235,8 +2264,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isReferenced": true,
 // CHECK-NEXT:          "name": "obj",
-// CHECK-NEXT:          "mangledName": "_ZZ28TestDependentScopeMemberExprvE3obj",
 // CHECK-NEXT:          "type": {
+// CHECK-NEXT:           "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:           "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:          }
 // CHECK-NEXT:         }
@@ -2302,6 +2331,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:             "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
@@ -2310,6 +2340,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "obj",
 // CHECK-NEXT:             "type": {
+// CHECK-NEXT:              "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:              "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
@@ -2398,6 +2429,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:             "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
@@ -2406,6 +2438,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "obj",
 // CHECK-NEXT:             "type": {
+// CHECK-NEXT:              "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:              "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
@@ -2560,6 +2593,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                 }
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "type": {
+// CHECK-NEXT:                 "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:                 "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "valueCategory": "lvalue",
@@ -2568,6 +2602,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                 "kind": "VarDecl",
 // CHECK-NEXT:                 "name": "obj",
 // CHECK-NEXT:                 "type": {
+// CHECK-NEXT:                  "desugaredQualType": "DependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:                  "qualType": "DependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:                 }
 // CHECK-NEXT:                }
@@ -2607,6 +2642,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionTemplateDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1049,
@@ -2741,8 +2778,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isReferenced": true,
 // CHECK-NEXT:          "name": "obj",
-// CHECK-NEXT:          "mangledName": "_ZZ36TestDependentScopeTemplateMemberExprvE3obj",
 // CHECK-NEXT:          "type": {
+// CHECK-NEXT:           "desugaredQualType": "OtherDependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:           "qualType": "OtherDependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:          }
 // CHECK-NEXT:         }
@@ -2830,6 +2867,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "OtherDependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:             "qualType": "OtherDependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
@@ -2838,6 +2876,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "obj",
 // CHECK-NEXT:             "type": {
+// CHECK-NEXT:              "desugaredQualType": "OtherDependentScopeMemberExprWrapper<T>",
 // CHECK-NEXT:              "qualType": "OtherDependentScopeMemberExprWrapper<T>"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
@@ -2873,6 +2912,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1214,
@@ -2955,9 +2996,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:         }
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "name": "us",
-// CHECK-NEXT:        "mangledName": "_ZZ17TestUnionInitListvE2us",
 // CHECK-NEXT:        "type": {
-// CHECK-NEXT:         "qualType": "U [3]"
+// CHECK-NEXT:         "qualType": "U[3]"
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "init": "c",
 // CHECK-NEXT:        "inner": [
@@ -2977,7 +3017,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "type": {
-// CHECK-NEXT:           "qualType": "U [3]"
+// CHECK-NEXT:           "qualType": "U[3]"
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "valueCategory": "prvalue",
 // CHECK-NEXT:          "array_filler": [
@@ -2997,6 +3037,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "U",
 // CHECK-NEXT:             "qualType": "U"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "prvalue",
@@ -3025,6 +3066,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "U",
 // CHECK-NEXT:             "qualType": "U"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "prvalue",
@@ -3071,6 +3113,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1261,
@@ -3120,7 +3164,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:    },
 // CHECK-NEXT:    "isUsed": true,
 // CHECK-NEXT:    "name": "i",
-// CHECK-NEXT:    "mangledName": "_ZZ10TestSwitchiE1i",
 // CHECK-NEXT:    "type": {
 // CHECK-NEXT:     "qualType": "int"
 // CHECK-NEXT:    }
@@ -3199,7 +3242,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "a",
-// CHECK-NEXT:          "mangledName": "_ZZ10TestSwitchiE1a",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          }
@@ -3281,6 +3323,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1315,
@@ -3330,7 +3374,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:    },
 // CHECK-NEXT:    "isReferenced": true,
 // CHECK-NEXT:    "name": "b",
-// CHECK-NEXT:    "mangledName": "_ZZ6TestIfbE1b",
 // CHECK-NEXT:    "type": {
 // CHECK-NEXT:     "qualType": "bool"
 // CHECK-NEXT:    }
@@ -3410,7 +3453,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isReferenced": true,
 // CHECK-NEXT:          "name": "i",
-// CHECK-NEXT:          "mangledName": "_ZZ6TestIfbE1i",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "const int"
 // CHECK-NEXT:          },
@@ -3964,6 +4006,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1529,
@@ -4065,7 +4109,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "i",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1i",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          },
@@ -4134,7 +4177,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "j",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1j",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          },
@@ -4379,9 +4421,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "isUsed": true,
 // CHECK-NEXT:        "name": "vals",
-// CHECK-NEXT:        "mangledName": "_ZZ13TestIterationvE4vals",
 // CHECK-NEXT:        "type": {
-// CHECK-NEXT:         "qualType": "int [10]"
+// CHECK-NEXT:         "qualType": "int[10]"
 // CHECK-NEXT:        }
 // CHECK-NEXT:       }
 // CHECK-NEXT:      ]
@@ -4445,7 +4486,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__range1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__range1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int (&)[10]"
 // CHECK-NEXT:          },
@@ -4467,7 +4507,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
-// CHECK-NEXT:             "qualType": "int [10]"
+// CHECK-NEXT:             "qualType": "int[10]"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
 // CHECK-NEXT:            "referencedDecl": {
@@ -4475,7 +4515,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "vals",
 // CHECK-NEXT:             "type": {
-// CHECK-NEXT:              "qualType": "int [10]"
+// CHECK-NEXT:              "qualType": "int[10]"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
 // CHECK-NEXT:           }
@@ -4522,7 +4562,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__begin1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__begin1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -4566,7 +4605,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:               }
 // CHECK-NEXT:              },
 // CHECK-NEXT:              "type": {
-// CHECK-NEXT:               "qualType": "int [10]"
+// CHECK-NEXT:               "qualType": "int[10]"
 // CHECK-NEXT:              },
 // CHECK-NEXT:              "valueCategory": "lvalue",
 // CHECK-NEXT:              "referencedDecl": {
@@ -4623,7 +4662,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__end1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE6__end1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -4688,7 +4726,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                 }
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "type": {
-// CHECK-NEXT:                 "qualType": "int [10]"
+// CHECK-NEXT:                 "qualType": "int[10]"
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "valueCategory": "lvalue",
 // CHECK-NEXT:                "referencedDecl": {
@@ -4952,7 +4990,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "v",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1v",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          },
@@ -5122,8 +5159,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "isUsed": true,
 // CHECK-NEXT:        "name": "C",
-// CHECK-NEXT:        "mangledName": "_ZZ13TestIterationvE1C",
 // CHECK-NEXT:        "type": {
+// CHECK-NEXT:         "desugaredQualType": "Container",
 // CHECK-NEXT:         "qualType": "Container"
 // CHECK-NEXT:        },
 // CHECK-NEXT:        "init": "call",
@@ -5144,6 +5181,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "type": {
+// CHECK-NEXT:           "desugaredQualType": "Container",
 // CHECK-NEXT:           "qualType": "Container"
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "valueCategory": "prvalue",
@@ -5216,7 +5254,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__range1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__range1_0",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "Container &"
 // CHECK-NEXT:          },
@@ -5238,6 +5275,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
+// CHECK-NEXT:             "desugaredQualType": "Container",
 // CHECK-NEXT:             "qualType": "Container"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
@@ -5246,6 +5284,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "C",
 // CHECK-NEXT:             "type": {
+// CHECK-NEXT:              "desugaredQualType": "Container",
 // CHECK-NEXT:              "qualType": "Container"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
@@ -5293,7 +5332,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__begin1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__begin1_0",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -5380,6 +5418,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                  },
 // CHECK-NEXT:                  "type": {
+// CHECK-NEXT:                   "desugaredQualType": "Container",
 // CHECK-NEXT:                   "qualType": "Container"
 // CHECK-NEXT:                  },
 // CHECK-NEXT:                  "valueCategory": "lvalue",
@@ -5441,7 +5480,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__end1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE6__end1_0",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -5528,6 +5566,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                  },
 // CHECK-NEXT:                  "type": {
+// CHECK-NEXT:                   "desugaredQualType": "Container",
 // CHECK-NEXT:                   "qualType": "Container"
 // CHECK-NEXT:                  },
 // CHECK-NEXT:                  "valueCategory": "lvalue",
@@ -5773,7 +5812,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "v",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1v_0",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          },
@@ -5960,7 +5998,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "a",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1a",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          }
@@ -6006,7 +6043,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__range1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__range1_1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int (&)[10]"
 // CHECK-NEXT:          },
@@ -6028,7 +6064,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             }
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "type": {
-// CHECK-NEXT:             "qualType": "int [10]"
+// CHECK-NEXT:             "qualType": "int[10]"
 // CHECK-NEXT:            },
 // CHECK-NEXT:            "valueCategory": "lvalue",
 // CHECK-NEXT:            "referencedDecl": {
@@ -6036,7 +6072,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:             "kind": "VarDecl",
 // CHECK-NEXT:             "name": "vals",
 // CHECK-NEXT:             "type": {
-// CHECK-NEXT:              "qualType": "int [10]"
+// CHECK-NEXT:              "qualType": "int[10]"
 // CHECK-NEXT:             }
 // CHECK-NEXT:            }
 // CHECK-NEXT:           }
@@ -6083,7 +6119,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__begin1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE8__begin1_1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -6127,7 +6162,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:               }
 // CHECK-NEXT:              },
 // CHECK-NEXT:              "type": {
-// CHECK-NEXT:               "qualType": "int [10]"
+// CHECK-NEXT:               "qualType": "int[10]"
 // CHECK-NEXT:              },
 // CHECK-NEXT:              "valueCategory": "lvalue",
 // CHECK-NEXT:              "referencedDecl": {
@@ -6184,7 +6219,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:          "isImplicit": true,
 // CHECK-NEXT:          "isUsed": true,
 // CHECK-NEXT:          "name": "__end1",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE6__end1_1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "desugaredQualType": "int *",
 // CHECK-NEXT:           "qualType": "int *"
@@ -6249,7 +6283,7 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:                 }
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "type": {
-// CHECK-NEXT:                 "qualType": "int [10]"
+// CHECK-NEXT:                 "qualType": "int[10]"
 // CHECK-NEXT:                },
 // CHECK-NEXT:                "valueCategory": "lvalue",
 // CHECK-NEXT:                "referencedDecl": {
@@ -6513,7 +6547,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:           }
 // CHECK-NEXT:          },
 // CHECK-NEXT:          "name": "v",
-// CHECK-NEXT:          "mangledName": "_ZZ13TestIterationvE1v_1",
 // CHECK-NEXT:          "type": {
 // CHECK-NEXT:           "qualType": "int"
 // CHECK-NEXT:          },
@@ -6649,6 +6682,8 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:  ]
 // CHECK-NEXT: }
 
+
+// CHECK-NOT: {{^}}Dumping
 // CHECK:  "kind": "FunctionTemplateDecl",
 // CHECK-NEXT:  "loc": {
 // CHECK-NEXT:   "offset": 1737,
@@ -6749,7 +6784,6 @@ void TestDependentGenericSelectionExpr(Ty T) {
 // CHECK-NEXT:      },
 // CHECK-NEXT:      "isReferenced": true,
 // CHECK-NEXT:      "name": "T",
-// CHECK-NEXT:      "mangledName": "_ZZ33TestDependentGenericSelectionExprT_E1T",
 // CHECK-NEXT:      "type": {
 // CHECK-NEXT:       "qualType": "Ty"
 // CHECK-NEXT:      }

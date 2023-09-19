@@ -11,10 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/ProfileData/Coverage/CoverageMappingWriter.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/raw_ostream.h"
@@ -46,15 +47,13 @@ void CoverageFilenamesSectionWriter::write(raw_ostream &OS, bool Compress) {
     }
   }
 
-  SmallString<128> CompressedStr;
-  bool doCompression =
-      Compress && zlib::isAvailable() && DoInstrProfNameCompression;
-  if (doCompression) {
-    auto E =
-        zlib::compress(FilenamesStr, CompressedStr, zlib::BestSizeCompression);
-    if (E)
-      report_bad_alloc_error("Failed to zlib compress coverage data");
-  }
+  SmallVector<uint8_t, 128> CompressedStr;
+  bool doCompression = Compress && compression::zlib::isAvailable() &&
+                       DoInstrProfNameCompression;
+  if (doCompression)
+    compression::zlib::compress(arrayRefFromStringRef(FilenamesStr),
+                                CompressedStr,
+                                compression::zlib::BestSizeCompression);
 
   // ::= <num-filenames>
   //     <uncompressed-len>
@@ -63,7 +62,7 @@ void CoverageFilenamesSectionWriter::write(raw_ostream &OS, bool Compress) {
   encodeULEB128(Filenames.size(), OS);
   encodeULEB128(FilenamesStr.size(), OS);
   encodeULEB128(doCompression ? CompressedStr.size() : 0U, OS);
-  OS << (doCompression ? CompressedStr.str() : StringRef(FilenamesStr));
+  OS << (doCompression ? toStringRef(CompressedStr) : StringRef(FilenamesStr));
 }
 
 namespace {
@@ -249,4 +248,38 @@ void CoverageMappingWriter::write(raw_ostream &OS) {
   }
   // Ensure that all file ids have at least one mapping region.
   assert(CurrentFileID == (VirtualFileMapping.size() - 1));
+}
+
+void TestingFormatWriter::write(raw_ostream &OS, TestingFormatVersion Version) {
+  auto ByteSwap = [](uint64_t N) {
+    return support::endian::byte_swap<uint64_t, support::endianness::little>(N);
+  };
+
+  // Output a 64bit magic number.
+  auto Magic = ByteSwap(TestingFormatMagic);
+  OS.write(reinterpret_cast<char *>(&Magic), sizeof(Magic));
+
+  // Output a 64bit version field.
+  auto VersionLittle = ByteSwap(uint64_t(Version));
+  OS.write(reinterpret_cast<char *>(&VersionLittle), sizeof(VersionLittle));
+
+  // Output the ProfileNames data.
+  encodeULEB128(ProfileNamesData.size(), OS);
+  encodeULEB128(ProfileNamesAddr, OS);
+  OS << ProfileNamesData;
+
+  // Version2 adds an extra field to indicate the size of the
+  // CoverageMappingData.
+  if (Version == TestingFormatVersion::Version2)
+    encodeULEB128(CoverageMappingData.size(), OS);
+
+  // Coverage mapping data is expected to have an alignment of 8.
+  for (unsigned Pad = offsetToAlignment(OS.tell(), Align(8)); Pad; --Pad)
+    OS.write(uint8_t(0));
+  OS << CoverageMappingData;
+
+  // Coverage records data is expected to have an alignment of 8.
+  for (unsigned Pad = offsetToAlignment(OS.tell(), Align(8)); Pad; --Pad)
+    OS.write(uint8_t(0));
+  OS << CoverageRecordsData;
 }

@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC clause validity for the following construct and directive:
 !   2.11 Kernels Loop
@@ -34,6 +33,18 @@ program openacc_kernels_loop_validity
   do i = 1, N
     a(i) = 3.14
   end do
+
+  !$acc kernels loop
+  do i = 1, N
+    a(i) = 3.14
+  end do
+  !$acc end kernels loop
+
+  !$acc kernels loop
+  do i = 1, N
+    a(i) = 3.14
+  end do
+  !$acc end kernels loop
 
   !$acc kernels loop num_gangs(8)
   do i = 1, N

@@ -8,6 +8,7 @@
 
 #include "llvm/CodeGen/CalcSpillWeights.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/LiveInterval.h"
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -15,13 +16,13 @@
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/StackMaps.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/CodeGen/StackMaps.h"
 #include <cassert>
 #include <tuple>
 
@@ -35,7 +36,7 @@ void VirtRegAuxInfo::calculateSpillWeightsAndHints() {
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
   for (unsigned I = 0, E = MRI.getNumVirtRegs(); I != E; ++I) {
-    unsigned Reg = Register::index2VirtReg(I);
+    Register Reg = Register::index2VirtReg(I);
     if (MRI.reg_nodbg_empty(Reg))
       continue;
     calculateSpillWeightAndHint(LIS.getInterval(Reg));
@@ -43,9 +44,9 @@ void VirtRegAuxInfo::calculateSpillWeightsAndHints() {
 }
 
 // Return the preferred allocation register for reg, given a COPY instruction.
-static Register copyHint(const MachineInstr *MI, unsigned Reg,
-                         const TargetRegisterInfo &TRI,
-                         const MachineRegisterInfo &MRI) {
+Register VirtRegAuxInfo::copyHint(const MachineInstr *MI, unsigned Reg,
+                                  const TargetRegisterInfo &TRI,
+                                  const MachineRegisterInfo &MRI) {
   unsigned Sub, HSub;
   Register HReg;
   if (MI->getOperand(0).getReg() == Reg) {
@@ -61,27 +62,28 @@ static Register copyHint(const MachineInstr *MI, unsigned Reg,
   if (!HReg)
     return 0;
 
-  if (Register::isVirtualRegister(HReg))
+  if (HReg.isVirtual())
     return Sub == HSub ? HReg : Register();
 
-  const TargetRegisterClass *rc = MRI.getRegClass(Reg);
+  const TargetRegisterClass *RC = MRI.getRegClass(Reg);
   MCRegister CopiedPReg = HSub ? TRI.getSubReg(HReg, HSub) : HReg.asMCReg();
-  if (rc->contains(CopiedPReg))
+  if (RC->contains(CopiedPReg))
     return CopiedPReg;
 
   // Check if reg:sub matches so that a super register could be hinted.
   if (Sub)
-    return TRI.getMatchingSuperReg(CopiedPReg, Sub, rc);
+    return TRI.getMatchingSuperReg(CopiedPReg, Sub, RC);
 
   return 0;
 }
 
 // Check if all values in LI are rematerializable
-static bool isRematerializable(const LiveInterval &LI, const LiveIntervals &LIS,
-                               const VirtRegMap &VRM,
-                               const TargetInstrInfo &TII) {
-  unsigned Reg = LI.reg();
-  unsigned Original = VRM.getOriginal(Reg);
+bool VirtRegAuxInfo::isRematerializable(const LiveInterval &LI,
+                                        const LiveIntervals &LIS,
+                                        const VirtRegMap &VRM,
+                                        const TargetInstrInfo &TII) {
+  Register Reg = LI.reg();
+  Register Original = VRM.getOriginal(Reg);
   for (LiveInterval::const_vni_iterator I = LI.vni_begin(), E = LI.vni_end();
        I != E; ++I) {
     const VNInfo *VNI = *I;
@@ -96,7 +98,7 @@ static bool isRematerializable(const LiveInterval &LI, const LiveIntervals &LIS,
     // Trace copies introduced by live range splitting.  The inline
     // spiller can rematerialize through these copies, so the spill
     // weight must reflect this.
-    while (MI->isFullCopy()) {
+    while (TII.isFullCopyInstr(*MI)) {
       // The copy destination must match the interval register.
       if (MI->getOperand(0).getReg() != Reg)
         return false;
@@ -106,7 +108,7 @@ static bool isRematerializable(const LiveInterval &LI, const LiveIntervals &LIS,
 
       // If the original (pre-splitting) registers match this
       // copy came from a split.
-      if (!Register::isVirtualRegister(Reg) || VRM.getOriginal(Reg) != Original)
+      if (!Reg.isVirtual() || VRM.getOriginal(Reg) != Original)
         return false;
 
       // Follow the copy live-in value.
@@ -120,7 +122,7 @@ static bool isRematerializable(const LiveInterval &LI, const LiveIntervals &LIS,
       assert(MI && "Dead valno in interval");
     }
 
-    if (!TII.isTriviallyReMaterializable(*MI, LIS.getAliasAnalysis()))
+    if (!TII.isTriviallyReMaterializable(*MI))
       return false;
   }
   return true;
@@ -132,7 +134,7 @@ bool VirtRegAuxInfo::isLiveAtStatepointVarArg(LiveInterval &LI) {
     MachineInstr *MI = MO.getParent();
     if (MI->getOpcode() != TargetOpcode::STATEPOINT)
       return false;
-    return StatepointOpers(MI).getVarIdx() <= MI->getOperandNo(&MO);
+    return StatepointOpers(MI).getVarIdx() <= MO.getOperandNo();
   });
 }
 
@@ -142,11 +144,6 @@ void VirtRegAuxInfo::calculateSpillWeightAndHint(LiveInterval &LI) {
   if (Weight < 0)
     return;
   LI.setWeight(Weight);
-}
-
-float VirtRegAuxInfo::futureWeight(LiveInterval &LI, SlotIndex Start,
-                                   SlotIndex End) {
-  return weightCalcHelper(LI, &Start, &End);
 }
 
 float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
@@ -161,7 +158,7 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
   unsigned NumInstr = 0; // Number of instructions using LI
   SmallPtrSet<MachineInstr *, 8> Visited;
 
-  std::pair<Register, Register> TargetHint = MRI.getRegAllocationHint(LI.reg());
+  std::pair<unsigned, Register> TargetHint = MRI.getRegAllocationHint(LI.reg());
 
   if (LI.isSpillable()) {
     Register Reg = LI.reg();
@@ -183,8 +180,8 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
   bool ShouldUpdateLI = !IsLocalSplitArtifact;
 
   if (IsLocalSplitArtifact) {
-    MachineBasicBlock *localMBB = LIS.getMBBFromIndex(*End);
-    assert(localMBB == LIS.getMBBFromIndex(*Start) &&
+    MachineBasicBlock *LocalMBB = LIS.getMBBFromIndex(*End);
+    assert(LocalMBB == LIS.getMBBFromIndex(*Start) &&
            "start and end are expected to be in the same basic block");
 
     // Local split artifact will have 2 additional copy instructions and they
@@ -192,8 +189,8 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
     // localLI = COPY other
     // ...
     // other   = COPY localLI
-    TotalWeight += LiveIntervals::getSpillWeight(true, false, &MBFI, localMBB);
-    TotalWeight += LiveIntervals::getSpillWeight(false, true, &MBFI, localMBB);
+    TotalWeight += LiveIntervals::getSpillWeight(true, false, &MBFI, LocalMBB);
+    TotalWeight += LiveIntervals::getSpillWeight(false, true, &MBFI, LocalMBB);
 
     NumInstr += 2;
   }
@@ -228,7 +225,16 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
       continue;
 
     NumInstr++;
-    if (MI->isIdentityCopy() || MI->isImplicitDef())
+    bool identityCopy = false;
+    auto DestSrc = TII.isCopyInstr(*MI);
+    if (DestSrc) {
+      const MachineOperand *DestRegOp = DestSrc->Destination;
+      const MachineOperand *SrcRegOp = DestSrc->Source;
+      identityCopy = DestRegOp->getReg() == SrcRegOp->getReg() &&
+                     DestRegOp->getSubReg() == SrcRegOp->getSubReg();
+    }
+
+    if (identityCopy || MI->isImplicitDef())
       continue;
     if (!Visited.insert(MI).second)
       continue;
@@ -262,7 +268,7 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
     }
 
     // Get allocation hints from copies.
-    if (!MI->isCopy())
+    if (!TII.isCopyInstr(*MI))
       continue;
     Register HintReg = copyHint(MI, LI.reg(), TRI, MRI);
     if (!HintReg)
@@ -282,8 +288,8 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI, SlotIndex *Start,
     if (TargetHint.first == 0 && TargetHint.second)
       MRI.clearSimpleHint(LI.reg());
 
-    std::set<Register> HintedRegs;
-    for (auto &Hint : CopyHints) {
+    SmallSet<Register, 4> HintedRegs;
+    for (const auto &Hint : CopyHints) {
       if (!HintedRegs.insert(Hint.Reg).second ||
           (TargetHint.first != 0 && Hint.Reg == TargetHint.second))
         // Don't add the same reg twice or the target-type hint again.

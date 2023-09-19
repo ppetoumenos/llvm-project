@@ -22,16 +22,22 @@ namespace gwp_asan {
 
 // Magic header that resides in the AllocatorState so that GWP-ASan bugreports
 // can be understood by tools at different versions. Out-of-process crash
-// handlers, like crashpad on Fuchsia, take the raw conents of the
+// handlers, like crashpad on Fuchsia, take the raw contents of the
 // AllocationMetatada array and the AllocatorState, and shove them into the
 // minidump. Online unpacking of these structs needs to know from which version
-// of GWP-ASan its extracting the information, as the structures are not stable.
+// of GWP-ASan it's extracting the information, as the structures are not
+// stable.
 struct AllocatorVersionMagic {
-  const uint8_t Magic[4] = {'A', 'S', 'A', 'N'};
+  // The values are copied into the structure at runtime, during
+  // `GuardedPoolAllocator::init()` so that GWP-ASan remains completely in the
+  // `.bss` segment.
+  static constexpr uint8_t kAllocatorVersionMagic[4] = {'A', 'S', 'A', 'N'};
+  uint8_t Magic[4] = {};
   // Update the version number when the AllocatorState or AllocationMetadata
   // change.
-  const uint16_t Version = 1;
-  const uint16_t Reserved = 0;
+  static constexpr uint16_t kAllocatorVersion = 2;
+  uint16_t Version = 0;
+  uint16_t Reserved = 0;
 };
 
 enum class Error : uint8_t {
@@ -92,6 +98,12 @@ struct AllocationMetadata {
 
   // Whether this allocation has been deallocated yet.
   bool IsDeallocated = false;
+
+  // In recoverable mode, whether this allocation has had a crash associated
+  // with it. This has certain side effects, like meaning this allocation will
+  // permanently occupy a slot, and won't ever have another crash reported from
+  // it.
+  bool HasCrashed = false;
 };
 
 // This holds the state that's shared between the GWP-ASan allocator and the
@@ -99,7 +111,7 @@ struct AllocationMetadata {
 // set of information required for understanding a GWP-ASan crash.
 struct AllocatorState {
   constexpr AllocatorState() {}
-  const AllocatorVersionMagic VersionMagic{};
+  AllocatorVersionMagic VersionMagic{};
 
   // Returns whether the provided pointer is a current sampled allocation that
   // is owned by this pool.
@@ -120,6 +132,11 @@ struct AllocatorState {
   // Returns whether the provided pointer is a guard page or not. The pointer
   // must be within memory owned by this pool, else the result is undefined.
   bool isGuardPage(uintptr_t Ptr) const;
+
+  // Returns the address that's used by __gwp_asan_get_internal_crash_address()
+  // and GPA::raiseInternallyDetectedError() to communicate that the SEGV in
+  // question comes from an internally-detected error.
+  uintptr_t internallyDetectedErrorFaultAddress() const;
 
   // The number of guarded slots that this pool holds.
   size_t MaxSimultaneousAllocations = 0;

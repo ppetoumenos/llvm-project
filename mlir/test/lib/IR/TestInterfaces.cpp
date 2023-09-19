@@ -7,16 +7,19 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestTypes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 using namespace mlir;
-using namespace mlir::test;
+using namespace test;
 
 namespace {
 /// This test checks various aspects of Type interface generation and
 /// application.
 struct TestTypeInterfaces
     : public PassWrapper<TestTypeInterfaces, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTypeInterfaces)
+
   StringRef getArgument() const final { return "test-type-interfaces"; }
   StringRef getDescription() const final {
     return "Test type interface support.";
@@ -24,7 +27,7 @@ struct TestTypeInterfaces
   void runOnOperation() override {
     getOperation().walk([](Operation *op) {
       for (Type type : op->getResultTypes()) {
-        if (auto testInterface = type.dyn_cast<TestTypeInterface>()) {
+        if (auto testInterface = dyn_cast<TestTypeInterface>(type)) {
           testInterface.printTypeA(op->getLoc());
           testInterface.printTypeB(op->getLoc());
           testInterface.printTypeC(op->getLoc());
@@ -34,13 +37,13 @@ struct TestTypeInterfaces
           TestTypeInterface result = testInterface.printTypeRet(op->getLoc());
           (void)result;
         }
-        if (auto testType = type.dyn_cast<TestType>())
+        if (auto testType = dyn_cast<TestType>(type))
           testType.printTypeE(op->getLoc());
       }
     });
   }
 };
-} // end anonymous namespace
+} // namespace
 
 namespace mlir {
 namespace test {

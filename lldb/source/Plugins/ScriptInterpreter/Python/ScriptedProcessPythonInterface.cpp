@@ -7,51 +7,73 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Host/Config.h"
+#if LLDB_ENABLE_PYTHON
+// LLDB Python header must be included first
+#include "lldb-python.h"
+#endif
+#include "lldb/Target/Process.h"
+#include "lldb/Utility/Log.h"
+#include "lldb/Utility/Status.h"
 #include "lldb/lldb-enumerations.h"
 
 #if LLDB_ENABLE_PYTHON
 
-// LLDB Python header must be included first
-#include "lldb-python.h"
-
 #include "SWIGPythonBridge.h"
 #include "ScriptInterpreterPythonImpl.h"
 #include "ScriptedProcessPythonInterface.h"
+#include "ScriptedThreadPythonInterface.h"
+#include <optional>
 
 using namespace lldb;
 using namespace lldb_private;
 using namespace lldb_private::python;
 using Locker = ScriptInterpreterPythonImpl::Locker;
 
+ScriptedProcessPythonInterface::ScriptedProcessPythonInterface(
+    ScriptInterpreterPythonImpl &interpreter)
+    : ScriptedProcessInterface(), ScriptedPythonInterface(interpreter) {}
+
 StructuredData::GenericSP ScriptedProcessPythonInterface::CreatePluginObject(
-    const llvm::StringRef class_name, lldb::TargetSP target_sp,
-    StructuredData::DictionarySP args_sp) {
+    llvm::StringRef class_name, ExecutionContext &exe_ctx,
+    StructuredData::DictionarySP args_sp, StructuredData::Generic *script_obj) {
   if (class_name.empty())
     return {};
 
+  StructuredDataImpl args_impl(args_sp);
   std::string error_string;
-  StructuredDataImpl *args_impl = nullptr;
-  if (args_sp) {
-    args_impl = new StructuredDataImpl();
-    args_impl->SetObjectSP(args_sp);
-  }
 
-  void *ret_val;
+  Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
+                 Locker::FreeLock);
 
-  {
+  lldb::ExecutionContextRefSP exe_ctx_ref_sp =
+      std::make_shared<ExecutionContextRef>(exe_ctx);
 
-    Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
-                   Locker::FreeLock);
-
-    ret_val = LLDBSwigPythonCreateScriptedProcess(
-        class_name.str().c_str(), m_interpreter.GetDictionaryName(), target_sp,
-        args_impl, error_string);
-  }
+  PythonObject ret_val = SWIGBridge::LLDBSwigPythonCreateScriptedObject(
+      class_name.str().c_str(), m_interpreter.GetDictionaryName(),
+      exe_ctx_ref_sp, args_impl, error_string);
 
   m_object_instance_sp =
-      StructuredData::GenericSP(new StructuredPythonObject(ret_val));
+      StructuredData::GenericSP(new StructuredPythonObject(std::move(ret_val)));
 
   return m_object_instance_sp;
+}
+
+StructuredData::DictionarySP ScriptedProcessPythonInterface::GetCapabilities() {
+  Status error;
+  StructuredData::DictionarySP dict =
+      Dispatch<StructuredData::DictionarySP>("get_capabilities", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
+    return {};
+
+  return dict;
+}
+
+Status
+ScriptedProcessPythonInterface::Attach(const ProcessAttachInfo &attach_info) {
+  lldb::ProcessAttachInfoSP attach_info_sp =
+      std::make_shared<ProcessAttachInfo>(attach_info);
+  return GetStatusFromMethod("attach", attach_info_sp);
 }
 
 Status ScriptedProcessPythonInterface::Launch() {
@@ -59,248 +81,136 @@ Status ScriptedProcessPythonInterface::Launch() {
 }
 
 Status ScriptedProcessPythonInterface::Resume() {
-  return GetStatusFromMethod("resume");
+  // When calling ScriptedProcess.Resume from lldb we should always stop.
+  return GetStatusFromMethod("resume", /*should_stop=*/true);
 }
 
-bool ScriptedProcessPythonInterface::ShouldStop() {
-  llvm::Optional<unsigned long long> should_stop =
-      GetGenericInteger("should_stop");
-
-  if (!should_stop)
-    return false;
-
-  return static_cast<bool>(*should_stop);
-}
-
-Status ScriptedProcessPythonInterface::Stop() {
-  return GetStatusFromMethod("stop");
-}
-
-Status ScriptedProcessPythonInterface::GetStatusFromMethod(
-    llvm::StringRef method_name) {
-  Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
-                 Locker::FreeLock);
-
-  if (!m_object_instance_sp)
-    return Status("Python object ill-formed.");
-
-  if (!m_object_instance_sp)
-    return Status("Cannot convert Python object to StructuredData::Generic.");
-  PythonObject implementor(PyRefType::Borrowed,
-                           (PyObject *)m_object_instance_sp->GetValue());
-
-  if (!implementor.IsAllocated())
-    return Status("Python implementor not allocated.");
-
-  PythonObject pmeth(
-      PyRefType::Owned,
-      PyObject_GetAttrString(implementor.get(), method_name.str().c_str()));
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  if (!pmeth.IsAllocated())
-    return Status("Python method not allocated.");
-
-  if (PyCallable_Check(pmeth.get()) == 0) {
-    if (PyErr_Occurred())
-      PyErr_Clear();
-    return Status("Python method not callable.");
-  }
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  PythonObject py_return(PyRefType::Owned,
-                         PyObject_CallMethod(implementor.get(),
-                                             method_name.str().c_str(),
-                                             nullptr));
-
-  if (PyErr_Occurred()) {
-    PyErr_Print();
-    PyErr_Clear();
-    return Status("Python method could not be called.");
-  }
-
-  if (PyObject *py_ret_ptr = py_return.get()) {
-    lldb::SBError *sb_error =
-        (lldb::SBError *)LLDBSWIGPython_CastPyObjectToSBError(py_ret_ptr);
-
-    if (!sb_error)
-      return Status("Couldn't cast lldb::SBError to lldb::Status.");
-
-    Status status = m_interpreter.GetStatusFromSBError(*sb_error);
-
-    if (status.Fail())
-      return Status("error: %s", status.AsCString());
-
-    return status;
-  }
-
-  return Status("Returned object is null.");
-}
-
-llvm::Optional<unsigned long long>
-ScriptedProcessPythonInterface::GetGenericInteger(llvm::StringRef method_name) {
-  Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
-                 Locker::FreeLock);
-
-  if (!m_object_instance_sp)
-    return llvm::None;
-
-  if (!m_object_instance_sp)
-    return llvm::None;
-  PythonObject implementor(PyRefType::Borrowed,
-                           (PyObject *)m_object_instance_sp->GetValue());
-
-  if (!implementor.IsAllocated())
-    return llvm::None;
-
-  PythonObject pmeth(
-      PyRefType::Owned,
-      PyObject_GetAttrString(implementor.get(), method_name.str().c_str()));
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  if (!pmeth.IsAllocated())
-    return llvm::None;
-
-  if (PyCallable_Check(pmeth.get()) == 0) {
-    if (PyErr_Occurred())
-      PyErr_Clear();
-    return llvm::None;
-  }
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  PythonObject py_return(PyRefType::Owned,
-                         PyObject_CallMethod(implementor.get(),
-                                             method_name.str().c_str(),
-                                             nullptr));
-
-  if (PyErr_Occurred()) {
-    PyErr_Print();
-    PyErr_Clear();
-  }
-
-  if (!py_return.get())
-    return llvm::None;
-
-  llvm::Expected<unsigned long long> size = py_return.AsUnsignedLongLong();
-  // FIXME: Handle error.
-  if (!size)
-    return llvm::None;
-
-  return *size;
-}
-
-lldb::MemoryRegionInfoSP
+std::optional<MemoryRegionInfo>
 ScriptedProcessPythonInterface::GetMemoryRegionContainingAddress(
-    lldb::addr_t address) {
-  // TODO: Implement
-  return nullptr;
+    lldb::addr_t address, Status &error) {
+  auto mem_region = Dispatch<std::optional<MemoryRegionInfo>>(
+      "get_memory_region_containing_address", error, address);
+
+  if (error.Fail()) {
+    return ErrorWithMessage<MemoryRegionInfo>(LLVM_PRETTY_FUNCTION,
+                                              error.AsCString(), error);
+  }
+
+  return mem_region;
 }
 
-StructuredData::DictionarySP
-ScriptedProcessPythonInterface::GetThreadWithID(lldb::tid_t tid) {
-  // TODO: Implement
-  return nullptr;
+StructuredData::DictionarySP ScriptedProcessPythonInterface::GetThreadsInfo() {
+  Status error;
+  StructuredData::DictionarySP dict =
+      Dispatch<StructuredData::DictionarySP>("get_threads_info", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
+    return {};
+
+  return dict;
 }
 
-StructuredData::DictionarySP
-ScriptedProcessPythonInterface::GetRegistersForThread(lldb::tid_t tid) {
-  // TODO: Implement
-  return nullptr;
+bool ScriptedProcessPythonInterface::CreateBreakpoint(lldb::addr_t addr,
+                                                      Status &error) {
+  Status py_error;
+  StructuredData::ObjectSP obj =
+      Dispatch("create_breakpoint", py_error, addr, error);
+
+  // If there was an error on the python call, surface it to the user.
+  if (py_error.Fail())
+    error = py_error;
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return {};
+
+  return obj->GetBooleanValue();
 }
 
 lldb::DataExtractorSP ScriptedProcessPythonInterface::ReadMemoryAtAddress(
     lldb::addr_t address, size_t size, Status &error) {
-  Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
-                 Locker::FreeLock);
+  Status py_error;
+  lldb::DataExtractorSP data_sp = Dispatch<lldb::DataExtractorSP>(
+      "read_memory_at_address", py_error, address, size, error);
 
-  auto error_with_message = [&error](llvm::StringRef message) {
-    error.SetErrorString(message);
-    return nullptr;
-  };
+  // If there was an error on the python call, surface it to the user.
+  if (py_error.Fail())
+    error = py_error;
 
-  static char callee_name[] = "read_memory_at_address";
-  std::string param_format = GetPythonValueFormatString(address);
-  param_format += GetPythonValueFormatString(size);
-
-  if (!m_object_instance_sp)
-    return error_with_message("Python object ill-formed.");
-
-  if (!m_object_instance_sp)
-    return error_with_message("Python method not callable.");
-
-  PythonObject implementor(PyRefType::Borrowed,
-                           (PyObject *)m_object_instance_sp->GetValue());
-
-  if (!implementor.IsAllocated())
-    return error_with_message("Python implementor not allocated.");
-
-  PythonObject pmeth(PyRefType::Owned,
-                     PyObject_GetAttrString(implementor.get(), callee_name));
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  if (!pmeth.IsAllocated())
-    return error_with_message("Python method not allocated.");
-
-  if (PyCallable_Check(pmeth.get()) == 0) {
-    if (PyErr_Occurred())
-      PyErr_Clear();
-    return error_with_message("Python method not callable.");
-  }
-
-  if (PyErr_Occurred())
-    PyErr_Clear();
-
-  PythonObject py_return(PyRefType::Owned,
-                         PyObject_CallMethod(implementor.get(), callee_name,
-                                             param_format.c_str(), address,
-                                             size));
-
-  if (PyErr_Occurred()) {
-    PyErr_Print();
-    PyErr_Clear();
-    return error_with_message("Python method could not be called.");
-  }
-
-  if (PyObject *py_ret_ptr = py_return.get()) {
-    lldb::SBData *sb_data =
-        (lldb::SBData *)LLDBSWIGPython_CastPyObjectToSBData(py_ret_ptr);
-
-    if (!sb_data)
-      return error_with_message(
-          "Couldn't cast lldb::SBData to lldb::DataExtractor.");
-
-    return m_interpreter.GetDataExtractorFromSBData(*sb_data);
-  }
-
-  return error_with_message("Returned object is null.");
+  return data_sp;
 }
 
-StructuredData::DictionarySP ScriptedProcessPythonInterface::GetLoadedImages() {
-  // TODO: Implement
-  return nullptr;
+lldb::offset_t ScriptedProcessPythonInterface::WriteMemoryAtAddress(
+    lldb::addr_t addr, lldb::DataExtractorSP data_sp, Status &error) {
+  Status py_error;
+  StructuredData::ObjectSP obj =
+      Dispatch("write_memory_at_address", py_error, addr, data_sp, error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return LLDB_INVALID_OFFSET;
+
+  // If there was an error on the python call, surface it to the user.
+  if (py_error.Fail())
+    error = py_error;
+
+  return obj->GetUnsignedIntegerValue(LLDB_INVALID_OFFSET);
+}
+
+StructuredData::ArraySP ScriptedProcessPythonInterface::GetLoadedImages() {
+  Status error;
+  StructuredData::ArraySP array =
+      Dispatch<StructuredData::ArraySP>("get_loaded_images", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, array, error))
+    return {};
+
+  return array;
 }
 
 lldb::pid_t ScriptedProcessPythonInterface::GetProcessID() {
-  llvm::Optional<unsigned long long> pid = GetGenericInteger("get_process_id");
-  return (!pid) ? LLDB_INVALID_PROCESS_ID : *pid;
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch("get_process_id", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return LLDB_INVALID_PROCESS_ID;
+
+  return obj->GetUnsignedIntegerValue(LLDB_INVALID_PROCESS_ID);
 }
 
 bool ScriptedProcessPythonInterface::IsAlive() {
-  llvm::Optional<unsigned long long> is_alive = GetGenericInteger("is_alive");
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch("is_alive", error);
 
-  if (!is_alive)
-    return false;
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return {};
 
-  return static_cast<bool>(*is_alive);
+  return obj->GetBooleanValue();
+}
+
+std::optional<std::string>
+ScriptedProcessPythonInterface::GetScriptedThreadPluginName() {
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch("get_scripted_thread_plugin", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return {};
+
+  return obj->GetStringValue().str();
+}
+
+lldb::ScriptedThreadInterfaceSP
+ScriptedProcessPythonInterface::CreateScriptedThreadInterface() {
+  return std::make_shared<ScriptedThreadPythonInterface>(m_interpreter);
+}
+
+StructuredData::DictionarySP ScriptedProcessPythonInterface::GetMetadata() {
+  Status error;
+  StructuredData::DictionarySP dict =
+      Dispatch<StructuredData::DictionarySP>("get_process_metadata", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
+    return {};
+
+  return dict;
 }
 
 #endif

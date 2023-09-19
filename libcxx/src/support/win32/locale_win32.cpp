@@ -1,4 +1,3 @@
-// -*- C++ -*-
 //===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -12,12 +11,14 @@
 #include <memory>
 #include <type_traits>
 
+#include <__locale_dir/locale_base_api/locale_guard.h>
+
 int __libcpp_vasprintf(char **sptr, const char *__restrict fmt, va_list ap);
 
 using std::__libcpp_locale_guard;
 
-// FIXME: base currently unused. Needs manual work to construct the new locale
-locale_t newlocale( int mask, const char * locale, locale_t /*base*/ )
+// FIXME: base and mask currently unused. Needs manual work to construct the new locale
+locale_t newlocale(int /*mask*/, const char * locale, locale_t /*base*/)
 {
     return {_create_locale( LC_ALL, locale ), locale};
 }
@@ -98,7 +99,10 @@ int snprintf_l(char *ret, size_t n, locale_t loc, const char *format, ...)
         ret, n, format, loc, ap);
 #else
     __libcpp_locale_guard __current(loc);
+    _LIBCPP_DIAGNOSTIC_PUSH
+    _LIBCPP_CLANG_DIAGNOSTIC_IGNORED("-Wformat-nonliteral")
     int result = vsnprintf( ret, n, format, ap );
+    _LIBCPP_DIAGNOSTIC_POP
 #endif
     va_end(ap);
     return result;

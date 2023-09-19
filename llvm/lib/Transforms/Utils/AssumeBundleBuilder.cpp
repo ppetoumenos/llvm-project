@@ -18,6 +18,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugCounter.h"
@@ -67,7 +68,8 @@ bool isUsefullToPreserve(Attribute::AttrKind Kind) {
 
 /// This function will try to transform the given knowledge into a more
 /// canonical one. the canonical knowledge maybe the given one.
-RetainedKnowledge canonicalizedKnowledge(RetainedKnowledge RK, DataLayout DL) {
+RetainedKnowledge canonicalizedKnowledge(RetainedKnowledge RK,
+                                         const DataLayout &DL) {
   switch (RK.AttrKind) {
   default:
     return RK;
@@ -103,7 +105,7 @@ struct AssumeBuilderState {
   Module *M;
 
   using MapKey = std::pair<Value *, Attribute::AttrKind>;
-  SmallMapVector<MapKey, unsigned, 8> AssumedKnowledgeMap;
+  SmallMapVector<MapKey, uint64_t, 8> AssumedKnowledgeMap;
   Instruction *InstBeingModified = nullptr;
   AssumptionCache* AC = nullptr;
   DominatorTree* DT = nullptr;
@@ -196,28 +198,27 @@ struct AssumeBuilderState {
         (!ShouldPreserveAllAttributes &&
          !isUsefullToPreserve(Attr.getKindAsEnum())))
       return;
-    unsigned AttrArg = 0;
+    uint64_t AttrArg = 0;
     if (Attr.isIntAttribute())
       AttrArg = Attr.getValueAsInt();
     addKnowledge({Attr.getKindAsEnum(), AttrArg, WasOn});
   }
 
   void addCall(const CallBase *Call) {
-    auto addAttrList = [&](AttributeList AttrList) {
-      for (unsigned Idx = AttributeList::FirstArgIndex;
-           Idx < AttrList.getNumAttrSets(); Idx++)
-        for (Attribute Attr : AttrList.getAttributes(Idx)) {
+    auto addAttrList = [&](AttributeList AttrList, unsigned NumArgs) {
+      for (unsigned Idx = 0; Idx < NumArgs; Idx++)
+        for (Attribute Attr : AttrList.getParamAttrs(Idx)) {
           bool IsPoisonAttr = Attr.hasAttribute(Attribute::NonNull) ||
                               Attr.hasAttribute(Attribute::Alignment);
-          if (!IsPoisonAttr || Call->isPassingUndefUB(Idx - 1))
-            addAttribute(Attr, Call->getArgOperand(Idx - 1));
+          if (!IsPoisonAttr || Call->isPassingUndefUB(Idx))
+            addAttribute(Attr, Call->getArgOperand(Idx));
         }
-      for (Attribute Attr : AttrList.getFnAttributes())
+      for (Attribute Attr : AttrList.getFnAttrs())
         addAttribute(Attr, nullptr);
     };
-    addAttrList(Call->getAttributes());
+    addAttrList(Call->getAttributes(), Call->arg_size());
     if (Function *Fn = Call->getCalledFunction())
-      addAttrList(Fn->getAttributes());
+      addAttrList(Fn->getAttributes(), Fn->arg_size());
   }
 
   AssumeInst *build() {
@@ -253,7 +254,7 @@ struct AssumeBuilderState {
     unsigned DerefSize = MemInst->getModule()
                              ->getDataLayout()
                              .getTypeStoreSize(AccType)
-                             .getKnownMinSize();
+                             .getKnownMinValue();
     if (DerefSize != 0) {
       addKnowledge({Attribute::Dereferenceable, DerefSize, Pointer});
       if (!NullPointerIsDefined(MemInst->getFunction(),
@@ -261,8 +262,7 @@ struct AssumeBuilderState {
         addKnowledge({Attribute::NonNull, 0u, Pointer});
     }
     if (MA.valueOrOne() > 1)
-      addKnowledge(
-          {Attribute::Alignment, unsigned(MA.valueOrOne().value()), Pointer});
+      addKnowledge({Attribute::Alignment, MA.valueOrOne().value(), Pointer});
   }
 
   void addInstruction(Instruction *I) {
@@ -290,17 +290,20 @@ AssumeInst *llvm::buildAssumeFromInst(Instruction *I) {
   return Builder.build();
 }
 
-void llvm::salvageKnowledge(Instruction *I, AssumptionCache *AC,
+bool llvm::salvageKnowledge(Instruction *I, AssumptionCache *AC,
                             DominatorTree *DT) {
   if (!EnableKnowledgeRetention || I->isTerminator())
-    return;
+    return false;
+  bool Changed = false;
   AssumeBuilderState Builder(I->getModule(), I, AC, DT);
   Builder.addInstruction(I);
   if (auto *Intr = Builder.build()) {
     Intr->insertBefore(I);
+    Changed = true;
     if (AC)
       AC->registerAssumption(Intr);
   }
+  return Changed;
 }
 
 AssumeInst *
@@ -392,7 +395,7 @@ struct AssumeSimplify {
   void dropRedundantKnowledge() {
     struct MapValue {
       IntrinsicInst *Assume;
-      unsigned ArgValue;
+      uint64_t ArgValue;
       CallInst::BundleOpInfo *BOI;
     };
     buildMapping(false);
@@ -563,57 +566,26 @@ PreservedAnalyses AssumeSimplifyPass::run(Function &F,
                                           FunctionAnalysisManager &AM) {
   if (!EnableKnowledgeRetention)
     return PreservedAnalyses::all();
-  simplifyAssumes(F, &AM.getResult<AssumptionAnalysis>(F),
-                  AM.getCachedResult<DominatorTreeAnalysis>(F));
-  return PreservedAnalyses::all();
-}
-
-namespace {
-class AssumeSimplifyPassLegacyPass : public FunctionPass {
-public:
-  static char ID;
-
-  AssumeSimplifyPassLegacyPass() : FunctionPass(ID) {
-    initializeAssumeSimplifyPassLegacyPassPass(
-        *PassRegistry::getPassRegistry());
-  }
-  bool runOnFunction(Function &F) override {
-    if (skipFunction(F) || !EnableKnowledgeRetention)
-      return false;
-    AssumptionCache &AC =
-        getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-    DominatorTreeWrapperPass *DTWP =
-        getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-    return simplifyAssumes(F, &AC, DTWP ? &DTWP->getDomTree() : nullptr);
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AssumptionCacheTracker>();
-
-    AU.setPreservesAll();
-  }
-};
-} // namespace
-
-char AssumeSimplifyPassLegacyPass::ID = 0;
-
-INITIALIZE_PASS_BEGIN(AssumeSimplifyPassLegacyPass, "assume-simplify",
-                      "Assume Simplify", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_END(AssumeSimplifyPassLegacyPass, "assume-simplify",
-                    "Assume Simplify", false, false)
-
-FunctionPass *llvm::createAssumeSimplifyPass() {
-  return new AssumeSimplifyPassLegacyPass();
+  if (!simplifyAssumes(F, &AM.getResult<AssumptionAnalysis>(F),
+                       AM.getCachedResult<DominatorTreeAnalysis>(F)))
+    return PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserveSet<CFGAnalyses>();
+  return PA;
 }
 
 PreservedAnalyses AssumeBuilderPass::run(Function &F,
                                          FunctionAnalysisManager &AM) {
   AssumptionCache *AC = &AM.getResult<AssumptionAnalysis>(F);
   DominatorTree* DT = AM.getCachedResult<DominatorTreeAnalysis>(F);
+  bool Changed = false;
   for (Instruction &I : instructions(F))
-    salvageKnowledge(&I, AC, DT);
-  return PreservedAnalyses::all();
+    Changed |= salvageKnowledge(&I, AC, DT);
+  if (!Changed)
+    PreservedAnalyses::all();
+  PreservedAnalyses PA;
+  PA.preserveSet<CFGAnalyses>();
+  return PA;
 }
 
 namespace {

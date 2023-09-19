@@ -16,14 +16,13 @@ namespace lldb_private {
 
 class ArchitectureAArch64 : public Architecture {
 public:
-  static ConstString GetPluginNameStatic();
+  static llvm::StringRef GetPluginNameStatic() { return "aarch64"; }
   static void Initialize();
   static void Terminate();
 
-  ConstString GetPluginName() override;
-  uint32_t GetPluginVersion() override;
+  llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
-  void OverrideStopInfo(Thread &thread) const override{};
+  void OverrideStopInfo(Thread &thread) const override {}
 
   const MemoryTagManager *GetMemoryTagManager() const override {
     return &m_memory_tag_manager;

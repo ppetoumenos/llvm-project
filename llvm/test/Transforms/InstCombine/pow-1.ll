@@ -1,29 +1,31 @@
 ; Test that the pow library call simplifier works correctly.
 ;
-; RUN: opt -instcombine -S < %s                                   | FileCheck %s --check-prefixes=CHECK,LIB,ANY
-; RUN: opt -instcombine -S < %s -mtriple=x86_64-apple-macosx10.9  | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=arm-apple-ios7.0         | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=x86_64-apple-macosx10.8  | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=arm-apple-ios6.0         | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=x86_64-netbsd            | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=arm-apple-tvos9.0        | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=arm-apple-watchos2.0     | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
+; RUN: opt -passes=instcombine -S < %s                                   | FileCheck %s --check-prefixes=CHECK,LIB,ANY
+; RUN: opt -passes=instcombine -S < %s -mtriple=x86_64-apple-macosx10.9  | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=arm-apple-ios7.0         | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=x86_64-apple-macosx10.8  | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=arm-apple-ios6.0         | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=x86_64-netbsd            | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=arm-apple-tvos9.0        | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=arm-apple-watchos2.0     | FileCheck %s --check-prefixes=CHECK,LIB,ANY,CHECK-EXP10
 ; rdar://7251832
-; RUN: opt -instcombine -S < %s -mtriple=i386-pc-windows-msvc18   | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC32,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=i386-pc-windows-msvc     | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC51,VC19,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=x86_64-pc-windows-msvc18 | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC64,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=x86_64-pc-windows-msvc   | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC83,VC19,CHECK-NO-EXP10
-; RUN: opt -instcombine -S < %s -mtriple=amdgcn--                 | FileCheck %s --check-prefixes=CHECK,NOLIB,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=i386-pc-windows-msvc18   | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC32,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=i386-pc-windows-msvc     | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC51,VC19,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=x86_64-pc-windows-msvc18 | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC64,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=x86_64-pc-windows-msvc   | FileCheck %s --check-prefixes=CHECK,LIB,MSVC,VC83,VC19,CHECK-NO-EXP10
+; RUN: opt -passes=instcombine -S < %s -mtriple=amdgcn--                 | FileCheck %s --check-prefixes=CHECK,NOLIB,CHECK-NO-EXP10
 
 ; NOTE: The readonly attribute on the pow call should be preserved
 ; in the cases below where pow is transformed into another function call.
 
 declare float @powf(float, float) nounwind readonly
 declare float @llvm.pow.f32(float, float)
+declare float @llvm.fabs.f32(float)
 declare double @pow(double, double) nounwind readonly
 declare double @llvm.pow.f64(double, double)
 declare <2 x float> @llvm.pow.v2f32(<2 x float>, <2 x float>) nounwind readonly
 declare <2 x double> @llvm.pow.v2f64(<2 x double>, <2 x double>) nounwind readonly
+declare void @llvm.assume(i1 noundef)
 
 ; Check pow(1.0, x) -> 1.0.
 
@@ -267,6 +269,83 @@ define float @powf_libcall_half_ninf(float %x) {
 ; NOLIB-NEXT:    ret float [[POW]]
 ;
   %retval = call ninf float @powf(float %x, float 0.5)
+  ret float %retval
+}
+
+; Make sure assume works when inferring no infinities
+define float @powf_libcall_half_assume_ninf(float %x) {
+; ANY-LABEL: define float @powf_libcall_half_assume_ninf
+; ANY-SAME: (float [[X:%.*]]) {
+; ANY-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; ANY-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; ANY-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; ANY-NEXT:    [[SQRTF:%.*]] = call float @sqrtf(float [[X]])
+; ANY-NEXT:    [[ABS:%.*]] = call float @llvm.fabs.f32(float [[SQRTF]])
+; ANY-NEXT:    ret float [[ABS]]
+;
+; VC32-LABEL: define float @powf_libcall_half_assume_ninf
+; VC32-SAME: (float [[X:%.*]]) {
+; VC32-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; VC32-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; VC32-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; VC32-NEXT:    [[RETVAL:%.*]] = call float @powf(float [[X]], float 5.000000e-01)
+; VC32-NEXT:    ret float [[RETVAL]]
+;
+; VC51-LABEL: define float @powf_libcall_half_assume_ninf
+; VC51-SAME: (float [[X:%.*]]) {
+; VC51-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; VC51-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; VC51-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; VC51-NEXT:    [[RETVAL:%.*]] = call float @powf(float [[X]], float 5.000000e-01)
+; VC51-NEXT:    ret float [[RETVAL]]
+;
+; VC64-LABEL: define float @powf_libcall_half_assume_ninf
+; VC64-SAME: (float [[X:%.*]]) {
+; VC64-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; VC64-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; VC64-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; VC64-NEXT:    [[SQRTF:%.*]] = call float @sqrtf(float [[X]])
+; VC64-NEXT:    [[ABS:%.*]] = call float @llvm.fabs.f32(float [[SQRTF]])
+; VC64-NEXT:    ret float [[ABS]]
+;
+; VC83-LABEL: define float @powf_libcall_half_assume_ninf
+; VC83-SAME: (float [[X:%.*]]) {
+; VC83-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; VC83-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; VC83-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; VC83-NEXT:    [[SQRTF:%.*]] = call float @sqrtf(float [[X]])
+; VC83-NEXT:    [[ABS:%.*]] = call float @llvm.fabs.f32(float [[SQRTF]])
+; VC83-NEXT:    ret float [[ABS]]
+;
+; NOLIB-LABEL: define float @powf_libcall_half_assume_ninf
+; NOLIB-SAME: (float [[X:%.*]]) {
+; NOLIB-NEXT:    [[FABS:%.*]] = call float @llvm.fabs.f32(float [[X]])
+; NOLIB-NEXT:    [[NOT_INF:%.*]] = fcmp one float [[FABS]], 0x7FF0000000000000
+; NOLIB-NEXT:    call void @llvm.assume(i1 [[NOT_INF]])
+; NOLIB-NEXT:    [[RETVAL:%.*]] = call float @powf(float [[X]], float 5.000000e-01)
+; NOLIB-NEXT:    ret float [[RETVAL]]
+;
+  %fabs = call float @llvm.fabs.f32(float %x)
+  %not.inf = fcmp one float %fabs, 0x7FF0000000000000
+  call void @llvm.assume(i1 %not.inf)
+  %retval = call float @powf(float %x, float 0.5)
+  ret float %retval
+}
+
+define float @powf_libcall_half_ninf_tail(float %x) {
+; CHECK-LABEL: @powf_libcall_half_ninf_tail(
+; ANY-NEXT:      %sqrtf = call ninf float @sqrtf(float %x)
+; ANY-NEXT:      %abs = tail call ninf float @llvm.fabs.f32(float %sqrtf)
+; ANY-NEXT:      ret float %abs
+  %retval = tail call ninf float @powf(float %x, float 0.5)
+  ret float %retval
+}
+
+define float @powf_libcall_half_ninf_musttail(float %x, float %y) {
+; CHECK-LABEL: @powf_libcall_half_ninf_musttail(
+; ANY-NEXT:      %retval = musttail call ninf float @powf(float %x, float 5.000000e-01)
+; ANY-NEXT:      ret float %retval
+  %retval = musttail call ninf float @powf(float %x, float 0.5)
   ret float %retval
 }
 

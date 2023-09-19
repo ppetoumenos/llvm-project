@@ -10,6 +10,7 @@
 #include "llvm/Object/COFF.h"
 #include "llvm/ObjectYAML/WasmYAML.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LEB128.h"
 #include "llvm/Support/YAMLTraits.h"
 
 using namespace llvm;
@@ -51,7 +52,7 @@ static WasmYAML::Table makeTable(uint32_t Index,
 std::unique_ptr<WasmYAML::CustomSection>
 WasmDumper::dumpCustomSection(const WasmSection &WasmSec) {
   std::unique_ptr<WasmYAML::CustomSection> CustomSec;
-  if (WasmSec.Name == "dylink") {
+  if (WasmSec.Name == "dylink" || WasmSec.Name == "dylink.0") {
     std::unique_ptr<WasmYAML::DylinkSection> DylinkSec =
         std::make_unique<WasmYAML::DylinkSection>();
     const wasm::WasmDylinkInfo& Info = Obj.dylinkInfo();
@@ -60,6 +61,10 @@ WasmDumper::dumpCustomSection(const WasmSection &WasmSec) {
     DylinkSec->TableSize = Info.TableSize;
     DylinkSec->TableAlignment = Info.TableAlignment;
     DylinkSec->Needed = Info.Needed;
+    for (const auto &Imp : Info.ImportInfo)
+      DylinkSec->ImportInfo.push_back({Imp.Module, Imp.Field, Imp.Flags});
+    for (const auto &Exp : Info.ExportInfo)
+      DylinkSec->ExportInfo.push_back({Exp.Name, Exp.Flags});
     CustomSec = std::move(DylinkSec);
   } else if (WasmSec.Name == "name") {
     std::unique_ptr<WasmYAML::NameSection> NameSec =
@@ -239,8 +244,7 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
           Im.GlobalImport.Mutable = Import.Global.Mutable;
           break;
         case wasm::WASM_EXTERNAL_TAG:
-          Im.TagImport.Attribute = Import.Tag.Attribute;
-          Im.TagImport.SigIndex = Import.Tag.SigIndex;
+          Im.SigIndex = Import.SigIndex;
           break;
         case wasm::WASM_EXTERNAL_TABLE:
           // FIXME: Currently we always output an index of 0 for any imported
@@ -258,8 +262,8 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
     }
     case wasm::WASM_SEC_FUNCTION: {
       auto FuncSec = std::make_unique<WasmYAML::FunctionSection>();
-      for (const auto &Func : Obj.functionTypes()) {
-        FuncSec->FunctionTypes.push_back(Func);
+      for (const auto &Func : Obj.functions()) {
+        FuncSec->FunctionTypes.push_back(Func.SigIndex);
       }
       S = std::move(FuncSec);
       break;
@@ -283,11 +287,7 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
     case wasm::WASM_SEC_TAG: {
       auto TagSec = std::make_unique<WasmYAML::TagSection>();
       for (auto &Tag : Obj.tags()) {
-        WasmYAML::Tag T;
-        T.Index = Tag.Index;
-        T.Attribute = Tag.Type.Attribute;
-        T.SigIndex = Tag.Type.SigIndex;
-        TagSec->Tags.push_back(T);
+        TagSec->TagTypes.push_back(Tag.SigIndex);
       }
       S = std::move(TagSec);
       break;
@@ -299,7 +299,12 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
         G.Index = Global.Index;
         G.Type = Global.Type.Type;
         G.Mutable = Global.Type.Mutable;
-        G.InitExpr = Global.InitExpr;
+        G.Init.Extended = Global.InitExpr.Extended;
+        if (Global.InitExpr.Extended) {
+          G.Init.Body = Global.InitExpr.Body;
+        } else {
+          G.Init.Inst = Global.InitExpr.Inst;
+        }
         GlobalSec->Globals.push_back(G);
       }
       S = std::move(GlobalSec);
@@ -330,7 +335,12 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
         Seg.Flags = Segment.Flags;
         Seg.TableNumber = Segment.TableNumber;
         Seg.ElemKind = Segment.ElemKind;
-        Seg.Offset = Segment.Offset;
+        Seg.Offset.Extended = Segment.Offset.Extended;
+        if (Seg.Offset.Extended) {
+          Seg.Offset.Body = yaml::BinaryRef(Segment.Offset.Body);
+        } else {
+          Seg.Offset.Inst = Segment.Offset.Inst;
+        }
         append_range(Seg.Functions, Segment.Functions);
         ElemSec->Segments.push_back(Seg);
       }
@@ -361,7 +371,12 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
         Seg.SectionOffset = Segment.SectionOffset;
         Seg.InitFlags = Segment.Data.InitFlags;
         Seg.MemoryIndex = Segment.Data.MemoryIndex;
-        Seg.Offset = Segment.Data.Offset;
+        Seg.Offset.Extended = Segment.Data.Offset.Extended;
+        if (Seg.Offset.Extended) {
+          Seg.Offset.Body = yaml::BinaryRef(Segment.Data.Offset.Body);
+        } else {
+          Seg.Offset.Inst = Segment.Data.Offset.Inst;
+        }
         Seg.Content = yaml::BinaryRef(Segment.Data.Content);
         DataSec->Segments.push_back(Seg);
       }
@@ -378,6 +393,17 @@ ErrorOr<WasmYAML::Object *> WasmDumper::dump() {
       llvm_unreachable("Unknown section type");
       break;
     }
+
+    // Only propagate the section size encoding length if it's not the minimal
+    // size or 5 (the default "padded" value). This is to avoid having every
+    // YAML output polluted with this value when we usually don't care about it
+    // (and avoid rewriting all the test expectations).
+    if (WasmSec.HeaderSecSizeEncodingLen &&
+        WasmSec.HeaderSecSizeEncodingLen !=
+            getULEB128Size(WasmSec.Content.size()) &&
+        WasmSec.HeaderSecSizeEncodingLen != 5)
+      S->HeaderSecSizeEncodingLen = WasmSec.HeaderSecSizeEncodingLen;
+
     for (const wasm::WasmRelocation &Reloc : WasmSec.Relocations) {
       WasmYAML::Relocation R;
       R.Type = Reloc.Type;

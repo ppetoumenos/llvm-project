@@ -1,7 +1,3 @@
-if ( CMAKE_SYSTEM_NAME MATCHES "Windows" )
-  add_definitions( -DEXPORT_LIBLLDB )
-endif()
-
 get_property(LLDB_ALL_PLUGINS GLOBAL PROPERTY LLDB_PLUGINS)
 
 if(LLDB_BUILD_FRAMEWORK)
@@ -10,6 +6,11 @@ if(LLDB_BUILD_FRAMEWORK)
 endif()
 
 if(LLDB_ENABLE_PYTHON)
+  if (APPLE AND LLVM_ENABLE_LOCAL_SUBMODULE_VISIBILITY)
+    # Work around an issue with the Python headers, which have a modular include
+    # inside an extern "C" block.
+    remove_module_flags()
+  endif()
   get_target_property(python_bindings_dir swig_wrapper_python BINARY_DIR)
   set(lldb_python_wrapper ${python_bindings_dir}/LLDBWrapPython.cpp)
 endif()
@@ -63,6 +64,7 @@ add_lldb_library(liblldb SHARED ${option_framework}
   SBQueue.cpp
   SBQueueItem.cpp
   SBReproducer.cpp
+  SBScriptObject.cpp
   SBSection.cpp
   SBSourceManager.cpp
   SBStream.cpp
@@ -76,6 +78,7 @@ add_lldb_library(liblldb SHARED ${option_framework}
   SBThreadCollection.cpp
   SBThreadPlan.cpp
   SBTrace.cpp
+  SBTraceCursor.cpp
   SBType.cpp
   SBTypeCategory.cpp
   SBTypeEnumMember.cpp
@@ -94,7 +97,6 @@ add_lldb_library(liblldb SHARED ${option_framework}
   ${lldb_lua_wrapper}
 
   LINK_LIBS
-    lldbBase
     lldbBreakpoint
     lldbCore
     lldbDataFormatters
@@ -105,6 +107,7 @@ add_lldb_library(liblldb SHARED ${option_framework}
     lldbSymbol
     lldbTarget
     lldbUtility
+    lldbVersion
     ${LLDB_ALL_PLUGINS}
   LINK_COMPONENTS
     Support
@@ -165,6 +168,7 @@ set_target_properties(liblldb
   VERSION ${LLDB_VERSION}
 )
 
+target_compile_definitions(liblldb PRIVATE LLDB_IN_LIBLLDB)
 if (NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
   if (NOT LLDB_EXPORT_ALL_SYMBOLS)
     # If we're not exporting all symbols, we'll want to explicitly set
@@ -200,17 +204,25 @@ else()
   # When building the LLDB framework, this isn't necessary as there we copy everything we need into
   # the framework (including the Clang resourece directory).
   if(NOT LLDB_BUILD_FRAMEWORK)
-    set(LLDB_CLANG_RESOURCE_DIR_PARENT "$<TARGET_FILE_DIR:liblldb>/clang")
-    file(MAKE_DIRECTORY "${LLDB_CLANG_RESOURCE_DIR_PARENT}")
+    set(LLDB_CLANG_RESOURCE_DIR "$<TARGET_FILE_DIR:liblldb>/clang")
     add_custom_command(TARGET liblldb POST_BUILD
-      COMMENT "Linking Clang resource dir into LLDB build directory: ${LLDB_CLANG_RESOURCE_DIR_PARENT}"
-      COMMAND ${CMAKE_COMMAND} -E make_directory "${LLDB_CLANG_RESOURCE_DIR_PARENT}"
-      COMMAND ${CMAKE_COMMAND} -E create_symlink "${LLDB_EXTERNAL_CLANG_RESOURCE_DIR}"
-              "${LLDB_CLANG_RESOURCE_DIR_PARENT}/${LLDB_CLANG_RESOURCE_DIR_NAME}"
+      COMMENT "Linking Clang resource dir into LLDB build directory: ${LLDB_CLANG_RESOURCE_DIR}"
+      COMMAND ${CMAKE_COMMAND} -E create_symlink
+      "${LLDB_EXTERNAL_CLANG_RESOURCE_DIR}" "${LLDB_CLANG_RESOURCE_DIR}"
     )
   endif()
 endif()
 
 if(LLDB_BUILD_FRAMEWORK)
   include(LLDBFramework)
+
+  if (TARGET install-liblldb)
+    add_dependencies(install-liblldb
+      lldb-framework-cleanup)
+  endif()
+
+  if (TARGET install-liblldb-stripped)
+    add_dependencies(install-liblldb-stripped
+      lldb-framework-cleanup)
+  endif()
 endif()

@@ -20,7 +20,7 @@
 #include "Types.h"
 #include "Utils.h"
 
-using namespace _OMP;
+using namespace ompx;
 
 // TODO:
 struct DynamicScheduleTracker {
@@ -43,10 +43,10 @@ struct DynamicScheduleTracker {
 #define NOT_FINISHED 1
 #define LAST_CHUNK 2
 
-#pragma omp declare target
+#pragma omp begin declare target device_type(nohost)
 
 // TODO: This variable is a hack inherited from the old runtime.
-uint64_t SHARED(Cnt);
+static uint64_t SHARED(Cnt);
 
 template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
   ////////////////////////////////////////////////////////////////////////////////
@@ -114,14 +114,10 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
   ////////////////////////////////////////////////////////////////////////////////
   // Support for Static Init
 
-  static void for_static_init(int32_t gtid, int32_t schedtype,
-                              int32_t *plastiter, T *plower, T *pupper,
-                              ST *pstride, ST chunk, bool IsSPMDExecutionMode) {
-    // When IsRuntimeUninitialized is true, we assume that the caller is
-    // in an L0 parallel region and that all worker threads participate.
-
-    // Assume we are in teams region or that we use a single block
-    // per target region
+  static void for_static_init(int32_t, int32_t schedtype, int32_t *plastiter,
+                              T *plower, T *pupper, ST *pstride, ST chunk,
+                              bool IsSPMDExecutionMode) {
+    int32_t gtid = omp_get_thread_num();
     int numberOfActiveOMPThreads = omp_get_num_threads();
 
     // All warps that are in excess of the maximum requested, do
@@ -143,6 +139,7 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
                        numberOfActiveOMPThreads);
         break;
       }
+      [[fallthrough]];
     } // note: if chunk <=0, use nochunk
     case kmp_sched_static_balanced_chunk: {
       if (chunk > 0) {
@@ -161,6 +158,7 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
           ub = oldUb;
         break;
       }
+      [[fallthrough]];
     } // note: if chunk <=0, use nochunk
     case kmp_sched_static_nochunk: {
       ForStaticNoChunk(lastiter, lb, ub, stride, chunk, gtid,
@@ -172,8 +170,9 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
         ForStaticChunk(lastiter, lb, ub, stride, chunk, omp_get_team_num(),
                        omp_get_num_teams());
         break;
-      } // note: if chunk <=0, use nochunk
-    }
+      }
+      [[fallthrough]];
+    } // note: if chunk <=0, use nochunk
     case kmp_sched_distr_static_nochunk: {
       ForStaticNoChunk(lastiter, lb, ub, stride, chunk, omp_get_team_num(),
                        omp_get_num_teams());
@@ -330,7 +329,7 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
       __kmpc_barrier(loc, threadId);
       if (tid == 0) {
         Cnt = 0;
-        fence::team(__ATOMIC_SEQ_CST);
+        fence::team(atomic::seq_cst);
       }
       __kmpc_barrier(loc, threadId);
     }
@@ -345,9 +344,9 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
     uint32_t change = utils::popc(active);
     __kmpc_impl_lanemask_t lane_mask_lt = mapping::lanemaskLT();
     unsigned int rank = utils::popc(active & lane_mask_lt);
-    uint64_t warp_res;
+    uint64_t warp_res = 0;
     if (rank == 0) {
-      warp_res = atomic::add(&Cnt, change, __ATOMIC_SEQ_CST);
+      warp_res = atomic::add(&Cnt, change, atomic::seq_cst);
     }
     warp_res = utils::shuffle(active, warp_res, leader);
     return warp_res + rank;
@@ -447,7 +446,7 @@ template <typename T, typename ST> struct omptarget_nvptx_LoopSupport {
 
 // TODO: This is a stopgap. We probably want to expand the dispatch API to take
 //       an DST pointer which can then be allocated properly without malloc.
-DynamicScheduleTracker *THREAD_LOCAL(ThreadDSTPtr);
+static DynamicScheduleTracker *THREAD_LOCAL(ThreadDSTPtr);
 
 // Create a new DST, link the current one, and define the new as current.
 static DynamicScheduleTracker *pushDST() {
@@ -592,7 +591,49 @@ void __kmpc_for_static_init_8u(IdentTy *loc, int32_t global_tid,
       mapping::isSPMDMode());
 }
 
+void __kmpc_distribute_static_init_4(IdentTy *loc, int32_t global_tid,
+                                     int32_t schedtype, int32_t *plastiter,
+                                     int32_t *plower, int32_t *pupper,
+                                     int32_t *pstride, int32_t incr,
+                                     int32_t chunk) {
+  omptarget_nvptx_LoopSupport<int32_t, int32_t>::for_static_init(
+      global_tid, schedtype, plastiter, plower, pupper, pstride, chunk,
+      mapping::isSPMDMode());
+}
+
+void __kmpc_distribute_static_init_4u(IdentTy *loc, int32_t global_tid,
+                                      int32_t schedtype, int32_t *plastiter,
+                                      uint32_t *plower, uint32_t *pupper,
+                                      int32_t *pstride, int32_t incr,
+                                      int32_t chunk) {
+  omptarget_nvptx_LoopSupport<uint32_t, int32_t>::for_static_init(
+      global_tid, schedtype, plastiter, plower, pupper, pstride, chunk,
+      mapping::isSPMDMode());
+}
+
+void __kmpc_distribute_static_init_8(IdentTy *loc, int32_t global_tid,
+                                     int32_t schedtype, int32_t *plastiter,
+                                     int64_t *plower, int64_t *pupper,
+                                     int64_t *pstride, int64_t incr,
+                                     int64_t chunk) {
+  omptarget_nvptx_LoopSupport<int64_t, int64_t>::for_static_init(
+      global_tid, schedtype, plastiter, plower, pupper, pstride, chunk,
+      mapping::isSPMDMode());
+}
+
+void __kmpc_distribute_static_init_8u(IdentTy *loc, int32_t global_tid,
+                                      int32_t schedtype, int32_t *plastiter,
+                                      uint64_t *plower, uint64_t *pupper,
+                                      int64_t *pstride, int64_t incr,
+                                      int64_t chunk) {
+  omptarget_nvptx_LoopSupport<uint64_t, int64_t>::for_static_init(
+      global_tid, schedtype, plastiter, plower, pupper, pstride, chunk,
+      mapping::isSPMDMode());
+}
+
 void __kmpc_for_static_fini(IdentTy *loc, int32_t global_tid) {}
+
+void __kmpc_distribute_static_fini(IdentTy *loc, int32_t global_tid) {}
 }
 
 #pragma omp end declare target

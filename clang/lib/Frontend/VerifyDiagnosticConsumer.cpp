@@ -99,9 +99,7 @@ public:
     return true;
   }
 
-  bool match(StringRef S) override {
-    return S.find(Text) != StringRef::npos;
-  }
+  bool match(StringRef S) override { return S.contains(Text); }
 };
 
 /// RegexDirective - Directive with regular-expression matching.
@@ -543,9 +541,8 @@ static bool ParseDirective(StringRef S, ExpectedData *ED, SourceManager &SM,
           ExpectedLoc = SourceLocation();
         } else {
           // Lookup file via Preprocessor, like a #include.
-          const DirectoryLookup *CurDir;
-          Optional<FileEntryRef> File =
-              PP->LookupFile(Pos, Filename, false, nullptr, nullptr, CurDir,
+          OptionalFileEntryRef File =
+              PP->LookupFile(Pos, Filename, false, nullptr, nullptr, nullptr,
                              nullptr, nullptr, nullptr, nullptr, nullptr);
           if (!File) {
             Diags.Report(Pos.getLocWithOffset(PH.C - PH.Begin),
@@ -740,12 +737,12 @@ void VerifyDiagnosticConsumer::HandleDiagnostic(
       Loc = SrcManager->getExpansionLoc(Loc);
       FileID FID = SrcManager->getFileID(Loc);
 
-      const FileEntry *FE = SrcManager->getFileEntryForID(FID);
+      auto FE = SrcManager->getFileEntryRefForID(FID);
       if (FE && CurrentPreprocessor && SrcManager->isLoadedFileID(FID)) {
         // If the file is a modules header file it shall not be parsed
         // for expected-* directives.
         HeaderSearch &HS = CurrentPreprocessor->getHeaderSearchInfo();
-        if (HS.findModuleForHeader(FE))
+        if (HS.findModuleForHeader(*FE))
           PS = IsUnparsedNoDirectives;
       }
 
@@ -871,16 +868,18 @@ static unsigned PrintUnexpected(DiagnosticsEngine &Diags, SourceManager *SourceM
       OS << "\n  (frontend)";
     else {
       OS << "\n ";
-      if (const FileEntry *File = SourceMgr->getFileEntryForID(
-                                                SourceMgr->getFileID(I->first)))
+      if (OptionalFileEntryRef File =
+              SourceMgr->getFileEntryRefForID(SourceMgr->getFileID(I->first)))
         OS << " File " << File->getName();
       OS << " Line " << SourceMgr->getPresumedLineNumber(I->first);
     }
     OS << ": " << I->second;
   }
 
+  std::string Prefix = *Diags.getDiagnosticOptions().VerifyPrefixes.begin();
+  std::string KindStr = Prefix + "-" + Kind;
   Diags.Report(diag::err_verify_inconsistent_diags).setForceEmit()
-    << Kind << /*Unexpected=*/true << OS.str();
+      << KindStr << /*Unexpected=*/true << OS.str();
   return std::distance(diag_begin, diag_end);
 }
 
@@ -910,8 +909,10 @@ static unsigned PrintExpected(DiagnosticsEngine &Diags,
     OS << ": " << D->Text;
   }
 
+  std::string Prefix = *Diags.getDiagnosticOptions().VerifyPrefixes.begin();
+  std::string KindStr = Prefix + "-" + Kind;
   Diags.Report(diag::err_verify_inconsistent_diags).setForceEmit()
-    << Kind << /*Unexpected=*/false << OS.str();
+      << KindStr << /*Unexpected=*/false << OS.str();
   return DL.size();
 }
 
@@ -1029,12 +1030,12 @@ void VerifyDiagnosticConsumer::UpdateParsedFileStatus(SourceManager &SM,
   if (FID.isInvalid())
     return;
 
-  const FileEntry *FE = SM.getFileEntryForID(FID);
+  OptionalFileEntryRef FE = SM.getFileEntryRefForID(FID);
 
   if (PS == IsParsed) {
     // Move the FileID from the unparsed set to the parsed set.
     UnparsedFiles.erase(FID);
-    ParsedFiles.insert(std::make_pair(FID, FE));
+    ParsedFiles.insert(std::make_pair(FID, FE ? &FE->getFileEntry() : nullptr));
   } else if (!ParsedFiles.count(FID) && !UnparsedFiles.count(FID)) {
     // Add the FileID to the unparsed set if we haven't seen it before.
 
@@ -1075,17 +1076,17 @@ void VerifyDiagnosticConsumer::CheckDiagnostics() {
     // Iterate through list of unparsed files.
     for (const auto &I : UnparsedFiles) {
       const UnparsedFileStatus &Status = I.second;
-      const FileEntry *FE = Status.getFile();
+      OptionalFileEntryRef FE = Status.getFile();
 
       // Skip files that have been parsed via an alias.
-      if (FE && ParsedFileCache.count(FE))
+      if (FE && ParsedFileCache.count(*FE))
         continue;
 
       // Report a fatal error if this file contained directives.
       if (Status.foundDirectives()) {
-        llvm::report_fatal_error(Twine("-verify directives found after rather"
-                                       " than during normal parsing of ",
-                                 StringRef(FE ? FE->getName() : "(unknown)")));
+        llvm::report_fatal_error("-verify directives found after rather"
+                                 " than during normal parsing of " +
+                                 (FE ? FE->getName() : "(unknown)"));
       }
     }
 

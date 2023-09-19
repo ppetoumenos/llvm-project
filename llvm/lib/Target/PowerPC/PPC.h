@@ -33,7 +33,6 @@ class MCInst;
 class MCOperand;
 class ModulePass;
 
-FunctionPass *createPPCCTRLoops();
 #ifndef NDEBUG
   FunctionPass *createPPCCTRLoopsVerify();
 #endif
@@ -47,18 +46,19 @@ FunctionPass *createPPCCTRLoops();
   FunctionPass *createPPCMIPeepholePass();
   FunctionPass *createPPCBranchSelectionPass();
   FunctionPass *createPPCBranchCoalescingPass();
-  FunctionPass *createPPCISelDag(PPCTargetMachine &TM, CodeGenOpt::Level OL);
+  FunctionPass *createPPCISelDag(PPCTargetMachine &TM, CodeGenOptLevel OL);
   FunctionPass *createPPCTLSDynamicCallPass();
   FunctionPass *createPPCBoolRetToIntPass();
   FunctionPass *createPPCExpandISELPass();
   FunctionPass *createPPCPreEmitPeepholePass();
   FunctionPass *createPPCExpandAtomicPseudoPass();
+  FunctionPass *createPPCCTRLoopsPass();
+  ModulePass *createPPCMergeStringPoolPass();
   void LowerPPCMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
                                     AsmPrinter &AP);
   bool LowerPPCMachineOperandToMCOperand(const MachineOperand &MO,
                                          MCOperand &OutMO, AsmPrinter &AP);
 
-  void initializePPCCTRLoopsPass(PassRegistry&);
 #ifndef NDEBUG
   void initializePPCCTRLoopsVerifyPass(PassRegistry&);
 #endif
@@ -77,12 +77,19 @@ FunctionPass *createPPCCTRLoops();
   void initializePPCTLSDynamicCallPass(PassRegistry &);
   void initializePPCMIPeepholePass(PassRegistry&);
   void initializePPCExpandAtomicPseudoPass(PassRegistry &);
+  void initializePPCCTRLoopsPass(PassRegistry &);
+  void initializePPCDAGToDAGISelPass(PassRegistry &);
+  void initializePPCMergeStringPoolPass(PassRegistry &);
 
   extern char &PPCVSXFMAMutateID;
 
   ModulePass *createPPCLowerMASSVEntriesPass();
   void initializePPCLowerMASSVEntriesPass(PassRegistry &);
   extern char &PPCLowerMASSVEntriesID;
+
+  ModulePass *createPPCGenScalarMASSEntriesPass();
+  void initializePPCGenScalarMASSEntriesPass(PassRegistry &);
+  extern char &PPCGenScalarMASSEntriesID;
 
   InstructionSelector *
   createPPCInstructionSelector(const PPCTargetMachine &, const PPCSubtarget &,
@@ -122,8 +129,9 @@ FunctionPass *createPPCCTRLoops();
     /// General Dynamic model for AIX.
     MO_TLSGD_FLAG = 32,
 
-    /// MO_TPREL_FLAG - If this bit is set the symbol reference is relative to
-    /// TLS Initial Exec model.
+    /// MO_TPREL_FLAG - If this bit is set, the symbol reference is relative to
+    /// the thread pointer and the symbol can be used for the TLS Initial Exec
+    /// and Local Exec models.
     MO_TPREL_FLAG = 64,
 
     /// MO_TLSLD_FLAG - If this bit is set the symbol reference is relative to

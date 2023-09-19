@@ -68,7 +68,6 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -485,9 +484,9 @@ void StraightLineStrengthReduce::allocateCandidatesAndFindBasisForGEP(
   //   = B + (sext(Idx) * sext(S)) * ElementSize
   //   = B + (sext(Idx) * ElementSize) * sext(S)
   // Casting to IntegerType is safe because we skipped vector GEPs.
-  IntegerType *IntPtrTy = cast<IntegerType>(DL->getIntPtrType(I->getType()));
+  IntegerType *PtrIdxTy = cast<IntegerType>(DL->getIndexType(I->getType()));
   ConstantInt *ScaledIdx = ConstantInt::get(
-      IntPtrTy, Idx->getSExtValue() * (int64_t)ElementSize, true);
+      PtrIdxTy, Idx->getSExtValue() * (int64_t)ElementSize, true);
   allocateCandidatesAndFindBasis(Candidate::GEP, B, ScaledIdx, S, I);
 }
 
@@ -550,18 +549,18 @@ void StraightLineStrengthReduce::allocateCandidatesAndFindBasisForGEP(
     Value *ArrayIdx = GEP->getOperand(I);
     uint64_t ElementSize = DL->getTypeAllocSize(GTI.getIndexedType());
     if (ArrayIdx->getType()->getIntegerBitWidth() <=
-        DL->getPointerSizeInBits(GEP->getAddressSpace())) {
-      // Skip factoring if ArrayIdx is wider than the pointer size, because
-      // ArrayIdx is implicitly truncated to the pointer size.
+        DL->getIndexSizeInBits(GEP->getAddressSpace())) {
+      // Skip factoring if ArrayIdx is wider than the index size, because
+      // ArrayIdx is implicitly truncated to the index size.
       factorArrayIndex(ArrayIdx, BaseExpr, ElementSize, GEP);
     }
     // When ArrayIdx is the sext of a value, we try to factor that value as
     // well.  Handling this case is important because array indices are
-    // typically sign-extended to the pointer size.
+    // typically sign-extended to the pointer index size.
     Value *TruncatedArrayIdx = nullptr;
     if (match(ArrayIdx, m_SExt(m_Value(TruncatedArrayIdx))) &&
         TruncatedArrayIdx->getType()->getIntegerBitWidth() <=
-            DL->getPointerSizeInBits(GEP->getAddressSpace())) {
+            DL->getIndexSizeInBits(GEP->getAddressSpace())) {
       // Skip factoring if TruncatedArrayIdx is wider than the pointer size,
       // because TruncatedArrayIdx is implicitly truncated to the pointer size.
       factorArrayIndex(TruncatedArrayIdx, BaseExpr, ElementSize, GEP);
@@ -607,7 +606,7 @@ Value *StraightLineStrengthReduce::emitBump(const Candidate &Basis,
   if (IndexOffset == 1)
     return C.Stride;
   // Common case 2: if (i' - i) is -1, Bump = -S.
-  if (IndexOffset.isAllOnesValue())
+  if (IndexOffset.isAllOnes())
     return Builder.CreateNeg(C.Stride);
 
   // Otherwise, Bump = (i' - i) * sext/trunc(S). Note that (i' - i) and S may
@@ -620,7 +619,7 @@ Value *StraightLineStrengthReduce::emitBump(const Candidate &Basis,
     ConstantInt *Exponent = ConstantInt::get(DeltaType, IndexOffset.logBase2());
     return Builder.CreateShl(ExtendedStride, Exponent);
   }
-  if ((-IndexOffset).isPowerOf2()) {
+  if (IndexOffset.isNegatedPowerOf2()) {
     // If (i - i') is a power of 2, Bump = -sext/trunc(S) << log(i' - i).
     ConstantInt *Exponent =
         ConstantInt::get(DeltaType, (-IndexOffset).logBase2());
@@ -676,32 +675,24 @@ void StraightLineStrengthReduce::rewriteCandidateWithBasis(
   }
   case Candidate::GEP:
     {
-      Type *IntPtrTy = DL->getIntPtrType(C.Ins->getType());
-      bool InBounds = cast<GetElementPtrInst>(C.Ins)->isInBounds();
-      if (BumpWithUglyGEP) {
-        // C = (char *)Basis + Bump
-        unsigned AS = Basis.Ins->getType()->getPointerAddressSpace();
-        Type *CharTy = Type::getInt8PtrTy(Basis.Ins->getContext(), AS);
-        Reduced = Builder.CreateBitCast(Basis.Ins, CharTy);
-        if (InBounds)
-          Reduced =
-              Builder.CreateInBoundsGEP(Builder.getInt8Ty(), Reduced, Bump);
-        else
-          Reduced = Builder.CreateGEP(Builder.getInt8Ty(), Reduced, Bump);
-        Reduced = Builder.CreateBitCast(Reduced, C.Ins->getType());
-      } else {
-        // C = gep Basis, Bump
-        // Canonicalize bump to pointer size.
-        Bump = Builder.CreateSExtOrTrunc(Bump, IntPtrTy);
-        if (InBounds)
-          Reduced = Builder.CreateInBoundsGEP(
-              cast<GetElementPtrInst>(Basis.Ins)->getResultElementType(),
-              Basis.Ins, Bump);
-        else
-          Reduced = Builder.CreateGEP(
-              cast<GetElementPtrInst>(Basis.Ins)->getResultElementType(),
-              Basis.Ins, Bump);
-      }
+    Type *OffsetTy = DL->getIndexType(C.Ins->getType());
+    bool InBounds = cast<GetElementPtrInst>(C.Ins)->isInBounds();
+    if (BumpWithUglyGEP) {
+      // C = (char *)Basis + Bump
+      unsigned AS = Basis.Ins->getType()->getPointerAddressSpace();
+      Type *CharTy = Type::getInt8PtrTy(Basis.Ins->getContext(), AS);
+      Reduced = Builder.CreateBitCast(Basis.Ins, CharTy);
+      Reduced =
+          Builder.CreateGEP(Builder.getInt8Ty(), Reduced, Bump, "", InBounds);
+      Reduced = Builder.CreateBitCast(Reduced, C.Ins->getType());
+    } else {
+      // C = gep Basis, Bump
+      // Canonicalize bump to pointer size.
+      Bump = Builder.CreateSExtOrTrunc(Bump, OffsetTy);
+      Reduced = Builder.CreateGEP(
+          cast<GetElementPtrInst>(Basis.Ins)->getResultElementType(), Basis.Ins,
+          Bump, "", InBounds);
+    }
       break;
     }
   default:

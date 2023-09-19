@@ -1,84 +1,11 @@
-macro(pythonize_bool var)
-  if (${var})
-    set(${var} True)
-  else()
-    set(${var} False)
-  endif()
-endmacro()
+add_subdirectory(tools)
 
-set(LIBCXX_LIT_VARIANT "libcxx" CACHE STRING
-    "Configuration variant to use for LIT.")
-
-set(LIBCXX_TEST_LINKER_FLAGS "" CACHE STRING
-    "Additonal linker flags to pass when compiling the tests")
-set(LIBCXX_TEST_COMPILER_FLAGS "" CACHE STRING
-    "Additonal linker flags to pass when compiling the tests")
-
-# The tests shouldn't link to any ABI library when it has been linked into
-# libc++ statically or via a linker script.
-if (LIBCXX_ENABLE_STATIC_ABI_LIBRARY OR LIBCXX_ENABLE_ABI_LINKER_SCRIPT)
-  set(LIBCXX_CXX_ABI_LIBNAME "none")
-endif()
-
-# The tests shouldn't link to libunwind if we have a linker script which
-# already does so.
-if (LIBCXX_ENABLE_ABI_LINKER_SCRIPT)
-  set(LIBCXXABI_USE_LLVM_UNWINDER OFF)
-endif()
-
-# TODO: Clients using those options should switch to from-scratch Lit configuration files.
-option(LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI
-       "Whether the libc++ tests should link with the shared libc++abi library"
-       ${LIBCXXABI_ENABLE_SHARED})
-
-option(LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX
-       "Whether the libc++ tests should link with the shared libc++ library"
-       ${LIBCXX_ENABLE_SHARED})
-
-if(DEFINED LIBCXXABI_ENABLE_SHARED
-   AND LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI
-   AND NOT LIBCXXABI_ENABLE_SHARED)
-  message(FATAL_ERROR "LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI being ON requires LIBCXXABI_ENABLE_SHARED to be ON")
-endif()
-
-if(DEFINED LIBCXXABI_ENABLE_STATIC
-   AND NOT LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI
-   AND NOT LIBCXXABI_ENABLE_STATIC)
-  message(FATAL_ERROR "LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI being OFF requires LIBCXXABI_ENABLE_STATIC to be ON")
-endif()
-
-if(LIBCXX_INCLUDE_TESTS AND LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX AND NOT LIBCXX_ENABLE_SHARED)
-  message(FATAL_ERROR "LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX being ON requires LIBCXX_ENABLE_SHARED to be ON")
-endif()
-
-if(LIBCXX_INCLUDE_TESTS AND NOT LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX AND NOT LIBCXX_ENABLE_STATIC)
-  message(FATAL_ERROR "LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX being OFF requires LIBCXX_ENABLE_STATIC to be ON")
-endif()
-
-pythonize_bool(LIBCXX_ENABLE_SHARED)
-pythonize_bool(LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXX)
-pythonize_bool(LIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI)
-pythonize_bool(LIBCXX_ENABLE_FILESYSTEM)
-pythonize_bool(LIBCXX_BUILD_32_BITS)
-pythonize_bool(LIBCXX_GENERATE_COVERAGE)
-pythonize_bool(LIBCXXABI_ENABLE_SHARED)
-pythonize_bool(LIBCXXABI_USE_LLVM_UNWINDER)
-pythonize_bool(LIBCXX_USE_COMPILER_RT)
-pythonize_bool(LIBCXX_HAS_ATOMIC_LIB)
-pythonize_bool(LIBCXX_HAVE_CXX_ATOMICS_WITH_LIB)
-pythonize_bool(LIBCXX_BUILD_EXTERNAL_THREAD_LIBRARY)
-pythonize_bool(LIBCXX_DEBUG_BUILD)
-pythonize_bool(LIBCXX_ENABLE_PARALLEL_ALGORITHMS)
-
-# By default, for non-standalone builds, libcxx and libcxxabi share a library
-# directory.
+# By default, libcxx and libcxxabi share a library directory.
 if (NOT LIBCXX_CXX_ABI_LIBRARY_PATH)
   set(LIBCXX_CXX_ABI_LIBRARY_PATH "${LIBCXX_LIBRARY_DIR}" CACHE PATH
       "The path to libc++abi library.")
 endif()
 
-set(LIBCXX_TARGET_INFO "libcxx.test.target_info.LocalTI" CACHE STRING
-    "TargetInfo to use when setting up test environment.")
 set(LIBCXX_EXECUTOR "\\\"${Python3_EXECUTABLE}\\\" ${CMAKE_CURRENT_LIST_DIR}/../utils/run.py" CACHE STRING
     "Executor to use when running tests.")
 
@@ -93,28 +20,20 @@ if (NOT LIBCXX_ENABLE_EXCEPTIONS)
   serialize_lit_param(enable_exceptions False)
 endif()
 
-if (NOT LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY)
-  serialize_lit_param(enable_experimental False)
-endif()
-
 if (NOT LIBCXX_ENABLE_RTTI)
   serialize_lit_param(enable_rtti False)
 endif()
 
-if (NOT LIBCXX_ENABLE_DEBUG_MODE_SUPPORT)
-  serialize_lit_param(enable_debug_tests False)
-endif()
+serialize_lit_param(hardening_mode "\"${LIBCXX_HARDENING_MODE}\"")
 
-if (LIBCXX_TARGET_TRIPLE)
-  serialize_lit_param(target_triple "\"${LIBCXX_TARGET_TRIPLE}\"")
+if (CMAKE_CXX_COMPILER_TARGET)
+  serialize_lit_param(target_triple "\"${CMAKE_CXX_COMPILER_TARGET}\"")
+else()
+  serialize_lit_param(target_triple "\"${LLVM_DEFAULT_TARGET_TRIPLE}\"")
 endif()
 
 if (LLVM_USE_SANITIZER)
   serialize_lit_param(use_sanitizer "\"${LLVM_USE_SANITIZER}\"")
-endif()
-
-if (LIBCXX_BUILD_32_BITS)
-  serialize_lit_param(enable_32bit True)
 endif()
 
 foreach(param IN LISTS LIBCXX_TEST_PARAMS)
@@ -127,8 +46,37 @@ if (NOT DEFINED LIBCXX_TEST_DEPS)
   message(FATAL_ERROR "Expected LIBCXX_TEST_DEPS to be defined")
 endif()
 
+if (MSVC)
+  # Shared code for initializing some parameters used by all
+  # llvm-libc++-*-clangcl.cfg.in test configs.
+  set(dbg_include "")
+
+  if (NOT CMAKE_MSVC_RUNTIME_LIBRARY OR CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "DLL$")
+    set(crt_lib "msvcrt")
+    set(cxx_lib "msvcprt")
+  else()
+    set(crt_lib "libcmt")
+    set(cxx_lib "libcpmt")
+  endif()
+
+  if ((NOT CMAKE_MSVC_RUNTIME_LIBRARY AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+      OR (CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "Debug"))
+    set(dbg_include " -D_DEBUG -include set_windows_crt_report_mode.h")
+    set(crt_lib "${crt_lib}d")
+    set(cxx_lib "${cxx_lib}d")
+  endif()
+
+  serialize_lit_param(dbg_include "\"${dbg_include}\"")
+  serialize_lit_param(crt_lib "\"${crt_lib}\"")
+  serialize_lit_param(cxx_lib "\"${cxx_lib}\"")
+endif()
+
 if (LIBCXX_INCLUDE_TESTS)
   include(AddLLVM) # for configure_lit_site_cfg and add_lit_testsuite
+
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/configs/cmake-bridge.cfg.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/cmake-bridge.cfg"
+                 @ONLY)
 
   configure_lit_site_cfg(
     "${LIBCXX_TEST_CONFIG}"
@@ -143,6 +91,32 @@ if (LIBCXX_INCLUDE_TESTS)
     "Running libcxx tests"
     ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS cxx-test-depends)
+
+  if(LIBCXX_ENABLE_STD_MODULES)
+    # Generates the modules used in the test.
+    # Note the test will regenerate this with the proper setting
+    # - the right DCMAKE_CXX_STANDARD
+    # - the right test compilation flags
+    # Since modules depend on these flags there currently is no way to
+    # avoid generating these for the tests. The advantage of the
+    # pre generation is that less build information needs to be shared
+    # in the bridge.
+    add_custom_command(
+        OUTPUT "${CMAKE_BINARY_DIR}/test/__config_module__/CMakeCache.txt"
+        COMMAND
+        ${CMAKE_COMMAND}
+            "-G${CMAKE_GENERATOR}"
+            "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-B${CMAKE_BINARY_DIR}/test/__config_module__"
+            "-H${LIBCXX_GENERATED_MODULE_DIR}"
+            "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            "-DCMAKE_CXX_STANDARD=23"
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            )
+  add_custom_target(generate-test-module-std
+      DEPENDS "${CMAKE_BINARY_DIR}/test/__config_module__/CMakeCache.txt"
+      COMMENT "Builds generic module std.")
+  endif()
 endif()
 
 if (LIBCXX_GENERATE_COVERAGE)

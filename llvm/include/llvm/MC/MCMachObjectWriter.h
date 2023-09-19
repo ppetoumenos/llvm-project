@@ -32,7 +32,7 @@ class MCMachObjectTargetWriter : public MCObjectTargetWriter {
 protected:
   uint32_t CPUSubtype;
 public:
-  unsigned LocalDifference_RIT;
+  unsigned LocalDifference_RIT = 0;
 
 protected:
   MCMachObjectTargetWriter(bool Is64Bit_, uint32_t CPUType_,
@@ -262,6 +262,8 @@ public:
                                               const MCSymbol &SymA,
                                               const MCFragment &FB, bool InSet,
                                               bool IsPCRel) const override;
+
+  void populateAddrSigSection(MCAssembler &Asm);
 
   uint64_t writeObject(MCAssembler &Asm, const MCAsmLayout &Layout) override;
 };

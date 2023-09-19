@@ -13,52 +13,57 @@
 
 #if LLDB_ENABLE_PYTHON
 
+#include "ScriptedPythonInterface.h"
 #include "lldb/Interpreter/ScriptedProcessInterface.h"
+#include <optional>
 
 namespace lldb_private {
-class ScriptInterpreterPythonImpl;
-class ScriptedProcessPythonInterface : public ScriptedProcessInterface {
+class ScriptedProcessPythonInterface : public ScriptedProcessInterface,
+                                       public ScriptedPythonInterface {
 public:
-  ScriptedProcessPythonInterface(ScriptInterpreterPythonImpl &interpreter)
-      : ScriptedProcessInterface(), m_interpreter(interpreter) {}
+  ScriptedProcessPythonInterface(ScriptInterpreterPythonImpl &interpreter);
 
   StructuredData::GenericSP
-  CreatePluginObject(const llvm::StringRef class_name, lldb::TargetSP target_sp,
-                     StructuredData::DictionarySP args_sp) override;
+  CreatePluginObject(const llvm::StringRef class_name,
+                     ExecutionContext &exe_ctx,
+                     StructuredData::DictionarySP args_sp,
+                     StructuredData::Generic *script_obj = nullptr) override;
+
+  StructuredData::DictionarySP GetCapabilities() override;
+
+  Status Attach(const ProcessAttachInfo &attach_info) override;
 
   Status Launch() override;
 
   Status Resume() override;
 
-  bool ShouldStop() override;
+  std::optional<MemoryRegionInfo>
+  GetMemoryRegionContainingAddress(lldb::addr_t address,
+                                   Status &error) override;
 
-  Status Stop() override;
+  StructuredData::DictionarySP GetThreadsInfo() override;
 
-  lldb::MemoryRegionInfoSP
-  GetMemoryRegionContainingAddress(lldb::addr_t address) override;
-
-  StructuredData::DictionarySP GetThreadWithID(lldb::tid_t tid) override;
-
-  StructuredData::DictionarySP GetRegistersForThread(lldb::tid_t tid) override;
+  bool CreateBreakpoint(lldb::addr_t addr, Status &error) override;
 
   lldb::DataExtractorSP ReadMemoryAtAddress(lldb::addr_t address, size_t size,
                                             Status &error) override;
 
-  StructuredData::DictionarySP GetLoadedImages() override;
+  lldb::offset_t WriteMemoryAtAddress(lldb::addr_t addr,
+                                      lldb::DataExtractorSP data_sp,
+                                      Status &error) override;
+
+  StructuredData::ArraySP GetLoadedImages() override;
 
   lldb::pid_t GetProcessID() override;
 
   bool IsAlive() override;
 
-protected:
-  llvm::Optional<unsigned long long>
-  GetGenericInteger(llvm::StringRef method_name);
-  Status GetStatusFromMethod(llvm::StringRef method_name);
+  std::optional<std::string> GetScriptedThreadPluginName() override;
+
+  StructuredData::DictionarySP GetMetadata() override;
 
 private:
-  // The lifetime is managed by the ScriptInterpreter
-  ScriptInterpreterPythonImpl &m_interpreter;
-  StructuredData::GenericSP m_object_instance_sp;
+  lldb::ScriptedThreadInterfaceSP CreateScriptedThreadInterface() override;
 };
 } // namespace lldb_private
 

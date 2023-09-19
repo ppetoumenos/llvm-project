@@ -7,8 +7,8 @@ define double @v_floor_f64_ieee(double %x) {
 ; GFX6-LABEL: v_floor_f64_ieee:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e32 v[2:3], v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -30,8 +30,8 @@ define double @v_floor_f64_ieee_nnan(double %x) {
 ; GFX6-LABEL: v_floor_f64_ieee_nnan:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e32 v[2:3], v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_add_f64 v[0:1], v[0:1], -v[2:3]
@@ -50,8 +50,8 @@ define double @v_floor_f64_ieee_fneg(double %x) {
 ; GFX6-LABEL: v_floor_f64_ieee_fneg:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[2:3], -v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -74,8 +74,8 @@ define double @v_floor_f64_nonieee(double %x) #1 {
 ; GFX6-LABEL: v_floor_f64_nonieee:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e32 v[2:3], v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -97,8 +97,8 @@ define double @v_floor_f64_nonieee_nnan(double %x) #1 {
 ; GFX6-LABEL: v_floor_f64_nonieee_nnan:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e32 v[2:3], v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_add_f64 v[0:1], v[0:1], -v[2:3]
@@ -117,8 +117,8 @@ define double @v_floor_f64_non_ieee_fneg(double %x) #1 {
 ; GFX6-LABEL: v_floor_f64_non_ieee_fneg:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[2:3], -v[0:1]
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -141,8 +141,8 @@ define double @v_floor_f64_fabs(double %x) {
 ; GFX6-LABEL: v_floor_f64_fabs:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[2:3], |v[0:1]|
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -156,11 +156,6 @@ define double @v_floor_f64_fabs(double %x) {
 ; GFX78-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
 ; GFX78-NEXT:    v_floor_f64_e64 v[0:1], |v[0:1]|
 ; GFX78-NEXT:    s_setpc_b64 s[30:31]
-; GFX7-LABEL: v_floor_f64_fabs:
-; GFX7:       ; %bb.0:
-; GFX7-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX7-NEXT:    v_floor_f64_e64 v[0:1], |v[0:1]|
-; GFX7-NEXT:    s_setpc_b64 s[30:31]
   %abs.x = call double @llvm.fabs.f64(double %x)
   %result = call double @llvm.floor.f64(double %abs.x)
   ret double %result
@@ -170,8 +165,8 @@ define double @v_floor_f64_fneg_fabs(double %x) {
 ; GFX6-LABEL: v_floor_f64_fneg_fabs:
 ; GFX6:       ; %bb.0:
 ; GFX6-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
-; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[2:3], -|v[0:1]|
+; GFX6-NEXT:    s_mov_b32 s4, -1
 ; GFX6-NEXT:    s_mov_b32 s5, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[2:3], v[2:3], s[4:5]
 ; GFX6-NEXT:    v_cmp_o_f64_e32 vcc, v[0:1], v[0:1]
@@ -194,8 +189,8 @@ define double @v_floor_f64_fneg_fabs(double %x) {
 define amdgpu_ps <2 x float> @s_floor_f64(double inreg %x) {
 ; GFX6-LABEL: s_floor_f64:
 ; GFX6:       ; %bb.0:
-; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    v_fract_f64_e32 v[0:1], s[2:3]
+; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    s_mov_b32 s1, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[0:1], v[0:1], s[0:1]
 ; GFX6-NEXT:    v_cmp_o_f64_e64 vcc, s[2:3], s[2:3]
@@ -218,8 +213,8 @@ define amdgpu_ps <2 x float> @s_floor_f64(double inreg %x) {
 define amdgpu_ps <2 x float> @s_floor_f64_fneg(double inreg %x) {
 ; GFX6-LABEL: s_floor_f64_fneg:
 ; GFX6:       ; %bb.0:
-; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[0:1], -s[2:3]
+; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    s_mov_b32 s1, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[0:1], v[0:1], s[0:1]
 ; GFX6-NEXT:    v_cmp_o_f64_e64 vcc, s[2:3], s[2:3]
@@ -243,8 +238,8 @@ define amdgpu_ps <2 x float> @s_floor_f64_fneg(double inreg %x) {
 define amdgpu_ps <2 x float> @s_floor_f64_fabs(double inreg %x) {
 ; GFX6-LABEL: s_floor_f64_fabs:
 ; GFX6:       ; %bb.0:
-; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[0:1], |s[2:3]|
+; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    s_mov_b32 s1, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[0:1], v[0:1], s[0:1]
 ; GFX6-NEXT:    v_cmp_o_f64_e64 vcc, s[2:3], s[2:3]
@@ -268,8 +263,8 @@ define amdgpu_ps <2 x float> @s_floor_f64_fabs(double inreg %x) {
 define amdgpu_ps <2 x float> @s_floor_f64_fneg_fabs(double inreg %x) {
 ; GFX6-LABEL: s_floor_f64_fneg_fabs:
 ; GFX6:       ; %bb.0:
-; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    v_fract_f64_e64 v[0:1], -|s[2:3]|
+; GFX6-NEXT:    s_mov_b32 s0, -1
 ; GFX6-NEXT:    s_mov_b32 s1, 0x3fefffff
 ; GFX6-NEXT:    v_min_f64 v[0:1], v[0:1], s[0:1]
 ; GFX6-NEXT:    v_cmp_o_f64_e64 vcc, s[2:3], s[2:3]

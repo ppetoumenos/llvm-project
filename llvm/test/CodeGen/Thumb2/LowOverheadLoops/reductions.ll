@@ -78,12 +78,11 @@ define dso_local arm_aapcs_vfpcc signext i16 @one_loop_add_add_v8i16(i8* nocaptu
 ; CHECK-NEXT:    @ =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    vctp.16 r2
 ; CHECK-NEXT:    vmov q0, q1
-; CHECK-NEXT:    vpst
+; CHECK-NEXT:    vpstt
 ; CHECK-NEXT:    vldrbt.u16 q1, [r0], #8
+; CHECK-NEXT:    vldrbt.u16 q2, [r1], #8
 ; CHECK-NEXT:    subs r2, #8
 ; CHECK-NEXT:    vadd.i16 q1, q0, q1
-; CHECK-NEXT:    vpst
-; CHECK-NEXT:    vldrbt.u16 q2, [r1], #8
 ; CHECK-NEXT:    vadd.i16 q1, q1, q2
 ; CHECK-NEXT:    le lr, .LBB1_2
 ; CHECK-NEXT:  @ %bb.3: @ %middle.block
@@ -412,10 +411,12 @@ for.cond.cleanup:                                 ; preds = %middle.block, %entr
 define dso_local arm_aapcs_vfpcc i32 @two_loops_mul_add_v4i32(i8* nocapture readonly %a, i8* nocapture readonly %b, i32 %N) local_unnamed_addr {
 ; CHECK-LABEL: two_loops_mul_add_v4i32:
 ; CHECK:       @ %bb.0: @ %entry
-; CHECK-NEXT:    push {r4, r5, r6, r7, lr}
 ; CHECK-NEXT:    cmp r2, #0
-; CHECK-NEXT:    beq .LBB6_8
-; CHECK-NEXT:  @ %bb.1: @ %vector.ph
+; CHECK-NEXT:    itt eq
+; CHECK-NEXT:    moveq r0, #0
+; CHECK-NEXT:    bxeq lr
+; CHECK-NEXT:  .LBB6_1: @ %vector.ph
+; CHECK-NEXT:    push {r4, r5, r6, r7, lr}
 ; CHECK-NEXT:    adds r3, r2, #3
 ; CHECK-NEXT:    vmov.i32 q1, #0x0
 ; CHECK-NEXT:    bic r3, r3, #3
@@ -462,12 +463,10 @@ define dso_local arm_aapcs_vfpcc i32 @two_loops_mul_add_v4i32(i8* nocapture read
 ; CHECK-NEXT:  @ %bb.6: @ %middle.block44
 ; CHECK-NEXT:    vpsel q0, q0, q1
 ; CHECK-NEXT:    vaddv.u32 r12, q0
-; CHECK-NEXT:  .LBB6_7: @ %for.cond.cleanup7
+; CHECK-NEXT:  .LBB6_7:
+; CHECK-NEXT:    pop.w {r4, r5, r6, r7, lr}
 ; CHECK-NEXT:    mov r0, r12
-; CHECK-NEXT:    pop {r4, r5, r6, r7, pc}
-; CHECK-NEXT:  .LBB6_8:
-; CHECK-NEXT:    movs r0, #0
-; CHECK-NEXT:    pop {r4, r5, r6, r7, pc}
+; CHECK-NEXT:    bx lr
 entry:
   %cmp35 = icmp eq i32 %N, 0
   br i1 %cmp35, label %for.cond.cleanup7, label %vector.ph
@@ -559,9 +558,9 @@ define dso_local arm_aapcs_vfpcc void @two_reductions_mul_add_v8i16(i8* nocaptur
 ; CHECK-NEXT:    vldrbt.u16 q1, [r3], #8
 ; CHECK-NEXT:    vldrbt.u16 q4, [r4], #8
 ; CHECK-NEXT:    vmov q2, q3
+; CHECK-NEXT:    subs r2, #8
 ; CHECK-NEXT:    vsub.i16 q3, q4, q1
 ; CHECK-NEXT:    vmul.i16 q1, q4, q1
-; CHECK-NEXT:    subs r2, #8
 ; CHECK-NEXT:    vadd.i16 q3, q3, q2
 ; CHECK-NEXT:    vadd.i16 q1, q1, q0
 ; CHECK-NEXT:    le lr, .LBB7_2

@@ -5,9 +5,6 @@
 """Helper macros to configure the LLVM overlay project."""
 
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
-load("@bazel_skylib//lib:paths.bzl", "paths")
-load(":zlib.bzl", "llvm_zlib_disable", "llvm_zlib_system")
-load(":terminfo.bzl", "llvm_terminfo_disable", "llvm_terminfo_system")
 
 # Directory of overlay files relative to WORKSPACE
 DEFAULT_OVERLAY_PATH = "llvm-project-overlay"
@@ -20,6 +17,7 @@ DEFAULT_TARGETS = [
     "BPF",
     "Hexagon",
     "Lanai",
+    "LoongArch",
     "Mips",
     "MSP430",
     "NVPTX",
@@ -27,29 +25,18 @@ DEFAULT_TARGETS = [
     "RISCV",
     "Sparc",
     "SystemZ",
+    "VE",
     "WebAssembly",
     "X86",
     "XCore",
 ]
 
 def _overlay_directories(repository_ctx):
-    src_workspace_path = str(repository_ctx.path(
-        repository_ctx.attr.src_workspace,
-    ).dirname)
+    src_path = repository_ctx.path(Label("@llvm-raw//:WORKSPACE")).dirname
+    bazel_path = src_path.get_child("utils").get_child("bazel")
+    overlay_path = bazel_path.get_child("llvm-project-overlay")
+    script_path = bazel_path.get_child("overlay_directories.py")
 
-    src_path = paths.join(src_workspace_path, repository_ctx.attr.src_path)
-
-    overlay_workspace_path = str(repository_ctx.path(
-        repository_ctx.attr.overlay_workspace,
-    ).dirname)
-    overlay_path = paths.join(
-        overlay_workspace_path,
-        repository_ctx.attr.overlay_path,
-    )
-
-    overlay_script = repository_ctx.path(
-        repository_ctx.attr._overlay_script,
-    )
     python_bin = repository_ctx.which("python3")
     if not python_bin:
         # Windows typically just defines "python" as python3. The script itself
@@ -61,7 +48,7 @@ def _overlay_directories(repository_ctx):
 
     cmd = [
         python_bin,
-        overlay_script,
+        script_path,
         "--src",
         src_path,
         "--overlay",
@@ -82,8 +69,92 @@ def _overlay_directories(repository_ctx):
             stderr = exec_result.stderr,
         ))
 
+def _extract_cmake_settings(repository_ctx, llvm_cmake):
+    # The list to be written to vars.bzl
+    # `CMAKE_CXX_STANDARD` may be used from WORKSPACE for the toolchain.
+    c = {
+        "CMAKE_CXX_STANDARD": None,
+        "LLVM_VERSION_MAJOR": None,
+        "LLVM_VERSION_MINOR": None,
+        "LLVM_VERSION_PATCH": None,
+    }
+
+    # It would be easier to use external commands like sed(1) and python.
+    # For portability, the parser should run on Starlark.
+    llvm_cmake_path = repository_ctx.path(Label("//:" + llvm_cmake))
+    for line in repository_ctx.read(llvm_cmake_path).splitlines():
+        # Extract "set ( FOO bar ... "
+        setfoo = line.partition("(")
+        if setfoo[1] != "(":
+            continue
+        if setfoo[0].strip().lower() != "set":
+            continue
+
+        # `kv` is assumed as \s*KEY\s+VAL\s*\).*
+        # Typical case is like
+        #   LLVM_REQUIRED_CXX_STANDARD 17)
+        # Possible case -- It should be ignored.
+        #   CMAKE_CXX_STANDARD ${...} CACHE STRING "...")
+        kv = setfoo[2].strip()
+        i = kv.find(" ")
+        if i < 0:
+            continue
+        k = kv[:i]
+
+        # Prefer LLVM_REQUIRED_CXX_STANDARD instead of CMAKE_CXX_STANDARD
+        if k == "LLVM_REQUIRED_CXX_STANDARD":
+            k = "CMAKE_CXX_STANDARD"
+            c[k] = None
+        if k not in c:
+            continue
+
+        # Skip if `CMAKE_CXX_STANDARD` is set with
+        # `LLVM_REQUIRED_CXX_STANDARD`.
+        # Then `v` will not be desired form, like "${...} CACHE"
+        if c[k] != None:
+            continue
+
+        # Pick up 1st word as the value.
+        # Note: It assumes unquoted word.
+        v = kv[i:].strip().partition(")")[0].partition(" ")[0]
+        c[k] = v
+
+    # Synthesize `LLVM_VERSION` for convenience.
+    c["LLVM_VERSION"] = "{}.{}.{}".format(
+        c["LLVM_VERSION_MAJOR"],
+        c["LLVM_VERSION_MINOR"],
+        c["LLVM_VERSION_PATCH"],
+    )
+
+    return c
+
+def _write_dict_to_file(repository_ctx, filepath, header, vars):
+    # (fci + individual vars) + (fcd + dict items) + (fct)
+    fci = header
+    fcd = "\nllvm_vars={\n"
+    fct = "}\n"
+
+    for k, v in vars.items():
+        fci += '{} = "{}"\n'.format(k, v)
+        fcd += '    "{}": "{}",\n'.format(k, v)
+
+    repository_ctx.file(filepath, content = fci + fcd + fct)
+
 def _llvm_configure_impl(repository_ctx):
     _overlay_directories(repository_ctx)
+
+    llvm_cmake = "llvm/CMakeLists.txt"
+    vars = _extract_cmake_settings(
+        repository_ctx,
+        llvm_cmake,
+    )
+
+    _write_dict_to_file(
+        repository_ctx,
+        filepath = "vars.bzl",
+        header = "# Generated from {}\n\n".format(llvm_cmake),
+        vars = vars,
+    )
 
     # Create a starlark file with the requested LLVM targets.
     targets = repository_ctx.attr.targets
@@ -98,36 +169,6 @@ llvm_configure = repository_rule(
     local = True,
     configure = True,
     attrs = {
-        "_overlay_script": attr.label(
-            default = Label("//:overlay_directories.py"),
-            allow_single_file = True,
-        ),
-        "overlay_workspace": attr.label(default = Label("//:WORKSPACE")),
-        "overlay_path": attr.string(default = DEFAULT_OVERLAY_PATH),
-        "src_workspace": attr.label(default = Label("//:WORKSPACE")),
-        "src_path": attr.string(mandatory = True),
         "targets": attr.string_list(default = DEFAULT_TARGETS),
     },
 )
-
-def llvm_disable_optional_support_deps():
-    maybe(
-        llvm_zlib_disable,
-        name = "llvm_zlib",
-    )
-
-    maybe(
-        llvm_terminfo_disable,
-        name = "llvm_terminfo",
-    )
-
-def llvm_use_system_support_deps():
-    maybe(
-        llvm_zlib_system,
-        name = "llvm_zlib",
-    )
-
-    maybe(
-        llvm_terminfo_system,
-        name = "llvm_terminfo",
-    )

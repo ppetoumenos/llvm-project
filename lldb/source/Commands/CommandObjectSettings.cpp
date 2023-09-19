@@ -13,6 +13,7 @@
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Interpreter/CommandCompletions.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
+#include "lldb/Interpreter/CommandOptionArgumentTable.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionValueProperties.h"
 
@@ -27,8 +28,7 @@ class CommandObjectSettingsSet : public CommandObjectRaw {
 public:
   CommandObjectSettingsSet(CommandInterpreter &interpreter)
       : CommandObjectRaw(interpreter, "settings set",
-                         "Set the value of the specified debugger setting."),
-        m_options() {
+                         "Set the value of the specified debugger setting.") {
     CommandArgumentEntry arg1;
     CommandArgumentEntry arg2;
     CommandArgumentData var_name_arg;
@@ -87,7 +87,7 @@ insert-before or insert-after.");
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options() {}
+    CommandOptions() = default;
 
     ~CommandOptions() override = default;
 
@@ -103,6 +103,9 @@ insert-before or insert-after.");
       case 'g':
         m_global = true;
         break;
+      case 'e':
+        m_exists = true;
+        break;
       default:
         llvm_unreachable("Unimplemented option");
       }
@@ -113,15 +116,17 @@ insert-before or insert-after.");
     void OptionParsingStarting(ExecutionContext *execution_context) override {
       m_global = false;
       m_force = false;
+      m_exists = false;
     }
 
     llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
-      return llvm::makeArrayRef(g_settings_set_options);
+      return llvm::ArrayRef(g_settings_set_options);
     }
 
     // Instance variables to hold the values for command options.
     bool m_global = false;
-    bool m_force;
+    bool m_force = false;
+    bool m_exists = false;
   };
 
   void
@@ -138,9 +143,9 @@ insert-before or insert-after.");
     }
     if (request.GetCursorIndex() == setting_var_idx) {
       // Attempting to complete setting variable name
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
       return;
     }
     arg = request.GetParsedLine().GetArgumentAtIndex(request.GetCursorIndex());
@@ -149,15 +154,15 @@ insert-before or insert-after.");
       return;
 
     // Complete option name
-    if (arg[0] != '-')
+    if (arg[0] == '-')
       return;
 
     // Complete setting value
     const char *setting_var_name =
         request.GetParsedLine().GetArgumentAtIndex(setting_var_idx);
     Status error;
-    lldb::OptionValueSP value_sp(GetDebugger().GetPropertyValue(
-        &m_exe_ctx, setting_var_name, false, error));
+    lldb::OptionValueSP value_sp(
+        GetDebugger().GetPropertyValue(&m_exe_ctx, setting_var_name, error));
     if (!value_sp)
       return;
     value_sp->AutoComplete(m_interpreter, request);
@@ -220,13 +225,12 @@ protected:
                                              var_name, var_value);
     }
 
-    if (error.Fail()) {
+    if (error.Fail() && !m_options.m_exists) {
       result.AppendError(error.AsCString());
       return false;
-    } else {
-      result.SetStatus(eReturnStatusSuccessFinishResult);
     }
 
+    result.SetStatus(eReturnStatusSuccessFinishResult);
     return result.Succeeded();
   }
 
@@ -263,9 +267,9 @@ public:
   void
   HandleArgumentCompletion(CompletionRequest &request,
                            OptionElementVector &opt_element_vector) override {
-    CommandCompletions::InvokeCommonCompletionCallbacks(
-        GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-        request, nullptr);
+    lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+        GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+        nullptr);
   }
 
 protected:
@@ -304,8 +308,7 @@ public:
             "Write matching debugger settings and their "
             "current values to a file that can be read in with "
             "\"settings read\". Defaults to writing all settings.",
-            nullptr),
-        m_options() {
+            nullptr) {
     CommandArgumentEntry arg1;
     CommandArgumentData var_name_arg;
 
@@ -327,7 +330,7 @@ public:
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options() {}
+    CommandOptions() = default;
 
     ~CommandOptions() override = default;
 
@@ -356,7 +359,7 @@ public:
     }
 
     llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
-      return llvm::makeArrayRef(g_settings_write_options);
+      return llvm::ArrayRef(g_settings_write_options);
     }
 
     // Instance variables to hold the values for command options.
@@ -369,7 +372,7 @@ protected:
     FileSpec file_spec(m_options.m_filename);
     FileSystem::Instance().Resolve(file_spec);
     std::string path(file_spec.GetPath());
-    auto options = File::eOpenOptionWrite | File::eOpenOptionCanCreate;
+    auto options = File::eOpenOptionWriteOnly | File::eOpenOptionCanCreate;
     if (m_options.m_append)
       options |= File::eOpenOptionAppend;
     else
@@ -417,8 +420,7 @@ public:
       : CommandObjectParsed(
             interpreter, "settings read",
             "Read settings previously saved to a file with \"settings write\".",
-            nullptr),
-        m_options() {}
+            nullptr) {}
 
   ~CommandObjectSettingsRead() override = default;
 
@@ -426,7 +428,7 @@ public:
 
   class CommandOptions : public Options {
   public:
-    CommandOptions() : Options() {}
+    CommandOptions() = default;
 
     ~CommandOptions() override = default;
 
@@ -451,7 +453,7 @@ public:
     }
 
     llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
-      return llvm::makeArrayRef(g_settings_read_options);
+      return llvm::ArrayRef(g_settings_read_options);
     }
 
     // Instance variables to hold the values for command options.
@@ -509,16 +511,15 @@ public:
   void
   HandleArgumentCompletion(CompletionRequest &request,
                            OptionElementVector &opt_element_vector) override {
-    CommandCompletions::InvokeCommonCompletionCallbacks(
-        GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-        request, nullptr);
+    lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+        GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+        nullptr);
   }
 
 protected:
   bool DoExecute(Args &args, CommandReturnObject &result) override {
     result.SetStatus(eReturnStatusSuccessFinishResult);
 
-    const bool will_modify = false;
     const size_t argc = args.GetArgumentCount();
     if (argc > 0) {
       const bool dump_qualified_name = true;
@@ -528,7 +529,7 @@ protected:
 
         const Property *property =
             GetDebugger().GetValueProperties()->GetPropertyAtPath(
-                &m_exe_ctx, will_modify, property_path);
+                &m_exe_ctx, property_path);
 
         if (property) {
           property->DumpDescription(m_interpreter, result.GetOutputStream(), 0,
@@ -594,9 +595,9 @@ public:
   HandleArgumentCompletion(CompletionRequest &request,
                            OptionElementVector &opt_element_vector) override {
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
 protected:
@@ -702,9 +703,9 @@ public:
                            OptionElementVector &opt_element_vector) override {
     // Attempting to complete variable name
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
 protected:
@@ -794,9 +795,9 @@ public:
                            OptionElementVector &opt_element_vector) override {
     // Attempting to complete variable name
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
 protected:
@@ -890,9 +891,9 @@ public:
                            OptionElementVector &opt_element_vector) override {
     // Attempting to complete variable name
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
 protected:
@@ -975,9 +976,9 @@ public:
                            OptionElementVector &opt_element_vector) override {
     // Attempting to complete variable name
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
 protected:
@@ -1050,9 +1051,9 @@ public:
                            OptionElementVector &opt_element_vector) override {
     // Attempting to complete variable name
     if (request.GetCursorIndex() < 2)
-      CommandCompletions::InvokeCommonCompletionCallbacks(
-          GetCommandInterpreter(), CommandCompletions::eSettingsNameCompletion,
-          request, nullptr);
+      lldb_private::CommandCompletions::InvokeCommonCompletionCallbacks(
+          GetCommandInterpreter(), lldb::eSettingsNameCompletion, request,
+          nullptr);
   }
 
    Options *GetOptions() override { return &m_options; }
@@ -1081,7 +1082,7 @@ public:
     }
 
     llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
-      return llvm::makeArrayRef(g_settings_clear_options);
+      return llvm::ArrayRef(g_settings_clear_options);
     }
 
     bool m_clear_all = false;

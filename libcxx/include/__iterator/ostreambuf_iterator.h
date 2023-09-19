@@ -13,14 +13,12 @@
 #include <__config>
 #include <__iterator/iterator.h>
 #include <__iterator/iterator_traits.h>
+#include <cstddef>
 #include <iosfwd> // for forward declaration of basic_streambuf
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
-#pragma GCC system_header
+#  pragma GCC system_header
 #endif
-
-_LIBCPP_PUSH_MACROS
-#include <__undef_macros>
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
@@ -35,7 +33,7 @@ _LIBCPP_SUPPRESS_DEPRECATED_POP
 public:
     typedef output_iterator_tag                 iterator_category;
     typedef void                                value_type;
-#if _LIBCPP_STD_VER > 17
+#if _LIBCPP_STD_VER >= 20
     typedef ptrdiff_t                           difference_type;
 #else
     typedef void                                difference_type;
@@ -67,7 +65,7 @@ public:
 
     template <class _Ch, class _Tr>
     friend
-    _LIBCPP_HIDDEN
+    _LIBCPP_HIDE_FROM_ABI
     ostreambuf_iterator<_Ch, _Tr>
     __pad_and_output(ostreambuf_iterator<_Ch, _Tr> __s,
                      const _Ch* __ob, const _Ch* __op, const _Ch* __oe,
@@ -75,7 +73,5 @@ public:
 };
 
 _LIBCPP_END_NAMESPACE_STD
-
-_LIBCPP_POP_MACROS
 
 #endif // _LIBCPP___ITERATOR_OSTREAMBUF_ITERATOR_H

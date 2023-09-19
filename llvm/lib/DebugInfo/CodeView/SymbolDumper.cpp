@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DebugInfo/CodeView/SymbolDumper.h"
-#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/CodeView/CVSymbolVisitor.h"
 #include "llvm/DebugInfo/CodeView/DebugStringTableSubsection.h"
 #include "llvm/DebugInfo/CodeView/EnumTables.h"
@@ -19,8 +19,6 @@
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ScopedPrinter.h"
-
-#include <system_error>
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -642,6 +640,20 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
   for (StringRef Str : Annot.Strings)
     W.printString(Str);
 
+  return Error::success();
+}
+
+Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
+                                           JumpTableSym &JumpTable) {
+  W.printHex("BaseOffset", JumpTable.BaseOffset);
+  W.printNumber("BaseSegment", JumpTable.BaseSegment);
+  W.printEnum("SwitchType", static_cast<uint16_t>(JumpTable.SwitchType),
+              getJumpTableEntrySizeNames());
+  W.printHex("BranchOffset", JumpTable.BranchOffset);
+  W.printHex("TableOffset", JumpTable.TableOffset);
+  W.printNumber("BranchSegment", JumpTable.BranchSegment);
+  W.printNumber("TableSegment", JumpTable.TableSegment);
+  W.printNumber("EntriesCount", JumpTable.EntriesCount);
   return Error::success();
 }
 

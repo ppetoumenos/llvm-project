@@ -1,5 +1,4 @@
-! RUN: %S/test_errors.sh %s %t %flang_fc1
-! REQUIRES: shell
+! RUN: %python %S/test_errors.py %s %flang_fc1
 
 ! Test deallocate of use- and host-associated variables
 module m1
@@ -20,7 +19,7 @@ contains
     deallocate(b)
     deallocate(c)
     deallocate(d)
-    !ERROR: name in DEALLOCATE statement must have the ALLOCATABLE or POINTER attribute
+    !ERROR: Name in DEALLOCATE statement must have the ALLOCATABLE or POINTER attribute
     deallocate(e)
   end subroutine
 end

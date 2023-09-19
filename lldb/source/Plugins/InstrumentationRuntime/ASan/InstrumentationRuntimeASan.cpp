@@ -13,9 +13,9 @@
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Core/PluginManager.h"
-#include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ValueObject.h"
 #include "lldb/Expression/UserExpression.h"
+#include "lldb/Host/StreamFile.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Symbol/Symbol.h"
 #include "lldb/Target/InstrumentationRuntimeStopInfo.h"
@@ -45,10 +45,6 @@ void InstrumentationRuntimeASan::Initialize() {
 
 void InstrumentationRuntimeASan::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
-}
-
-lldb_private::ConstString InstrumentationRuntimeASan::GetPluginNameStatic() {
-  return ConstString("AddressSanitizer");
 }
 
 lldb::InstrumentationRuntimeType InstrumentationRuntimeASan::GetTypeStatic() {
@@ -117,7 +113,8 @@ StructuredData::ObjectSP InstrumentationRuntimeASan::RetrieveReportData() {
 
   ThreadSP thread_sp =
       process_sp->GetThreadList().GetExpressionExecutionThread();
-  StackFrameSP frame_sp = thread_sp->GetSelectedFrame();
+  StackFrameSP frame_sp =
+      thread_sp->GetSelectedFrame(DoNoSelectMostRelevantFrame);
 
   if (!frame_sp)
     return StructuredData::ObjectSP();
@@ -140,9 +137,11 @@ StructuredData::ObjectSP InstrumentationRuntimeASan::RetrieveReportData() {
       exe_ctx, options, address_sanitizer_retrieve_report_data_command, "",
       return_value_sp, eval_error);
   if (result != eExpressionCompleted) {
-    process_sp->GetTarget().GetDebugger().GetAsyncOutputStream()->Printf(
-        "Warning: Cannot evaluate AddressSanitizer expression:\n%s\n",
-        eval_error.AsCString());
+    StreamString ss;
+    ss << "cannot evaluate AddressSanitizer expression:\n";
+    ss << eval_error.AsCString();
+    Debugger::ReportWarning(ss.GetString().str(),
+                            process_sp->GetTarget().GetDebugger().GetID());
     return StructuredData::ObjectSP();
   }
 
@@ -153,12 +152,10 @@ StructuredData::ObjectSP InstrumentationRuntimeASan::RetrieveReportData() {
 
   addr_t pc =
       return_value_sp->GetValueForExpressionPath(".pc")->GetValueAsUnsigned(0);
-  /* commented out because rdar://problem/18533301
   addr_t bp =
   return_value_sp->GetValueForExpressionPath(".bp")->GetValueAsUnsigned(0);
   addr_t sp =
-  return_value_sp->GetValueForExpressionPath(".sp")->GetValueAsUnsigned(0);
-  */
+      return_value_sp->GetValueForExpressionPath(".sp")->GetValueAsUnsigned(0);
   addr_t address = return_value_sp->GetValueForExpressionPath(".address")
                        ->GetValueAsUnsigned(0);
   addr_t access_type =
@@ -178,10 +175,8 @@ StructuredData::ObjectSP InstrumentationRuntimeASan::RetrieveReportData() {
   dict->AddStringItem("instrumentation_class", "AddressSanitizer");
   dict->AddStringItem("stop_type", "fatal_error");
   dict->AddIntegerItem("pc", pc);
-  /* commented out because rdar://problem/18533301
   dict->AddIntegerItem("bp", bp);
   dict->AddIntegerItem("sp", sp);
-  */
   dict->AddIntegerItem("address", address);
   dict->AddIntegerItem("access_type", access_type);
   dict->AddIntegerItem("access_size", access_size);
@@ -285,7 +280,7 @@ void InstrumentationRuntimeASan::Activate() {
   if (!process_sp)
     return;
 
-  ConstString symbol_name("__asan::AsanDie()");
+  ConstString symbol_name("_ZN6__asanL7AsanDieEv");
   const Symbol *symbol = GetRuntimeModuleSP()->FindFirstSymbolWithNameAndType(
       symbol_name, eSymbolTypeCode);
 
@@ -301,14 +296,15 @@ void InstrumentationRuntimeASan::Activate() {
   if (symbol_address == LLDB_INVALID_ADDRESS)
     return;
 
-  bool internal = true;
-  bool hardware = false;
+  const bool internal = true;
+  const bool hardware = false;
+  const bool sync = false;
   Breakpoint *breakpoint =
       process_sp->GetTarget()
           .CreateBreakpoint(symbol_address, internal, hardware)
           .get();
   breakpoint->SetCallback(InstrumentationRuntimeASan::NotifyBreakpointHit, this,
-                          true);
+                          sync);
   breakpoint->SetBreakpointKind("address-sanitizer-report");
   SetBreakpointID(breakpoint->GetID());
 

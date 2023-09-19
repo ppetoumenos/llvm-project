@@ -1,5 +1,4 @@
-! RUN: %S/test_errors.sh %s %t %flang_fc1
-! REQUIRES: shell
+! RUN: %python %S/test_errors.py %s %flang_fc1
 ! Ensure that evaluating a very large array constructor does not crash the
 ! compiler
 program BigArray
@@ -20,7 +19,7 @@ program BigArray
             ( &
               !ERROR: Must be a constant value
               0_foo,ii=1,limit &
-            ),
+            ), &
             jj=kk,limit &
           ), &
         kk=1,limit &

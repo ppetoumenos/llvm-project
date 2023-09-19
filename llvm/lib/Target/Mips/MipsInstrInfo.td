@@ -833,22 +833,26 @@ def MipsJumpTargetAsmOperand : AsmOperandClass {
 def jmptarget   : Operand<OtherVT> {
   let EncoderMethod = "getJumpTargetOpValue";
   let ParserMatchClass = MipsJumpTargetAsmOperand;
+  let PrintMethod = "printJumpOperand";
 }
 def brtarget    : Operand<OtherVT> {
   let EncoderMethod = "getBranchTargetOpValue";
   let OperandType = "OPERAND_PCREL";
   let DecoderMethod = "DecodeBranchTarget";
   let ParserMatchClass = MipsJumpTargetAsmOperand;
+  let PrintMethod = "printBranchOperand";
 }
 def brtarget1SImm16 : Operand<OtherVT> {
   let EncoderMethod = "getBranchTargetOpValue1SImm16";
   let OperandType = "OPERAND_PCREL";
   let DecoderMethod = "DecodeBranchTarget1SImm16";
   let ParserMatchClass = MipsJumpTargetAsmOperand;
+  let PrintMethod = "printBranchOperand";
 }
 def calltarget  : Operand<iPTR> {
   let EncoderMethod = "getJumpTargetOpValue";
   let ParserMatchClass = MipsJumpTargetAsmOperand;
+  let PrintMethod = "printJumpOperand";
 }
 
 def imm64: Operand<i64>;
@@ -3353,11 +3357,11 @@ let AdditionalPredicates = [NotInMicroMips] in {
   def : MipsPat<(atomic_load_32 addr:$a), (LW addr:$a)>, ISA_MIPS1;
 
   // Atomic store patterns.
-  def : MipsPat<(atomic_store_8 addr:$a, GPR32:$v), (SB GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_8 GPR32:$v, addr:$a), (SB GPR32:$v, addr:$a)>,
         ISA_MIPS1;
-  def : MipsPat<(atomic_store_16 addr:$a, GPR32:$v), (SH GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_16 GPR32:$v, addr:$a), (SH GPR32:$v, addr:$a)>,
         ISA_MIPS1;
-  def : MipsPat<(atomic_store_32 addr:$a, GPR32:$v), (SW GPR32:$v, addr:$a)>,
+  def : MipsPat<(atomic_store_32 GPR32:$v, addr:$a), (SW GPR32:$v, addr:$a)>,
         ISA_MIPS1;
 }
 

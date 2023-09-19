@@ -3,6 +3,9 @@ RUN: FileCheck --input-file=%t %s
 
      CHECK:-Wall
 CHECK-NEXT:  -Wmost
+CHECK-NEXT:    -Warray-parameter
+CHECK-NEXT:    -Wbool-operation
+CHECK-NEXT:    -Wbitwise-instead-of-logical
 CHECK-NEXT:    -Wchar-subscripts
 CHECK-NEXT:    -Wcomment
 CHECK-NEXT:    -Wdelete-non-virtual-dtor
@@ -52,6 +55,7 @@ CHECK-NEXT:      -Wtautological-overlap-compare
 CHECK-NEXT:      -Wtautological-bitwise-compare
 CHECK-NEXT:      -Wtautological-undefined-compare
 CHECK-NEXT:      -Wtautological-objc-bool-compare
+CHECK-NEXT:      -Wtautological-negation-compare
 CHECK-NEXT:    -Wtrigraphs
 CHECK-NEXT:    -Wuninitialized
 CHECK-NEXT:      -Wsometimes-uninitialized
@@ -96,6 +100,7 @@ CHECK-NEXT:    -Wdangling-else
 CHECK-NEXT:  -Wswitch
 CHECK-NEXT:  -Wswitch-bool
 CHECK-NEXT:  -Wmisleading-indentation
+CHECK-NEXT:  -Wpacked-non-pod
 
 
 CHECK-NOT:-W

@@ -41,7 +41,7 @@ std::string CoveragePrinter::getOutputPath(StringRef Path, StringRef Extension,
     sys::path::append(FullPath, getCoverageDir());
 
   SmallString<256> ParentPath = sys::path::parent_path(Path);
-  sys::path::remove_dots(ParentPath, /*remove_dot_dots=*/true);
+  sys::path::remove_dots(ParentPath, /*remove_dot_dot=*/true);
   sys::path::append(FullPath, sys::path::relative_path(ParentPath));
 
   auto PathFilename = (sys::path::filename(Path) + "." + Extension).str();
@@ -76,8 +76,12 @@ std::unique_ptr<CoveragePrinter>
 CoveragePrinter::create(const CoverageViewOptions &Opts) {
   switch (Opts.Format) {
   case CoverageViewOptions::OutputFormat::Text:
+    if (Opts.ShowDirectoryCoverage)
+      return std::make_unique<CoveragePrinterTextDirectory>(Opts);
     return std::make_unique<CoveragePrinterText>(Opts);
   case CoverageViewOptions::OutputFormat::HTML:
+    if (Opts.ShowDirectoryCoverage)
+      return std::make_unique<CoveragePrinterHTMLDirectory>(Opts);
     return std::make_unique<CoveragePrinterHTML>(Opts);
   case CoverageViewOptions::OutputFormat::Lcov:
     // Unreachable because CodeCoverage.cpp should terminate with an error
@@ -157,7 +161,7 @@ SourceCoverageView::create(StringRef SourceName, const MemoryBuffer &File,
 
 std::string SourceCoverageView::getSourceName() const {
   SmallString<128> SourceText(SourceName);
-  sys::path::remove_dots(SourceText, /*remove_dot_dots=*/true);
+  sys::path::remove_dots(SourceText, /*remove_dot_dot=*/true);
   sys::path::native(SourceText);
   return std::string(SourceText.str());
 }

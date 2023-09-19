@@ -32,6 +32,7 @@
 #include "llvm/ADT/SparseSet.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include <cassert>
 #include <utility>
@@ -39,6 +40,7 @@
 namespace llvm {
 
 class MachineInstr;
+class MachineFunction;
 class MachineOperand;
 class MachineRegisterInfo;
 class raw_ostream;
@@ -79,9 +81,8 @@ public:
   void addReg(MCPhysReg Reg) {
     assert(TRI && "LivePhysRegs is not initialized.");
     assert(Reg <= TRI->getNumRegs() && "Expected a physical register.");
-    for (MCSubRegIterator SubRegs(Reg, TRI, /*IncludeSelf=*/true);
-         SubRegs.isValid(); ++SubRegs)
-      LiveRegs.insert(*SubRegs);
+    for (MCPhysReg SubReg : TRI->subregs_inclusive(Reg))
+      LiveRegs.insert(SubReg);
   }
 
   /// Removes a physical register, all its sub-registers, and all its

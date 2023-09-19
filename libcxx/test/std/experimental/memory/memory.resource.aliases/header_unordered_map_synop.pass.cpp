@@ -1,4 +1,3 @@
-// -*- C++ -*-
 //===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -8,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03
+
+// XFAIL: availability-aligned_allocation-missing
 
 // <experimental/unordered_map>
 
@@ -21,6 +22,8 @@
 //     ::std::unordered_multimap<K, V, H, P, polymorphic_allocator<pair<const K, V>>>
 //
 // }}} // namespace std::experimental::pmr
+
+// ADDITIONAL_COMPILE_FLAGS: -D_LIBCPP_DISABLE_DEPRECATION_WARNINGS
 
 #include <experimental/unordered_map>
 #include <experimental/memory_resource>

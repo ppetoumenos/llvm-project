@@ -7,23 +7,24 @@
 //===----------------------------------------------------------------------===//
 
 #include "Function.h"
-#include "Program.h"
 #include "Opcode.h"
+#include "Program.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/Basic/Builtins.h"
 
 using namespace clang;
 using namespace clang::interp;
 
 Function::Function(Program &P, const FunctionDecl *F, unsigned ArgSize,
-                   llvm::SmallVector<PrimType, 8> &&ParamTypes,
-                   llvm::DenseMap<unsigned, ParamDescriptor> &&Params)
+                   llvm::SmallVectorImpl<PrimType> &&ParamTypes,
+                   llvm::DenseMap<unsigned, ParamDescriptor> &&Params,
+                   llvm::SmallVectorImpl<unsigned> &&ParamOffsets,
+                   bool HasThisPointer, bool HasRVO)
     : P(P), Loc(F->getBeginLoc()), F(F), ArgSize(ArgSize),
-      ParamTypes(std::move(ParamTypes)), Params(std::move(Params)) {}
-
-CodePtr Function::getCodeBegin() const { return Code.data(); }
-
-CodePtr Function::getCodeEnd() const { return Code.data() + Code.size(); }
+      ParamTypes(std::move(ParamTypes)), Params(std::move(Params)),
+      ParamOffsets(std::move(ParamOffsets)), HasThisPointer(HasThisPointer),
+      HasRVO(HasRVO) {}
 
 Function::ParamDescriptor Function::getParamDescriptor(unsigned Offset) const {
   auto It = Params.find(Offset);
@@ -32,12 +33,13 @@ Function::ParamDescriptor Function::getParamDescriptor(unsigned Offset) const {
 }
 
 SourceInfo Function::getSource(CodePtr PC) const {
+  assert(PC >= getCodeBegin() && "PC does not belong to this function");
+  assert(PC <= getCodeEnd() && "PC Does not belong to this function");
+  assert(hasBody() && "Function has no body");
   unsigned Offset = PC - getCodeBegin();
   using Elem = std::pair<unsigned, SourceInfo>;
-  auto It = std::lower_bound(SrcMap.begin(), SrcMap.end(), Elem{Offset, {}},
-                             [](Elem A, Elem B) { return A.first < B.first; });
-  if (It == SrcMap.end() || It->first != Offset)
-    llvm::report_fatal_error("missing source location");
+  auto It = llvm::lower_bound(SrcMap, Elem{Offset, {}}, llvm::less_first());
+  assert(It != SrcMap.end());
   return It->second;
 }
 
@@ -45,4 +47,10 @@ bool Function::isVirtual() const {
   if (auto *M = dyn_cast<CXXMethodDecl>(F))
     return M->isVirtual();
   return false;
+}
+
+bool Function::needsRuntimeArgPop(const ASTContext &Ctx) const {
+  if (!isBuiltin())
+    return false;
+  return Ctx.BuiltinInfo.hasCustomTypechecking(getBuiltinID());
 }

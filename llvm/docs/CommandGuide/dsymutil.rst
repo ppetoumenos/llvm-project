@@ -21,7 +21,7 @@ OPTIONS
 .. option:: --accelerator=<accelerator type>
 
  Specify the desired type of accelerator table. Valid options are 'Apple',
- 'Dwarf' and 'Default'.
+ 'Dwarf', 'Default' and 'None'.
 
 .. option:: --arch <arch>
 
@@ -35,7 +35,11 @@ OPTIONS
 .. option:: --dump-debug-map
 
  Dump the *executable*'s debug-map (the list of the object files containing the
- debug information) in YAML format and exit. Not DWARF link will take place.
+ debug information) in YAML format and exit. No DWARF link will take place.
+
+.. option:: --fat64
+
+ Use a 64-bit header when emitting universal binaries.
 
 .. option:: --flat, -f
 
@@ -44,7 +48,8 @@ OPTIONS
 
 .. option:: --gen-reproducer
 
- Generate a reproducer consisting of the input object files.
+ Generate a reproducer consisting of the input object files. Alias for
+ --reproducer=GenerateOnExit.
 
 .. option:: --help, -h
 
@@ -102,6 +107,10 @@ OPTIONS
  output stream. When enabled warnings are embedded in the linked DWARF debug
  information.
 
+.. option:: --remarks-drop-without-debug
+
+ Drop remarks without valid debug locations. Without this flags, all remarks are kept.
+
 .. option:: --remarks-output-format <format>
 
  Specify the format to be used when serializing the linked remarks.
@@ -109,6 +118,11 @@ OPTIONS
 .. option:: --remarks-prepend-path <path>
 
  Specify a directory to prepend the paths of the external remark files.
+
+.. option:: --reproducer <mode>
+
+ Specify the reproducer generation mode. Valid options are 'GenerateOnExit',
+ 'GenerateOnCrash', 'Use', 'Off'.
 
 .. option:: --statistics
 
@@ -142,7 +156,8 @@ OPTIONS
 
 .. option:: --use-reproducer <path>
 
- Use the object files from the given reproducer path.
+ Use the object files from the given reproducer path. Alias for
+ --reproducer=Use.
 
 .. option:: --verbose
 

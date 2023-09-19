@@ -1,27 +1,26 @@
-! RUN: %S/test_errors.sh %s %t %flang_fc1
-! REQUIRES: shell
+! RUN: %python %S/test_errors.py %s %flang_fc1
 ! Forward references to derived types (error cases)
 ! C732 A parent-type-name shall be the name of a previously defined
 ! extensible type (7.5.7).
 
 !ERROR: The derived type 'undef' was forward-referenced but not defined
 type(undef) function f1()
-  call sub(f1)
+  call sub1(f1)
 end function
 
 !ERROR: The derived type 'undef' was forward-referenced but not defined
 type(undef) function f2() result(r)
-  call sub(r)
+  call sub2(r)
 end function
 
 !ERROR: The derived type 'undefpdt' was forward-referenced but not defined
 type(undefpdt(1)) function f3()
-  call sub(f3)
+  call sub3(f3)
 end function
 
 !ERROR: The derived type 'undefpdt' was forward-referenced but not defined
 type(undefpdt(1)) function f4() result(r)
-  call sub(f4)
+  call sub4(f4)
 end function
 
 !ERROR: 'bad' is not the name of a parameter for derived type 'pdt'

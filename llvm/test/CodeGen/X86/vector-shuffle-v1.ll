@@ -361,7 +361,7 @@ define <32 x i8> @shuf32i1_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_3_6_22_12_3_7_7_0
 ; AVX512VL-NEXT:    vpternlogd $255, %zmm0, %zmm0, %zmm0 {%k1} {z}
 ; AVX512VL-NEXT:    vpmovdb %zmm0, %xmm0
 ; AVX512VL-NEXT:    vinserti128 $1, %xmm0, %ymm0, %ymm0
-; AVX512VL-NEXT:    vpblendvb %ymm0, %ymm1, %ymm2, %ymm0
+; AVX512VL-NEXT:    vpternlogq $202, %ymm2, %ymm1, %ymm0
 ; AVX512VL-NEXT:    retq
 ;
 ; VL_BW_DQ-LABEL: shuf32i1_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_icmp_v32i8:
@@ -459,7 +459,7 @@ define <32 x i8> @shuf32i1_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_3_6_22_12_3_7_7_0
 ; AVX512VL-NEXT:    vpternlogd $255, %zmm0, %zmm0, %zmm0 {%k1} {z}
 ; AVX512VL-NEXT:    vpmovdb %zmm0, %xmm0
 ; AVX512VL-NEXT:    vinserti128 $1, %xmm0, %ymm0, %ymm0
-; AVX512VL-NEXT:    vpblendvb %ymm0, %ymm2, %ymm3, %ymm0
+; AVX512VL-NEXT:    vpternlogq $202, %ymm3, %ymm2, %ymm0
 ; AVX512VL-NEXT:    retq
 ;
 ; VL_BW_DQ-LABEL: shuf32i1_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_3_6_22_12_3_7_7_0_3_6_1_13_3_21_7_0_icmp_v32i8_split:
@@ -604,7 +604,7 @@ define i8 @shuf8i1_0_1_4_5_u_u_u_u(i8 %a) {
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    kmovw %edi, %k1
 ; AVX512F-NEXT:    vpternlogq $255, %zmm0, %zmm0, %zmm0 {%k1} {z}
-; AVX512F-NEXT:    vshufi64x2 {{.*#+}} zmm0 = zmm0[0,1,4,5,0,1,0,1]
+; AVX512F-NEXT:    vshufi64x2 {{.*#+}} zmm0 = zmm0[0,1,4,5,4,5,6,7]
 ; AVX512F-NEXT:    vpsllq $63, %zmm0, %zmm0
 ; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k0
 ; AVX512F-NEXT:    kmovw %k0, %eax
@@ -907,4 +907,58 @@ define i64 @shuf64i1_zero(i64 %a) {
   %c = shufflevector < 64 x i1> %b, <64 x i1> undef, <64 x i32> zeroinitializer
   %d = bitcast <64 x i1> %c to i64
   ret i64 %d
+}
+
+define <16 x i1> @PR52500(<16 x i1> %msk, i32 %in) {
+; AVX512F-LABEL: PR52500:
+; AVX512F:       # %bb.0:
+; AVX512F-NEXT:    vpmovsxbd %xmm0, %zmm0
+; AVX512F-NEXT:    vpslld $31, %zmm0, %zmm0
+; AVX512F-NEXT:    vptestmd %zmm0, %zmm0, %k1
+; AVX512F-NEXT:    vmovd %edi, %xmm0
+; AVX512F-NEXT:    movl $789, %eax # imm = 0x315
+; AVX512F-NEXT:    vmovd %eax, %xmm1
+; AVX512F-NEXT:    vpmulld %xmm1, %xmm0, %xmm0
+; AVX512F-NEXT:    vpbroadcastd %xmm0, %zmm0
+; AVX512F-NEXT:    vptestnmd %zmm0, %zmm0, %k1 {%k1}
+; AVX512F-NEXT:    vpternlogd $255, %zmm0, %zmm0, %zmm0 {%k1} {z}
+; AVX512F-NEXT:    vpmovdb %zmm0, %xmm0
+; AVX512F-NEXT:    vzeroupper
+; AVX512F-NEXT:    retq
+;
+; AVX512VL-LABEL: PR52500:
+; AVX512VL:       # %bb.0:
+; AVX512VL-NEXT:    vpmovsxbd %xmm0, %zmm0
+; AVX512VL-NEXT:    vpslld $31, %zmm0, %zmm0
+; AVX512VL-NEXT:    vptestmd %zmm0, %zmm0, %k1
+; AVX512VL-NEXT:    vmovd %edi, %xmm0
+; AVX512VL-NEXT:    movl $789, %eax # imm = 0x315
+; AVX512VL-NEXT:    vmovd %eax, %xmm1
+; AVX512VL-NEXT:    vpmulld %xmm1, %xmm0, %xmm0
+; AVX512VL-NEXT:    vpbroadcastd %xmm0, %zmm0
+; AVX512VL-NEXT:    vptestnmd %zmm0, %zmm0, %k1 {%k1}
+; AVX512VL-NEXT:    vpternlogd $255, %zmm0, %zmm0, %zmm0 {%k1} {z}
+; AVX512VL-NEXT:    vpmovdb %zmm0, %xmm0
+; AVX512VL-NEXT:    vzeroupper
+; AVX512VL-NEXT:    retq
+;
+; VL_BW_DQ-LABEL: PR52500:
+; VL_BW_DQ:       # %bb.0:
+; VL_BW_DQ-NEXT:    vpsllw $7, %xmm0, %xmm0
+; VL_BW_DQ-NEXT:    vpmovb2m %xmm0, %k1
+; VL_BW_DQ-NEXT:    vmovd %edi, %xmm0
+; VL_BW_DQ-NEXT:    movl $789, %eax # imm = 0x315
+; VL_BW_DQ-NEXT:    vmovd %eax, %xmm1
+; VL_BW_DQ-NEXT:    vpmulld %xmm1, %xmm0, %xmm0
+; VL_BW_DQ-NEXT:    vpbroadcastd %xmm0, %zmm0
+; VL_BW_DQ-NEXT:    vptestnmd %zmm0, %zmm0, %k0 {%k1}
+; VL_BW_DQ-NEXT:    vpmovm2b %k0, %xmm0
+; VL_BW_DQ-NEXT:    vzeroupper
+; VL_BW_DQ-NEXT:    retq
+  %insrt = insertelement <16 x i32> undef, i32 %in, i32 0
+  %mul = mul <16 x i32> %insrt, <i32 789, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison, i32 poison>
+  %eq = icmp eq <16 x i32> %mul, zeroinitializer
+  %cmp1 = shufflevector <16 x i1> %eq, <16 x i1> poison, <16 x i32> zeroinitializer
+  %and = and <16 x i1> %cmp1, %msk
+  ret <16 x i1> %and
 }

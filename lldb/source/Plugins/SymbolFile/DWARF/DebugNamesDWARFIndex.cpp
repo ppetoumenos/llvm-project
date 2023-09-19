@@ -13,16 +13,18 @@
 #include "lldb/Core/Module.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Stream.h"
+#include <optional>
 
 using namespace lldb_private;
 using namespace lldb;
+using namespace lldb_private::dwarf;
 
 llvm::Expected<std::unique_ptr<DebugNamesDWARFIndex>>
 DebugNamesDWARFIndex::Create(Module &module, DWARFDataExtractor debug_names,
                              DWARFDataExtractor debug_str,
                              SymbolFileDWARF &dwarf) {
-  auto index_up = std::make_unique<DebugNames>(debug_names.GetAsLLVM(),
-                                                debug_str.GetAsLLVM());
+  auto index_up = std::make_unique<DebugNames>(debug_names.GetAsLLVMDWARF(),
+                                               debug_str.GetAsLLVM());
   if (llvm::Error E = index_up->extract())
     return std::move(E);
 
@@ -40,32 +42,32 @@ DebugNamesDWARFIndex::GetUnits(const DebugNames &debug_names) {
   return result;
 }
 
-llvm::Optional<DIERef>
+std::optional<DIERef>
 DebugNamesDWARFIndex::ToDIERef(const DebugNames::Entry &entry) {
-  llvm::Optional<uint64_t> cu_offset = entry.getCUOffset();
+  std::optional<uint64_t> cu_offset = entry.getCUOffset();
   if (!cu_offset)
-    return llvm::None;
+    return std::nullopt;
 
   DWARFUnit *cu = m_debug_info.GetUnitAtOffset(DIERef::Section::DebugInfo, *cu_offset);
   if (!cu)
-    return llvm::None;
+    return std::nullopt;
 
   cu = &cu->GetNonSkeletonUnit();
-  if (llvm::Optional<uint64_t> die_offset = entry.getDIEUnitOffset())
-    return DIERef(cu->GetSymbolFileDWARF().GetDwoNum(),
+  if (std::optional<uint64_t> die_offset = entry.getDIEUnitOffset())
+    return DIERef(cu->GetSymbolFileDWARF().GetFileIndex(),
                   DIERef::Section::DebugInfo, cu->GetOffset() + *die_offset);
 
-  return llvm::None;
+  return std::nullopt;
 }
 
 bool DebugNamesDWARFIndex::ProcessEntry(
     const DebugNames::Entry &entry,
-    llvm::function_ref<bool(DWARFDIE die)> callback, llvm::StringRef name) {
-  llvm::Optional<DIERef> ref = ToDIERef(entry);
+    llvm::function_ref<bool(DWARFDIE die)> callback) {
+  std::optional<DIERef> ref = ToDIERef(entry);
   if (!ref)
     return true;
-  SymbolFileDWARF &dwarf =
-      *llvm::cast<SymbolFileDWARF>(m_module.GetSymbolFile());
+  SymbolFileDWARF &dwarf = *llvm::cast<SymbolFileDWARF>(
+      m_module.GetSymbolFile()->GetBackingSymbolFile());
   DWARFDIE die = dwarf.GetDIE(*ref);
   if (!die)
     return true;
@@ -77,7 +79,7 @@ void DebugNamesDWARFIndex::MaybeLogLookupError(llvm::Error error,
                                                llvm::StringRef name) {
   // Ignore SentinelErrors, log everything else.
   LLDB_LOG_ERROR(
-      LogChannelDWARF::GetLogIfAll(DWARF_LOG_LOOKUPS),
+      GetLog(DWARFLog::Lookups),
       handleErrors(std::move(error), [](const DebugNames::SentinelError &) {}),
       "Failed to parse index entries for index at {1:x}, name {2}: {0}",
       ni.getUnitOffset(), name);
@@ -90,7 +92,7 @@ void DebugNamesDWARFIndex::GetGlobalVariables(
     if (entry.tag() != DW_TAG_variable)
       continue;
 
-    if (!ProcessEntry(entry, callback, basename.GetStringRef()))
+    if (!ProcessEntry(entry, callback))
       return;
   }
 
@@ -102,7 +104,8 @@ void DebugNamesDWARFIndex::GetGlobalVariables(
     llvm::function_ref<bool(DWARFDIE die)> callback) {
   for (const DebugNames::NameIndex &ni: *m_debug_names_up) {
     for (DebugNames::NameTableEntry nte: ni) {
-      if (!regex.Execute(nte.getString()))
+      Mangled mangled_name(nte.getString());
+      if (!mangled_name.NameMatches(regex))
         continue;
 
       uint64_t entry_offset = nte.getEntryOffset();
@@ -111,8 +114,7 @@ void DebugNamesDWARFIndex::GetGlobalVariables(
         if (entry_or->tag() != DW_TAG_variable)
           continue;
 
-        if (!ProcessEntry(*entry_or, callback,
-                          llvm::StringRef(nte.getString())))
+        if (!ProcessEntry(*entry_or, callback))
           return;
       }
       MaybeLogLookupError(entry_or.takeError(), ni, nte.getString());
@@ -123,7 +125,7 @@ void DebugNamesDWARFIndex::GetGlobalVariables(
 }
 
 void DebugNamesDWARFIndex::GetGlobalVariables(
-    const DWARFUnit &cu, llvm::function_ref<bool(DWARFDIE die)> callback) {
+    DWARFUnit &cu, llvm::function_ref<bool(DWARFDIE die)> callback) {
   uint64_t cu_offset = cu.GetOffset();
   bool found_entry_for_cu = false;
   for (const DebugNames::NameIndex &ni: *m_debug_names_up) {
@@ -137,8 +139,7 @@ void DebugNamesDWARFIndex::GetGlobalVariables(
           continue;
 
         found_entry_for_cu = true;
-        if (!ProcessEntry(*entry_or, callback,
-                          llvm::StringRef(nte.getString())))
+        if (!ProcessEntry(*entry_or, callback))
           return;
       }
       MaybeLogLookupError(entry_or.takeError(), ni, nte.getString());
@@ -163,7 +164,7 @@ void DebugNamesDWARFIndex::GetCompleteObjCClass(
         entry.tag() != DW_TAG_class_type)
       continue;
 
-    llvm::Optional<DIERef> ref = ToDIERef(entry);
+    std::optional<DIERef> ref = ToDIERef(entry);
     if (!ref)
       continue;
 
@@ -200,7 +201,7 @@ void DebugNamesDWARFIndex::GetTypes(
   for (const DebugNames::Entry &entry :
        m_debug_names_up->equal_range(name.GetStringRef())) {
     if (isType(entry.tag())) {
-      if (!ProcessEntry(entry, callback, name.GetStringRef()))
+      if (!ProcessEntry(entry, callback))
         return;
     }
   }
@@ -214,7 +215,7 @@ void DebugNamesDWARFIndex::GetTypes(
   auto name = context[0].name;
   for (const DebugNames::Entry &entry : m_debug_names_up->equal_range(name)) {
     if (entry.tag() == context[0].tag) {
-      if (!ProcessEntry(entry, callback, name))
+      if (!ProcessEntry(entry, callback))
         return;
     }
   }
@@ -226,8 +227,10 @@ void DebugNamesDWARFIndex::GetNamespaces(
     ConstString name, llvm::function_ref<bool(DWARFDIE die)> callback) {
   for (const DebugNames::Entry &entry :
        m_debug_names_up->equal_range(name.GetStringRef())) {
-    if (entry.tag() == DW_TAG_namespace) {
-      if (!ProcessEntry(entry, callback, name.GetStringRef()))
+    dwarf::Tag entry_tag = entry.tag();
+    if (entry_tag == DW_TAG_namespace ||
+        entry_tag == DW_TAG_imported_declaration) {
+      if (!ProcessEntry(entry, callback))
         return;
     }
   }
@@ -236,10 +239,10 @@ void DebugNamesDWARFIndex::GetNamespaces(
 }
 
 void DebugNamesDWARFIndex::GetFunctions(
-    ConstString name, SymbolFileDWARF &dwarf,
-    const CompilerDeclContext &parent_decl_ctx, uint32_t name_type_mask,
+    const Module::LookupInfo &lookup_info, SymbolFileDWARF &dwarf,
+    const CompilerDeclContext &parent_decl_ctx,
     llvm::function_ref<bool(DWARFDIE die)> callback) {
-
+  ConstString name = lookup_info.GetLookupName();
   std::set<DWARFDebugInfoEntry *> seen;
   for (const DebugNames::Entry &entry :
        m_debug_names_up->equal_range(name.GetStringRef())) {
@@ -247,9 +250,9 @@ void DebugNamesDWARFIndex::GetFunctions(
     if (tag != DW_TAG_subprogram && tag != DW_TAG_inlined_subroutine)
       continue;
 
-    if (llvm::Optional<DIERef> ref = ToDIERef(entry)) {
-      if (!ProcessFunctionDIE(name.GetStringRef(), *ref, dwarf, parent_decl_ctx,
-                              name_type_mask, [&](DWARFDIE die) {
+    if (std::optional<DIERef> ref = ToDIERef(entry)) {
+      if (!ProcessFunctionDIE(lookup_info, *ref, dwarf, parent_decl_ctx,
+                              [&](DWARFDIE die) {
                                 if (!seen.insert(die.GetDIE()).second)
                                   return true;
                                 return callback(die);
@@ -258,8 +261,7 @@ void DebugNamesDWARFIndex::GetFunctions(
     }
   }
 
-  m_fallback.GetFunctions(name, dwarf, parent_decl_ctx, name_type_mask,
-                          callback);
+  m_fallback.GetFunctions(lookup_info, dwarf, parent_decl_ctx, callback);
 }
 
 void DebugNamesDWARFIndex::GetFunctions(
@@ -277,8 +279,7 @@ void DebugNamesDWARFIndex::GetFunctions(
         if (tag != DW_TAG_subprogram && tag != DW_TAG_inlined_subroutine)
           continue;
 
-        if (!ProcessEntry(*entry_or, callback,
-                          llvm::StringRef(nte.getString())))
+        if (!ProcessEntry(*entry_or, callback))
           return;
       }
       MaybeLogLookupError(entry_or.takeError(), ni, nte.getString());

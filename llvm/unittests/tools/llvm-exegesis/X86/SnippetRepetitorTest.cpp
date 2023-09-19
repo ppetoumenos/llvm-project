@@ -38,12 +38,12 @@ protected:
     MF = &createVoidVoidPtrMachineFunction("TestFn", Mod.get(), MMI.get());
   }
 
-  void TestCommon(InstructionBenchmark::RepetitionModeE RepetitionMode) {
+  void TestCommon(Benchmark::RepetitionModeE RepetitionMode) {
     const auto Repetitor = SnippetRepetitor::Create(RepetitionMode, State);
     const std::vector<MCInst> Instructions = {MCInstBuilder(X86::NOOP)};
     FunctionFiller Sink(*MF, {X86::EAX});
     const auto Fill =
-        Repetitor->Repeat(Instructions, kMinInstructions, kLoopBodySize);
+        Repetitor->Repeat(Instructions, kMinInstructions, kLoopBodySize, false);
     Fill(Sink);
   }
 
@@ -66,16 +66,16 @@ static auto LiveReg = [](unsigned Reg) {
 };
 
 TEST_F(X86SnippetRepetitorTest, Duplicate) {
-  TestCommon(InstructionBenchmark::Duplicate);
+  TestCommon(Benchmark::Duplicate);
   // Duplicating creates a single basic block that repeats the instructions.
   ASSERT_EQ(MF->getNumBlockIDs(), 1u);
   EXPECT_THAT(MF->getBlockNumbered(0)->instrs(),
               ElementsAre(HasOpcode(X86::NOOP), HasOpcode(X86::NOOP),
-                          HasOpcode(X86::NOOP), HasOpcode(X86::RETQ)));
+                          HasOpcode(X86::NOOP), HasOpcode(X86::RET64)));
 }
 
 TEST_F(X86SnippetRepetitorTest, Loop) {
-  TestCommon(InstructionBenchmark::Loop);
+  TestCommon(Benchmark::Loop);
   // Duplicating creates an entry block, a loop body and a ret block.
   ASSERT_EQ(MF->getNumBlockIDs(), 3u);
   const auto &LoopBlock = *MF->getBlockNumbered(1);
@@ -90,7 +90,7 @@ TEST_F(X86SnippetRepetitorTest, Loop) {
                   LiveReg(State.getExegesisTarget().getLoopCounterRegister(
                       State.getTargetMachine().getTargetTriple()))));
   EXPECT_THAT(MF->getBlockNumbered(2)->instrs(),
-              ElementsAre(HasOpcode(X86::RETQ)));
+              ElementsAre(HasOpcode(X86::RET64)));
 }
 
 } // namespace

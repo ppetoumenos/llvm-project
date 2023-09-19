@@ -24,7 +24,7 @@ void dumpTest() {
     std::uint64_t raw;
     const char *expected;
   } table[] = {
-      {0x7f876543, "NaN 0x7f876543"},
+      {0x7f876543, "NaN0x7f876543"},
       {0x7f800000, "Inf"},
       {0xff800000, "-Inf"},
       {0x00000000, "0.0"},
@@ -35,8 +35,8 @@ void dumpTest() {
       {0x3f000000, "0x1.0p-1"},
       {0x7f7fffff, "0x1.fffffep127"},
       {0x00800000, "0x1.0p-126"},
-      {0x00400000, "0x0.8p-127"},
-      {0x00000001, "0x0.000002p-127"},
+      {0x00400000, "0x0.8p-126"},
+      {0x00000001, "0x0.000002p-126"},
       {0, nullptr},
   };
   for (int j{0}; table[j].expected != nullptr; ++j) {
@@ -95,7 +95,15 @@ template <typename R> void basicTests(int rm, Rounding rounding) {
   int exponentBits{R::bits - significandBits - 1};
   std::uint64_t maxExponent{(std::uint64_t{1} << exponentBits) - 1};
   MATCH(nan.Exponent(), maxExponent)(desc);
-  R inf{Word{maxExponent}.SHIFTL(significandBits)};
+  Word infWord{Word{maxExponent}.SHIFTL(significandBits)};
+  Word negInfWord{
+      Word{maxExponent}.SHIFTL(significandBits).IOR(Word::MASKL(1))};
+  if constexpr (kind == 10) { // x87
+    infWord = infWord.IBSET(63);
+    negInfWord = negInfWord.IBSET(63);
+  }
+  R inf{infWord};
+  R negInf{negInfWord};
   TEST(!inf.IsNegative())(desc);
   TEST(!inf.IsNotANumber())(desc);
   TEST(inf.IsInfinite())(desc);
@@ -106,7 +114,6 @@ template <typename R> void basicTests(int rm, Rounding rounding) {
   TEST(minusZero.Compare(inf) == Relation::Less)(desc);
   TEST(nan.Compare(inf) == Relation::Unordered)(desc);
   TEST(inf.Compare(inf) == Relation::Equal)(desc);
-  R negInf{Word{maxExponent}.SHIFTL(significandBits).IOR(Word::MASKL(1))};
   TEST(negInf.IsNegative())(desc);
   TEST(!negInf.IsNotANumber())(desc);
   TEST(negInf.IsInfinite())(desc);
@@ -390,6 +397,22 @@ void subsetTests(int pass, Rounding rounding, std::uint32_t opds) {
       ("%d AINT(0x%jx)", pass, static_cast<std::intmax_t>(rj));
       MATCH(actualFlags, FlagsToBits(aint.flags))
       ("%d AINT(0x%jx)", pass, static_cast<std::intmax_t>(rj));
+    }
+
+    {
+      ValueWithRealFlags<REAL> root{x.SQRT(rounding)};
+#ifndef __clang__ // broken and also slow
+      fpenv.ClearFlags();
+#endif
+      FLT fcheck{std::sqrt(fj)};
+      auto actualFlags{FlagsToBits(fpenv.CurrentFlags())};
+      u.f = fcheck;
+      UINT rcheck{NormalizeNaN(u.ui)};
+      UINT check = root.value.RawBits().ToUInt64();
+      MATCH(rcheck, check)
+      ("%d SQRT(0x%jx)", pass, static_cast<std::intmax_t>(rj));
+      MATCH(actualFlags, FlagsToBits(root.flags))
+      ("%d SQRT(0x%jx)", pass, static_cast<std::intmax_t>(rj));
     }
 
     {

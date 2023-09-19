@@ -73,7 +73,7 @@ public:
             .Case<LLVM::LLVMArrayType, IntegerType, LLVM::LLVMFunctionType,
                   LLVM::LLVMPointerType, LLVM::LLVMStructType,
                   LLVM::LLVMFixedVectorType, LLVM::LLVMScalableVectorType,
-                  VectorType>(
+                  VectorType, LLVM::LLVMTargetExtType>(
                 [this](auto type) { return this->translate(type); })
             .Default([](Type t) -> llvm::Type * {
               llvm_unreachable("unknown LLVM dialect type");
@@ -106,8 +106,7 @@ private:
 
   /// Translates the given pointer type.
   llvm::Type *translate(LLVM::LLVMPointerType type) {
-    return llvm::PointerType::get(translateType(type.getElementType()),
-                                  type.getAddressSpace());
+    return llvm::PointerType::get(context, type.getAddressSpace());
   }
 
   /// Translates the given structure type, supports both identified and literal
@@ -137,6 +136,9 @@ private:
   llvm::Type *translate(VectorType type) {
     assert(LLVM::isCompatibleVectorType(type) &&
            "expected compatible with LLVM vector type");
+    if (type.isScalable())
+      return llvm::ScalableVectorType::get(translateType(type.getElementType()),
+                                           type.getNumElements());
     return llvm::FixedVectorType::get(translateType(type.getElementType()),
                                       type.getNumElements());
   }
@@ -151,6 +153,14 @@ private:
   llvm::Type *translate(LLVM::LLVMScalableVectorType type) {
     return llvm::ScalableVectorType::get(translateType(type.getElementType()),
                                          type.getMinNumElements());
+  }
+
+  /// Translates the given target extension type.
+  llvm::Type *translate(LLVM::LLVMTargetExtType type) {
+    SmallVector<llvm::Type *> typeParams;
+    translateTypes(type.getTypeParams(), typeParams);
+    return llvm::TargetExtType::get(context, type.getExtTypeName(), typeParams,
+                                    type.getIntParams());
   }
 
   /// Translates a list of types.
@@ -170,14 +180,14 @@ private:
   /// type instead of creating a new type.
   llvm::DenseMap<Type, llvm::Type *> knownTranslations;
 };
-} // end namespace detail
-} // end namespace LLVM
-} // end namespace mlir
+} // namespace detail
+} // namespace LLVM
+} // namespace mlir
 
 LLVM::TypeToLLVMIRTranslator::TypeToLLVMIRTranslator(llvm::LLVMContext &context)
     : impl(new detail::TypeToLLVMIRTranslatorImpl(context)) {}
 
-LLVM::TypeToLLVMIRTranslator::~TypeToLLVMIRTranslator() {}
+LLVM::TypeToLLVMIRTranslator::~TypeToLLVMIRTranslator() = default;
 
 llvm::Type *LLVM::TypeToLLVMIRTranslator::translateType(Type type) {
   return impl->translateType(type);
@@ -185,5 +195,5 @@ llvm::Type *LLVM::TypeToLLVMIRTranslator::translateType(Type type) {
 
 unsigned LLVM::TypeToLLVMIRTranslator::getPreferredAlignment(
     Type type, const llvm::DataLayout &layout) {
-  return layout.getPrefTypeAlignment(translateType(type));
+  return layout.getPrefTypeAlign(translateType(type)).value();
 }

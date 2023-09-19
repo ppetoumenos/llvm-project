@@ -1,4 +1,4 @@
-; RUN: opt < %s -wasm-lower-em-ehsjlj -S | FileCheck %s
+; RUN: opt < %s -wasm-lower-em-ehsjlj -enable-emscripten-sjlj -S | FileCheck %s
 
 target datalayout = "e-m:e-p:32:32-i64:64-n32:64-S128"
 target triple = "wasm32-unknown-unknown"
@@ -11,24 +11,24 @@ define void @setjmp_debug_info0() !dbg !3 {
 ; CHECK-LABEL: @setjmp_debug_info0
 entry:
   %buf = alloca [1 x %struct.__jmp_buf_tag], align 16, !dbg !4
-  %arraydecay = getelementptr inbounds [1 x %struct.__jmp_buf_tag], [1 x %struct.__jmp_buf_tag]* %buf, i32 0, i32 0, !dbg !5
-  %call = call i32 @setjmp(%struct.__jmp_buf_tag* %arraydecay) #0, !dbg !6
+  %arraydecay = getelementptr inbounds [1 x %struct.__jmp_buf_tag], ptr %buf, i32 0, i32 0, !dbg !5
+  %call = call i32 @setjmp(ptr %arraydecay) #0, !dbg !6
   call void @foo(), !dbg !7
   ret void, !dbg !8
 ; CHECK: entry:
-  ; CHECK-NEXT: call i8* @malloc(i32 40), !dbg ![[DL0:.*]]
-  ; CHECK-NEXT: bitcast {{.*}}, !dbg ![[DL0]]
+  ; CHECK-NEXT: call ptr @malloc(i32 40), !dbg ![[DL0:.*]]
+
+; CHECK: entry.split:
   ; CHECK: alloca {{.*}}, !dbg ![[DL0]]
-  ; CHECK: call i32* @saveSetjmp{{.*}}, !dbg ![[DL1:.*]]
+  ; CHECK: call ptr @saveSetjmp{{.*}}, !dbg ![[DL1:.*]]
   ; CHECK-NEXT: call i32 @getTempRet0{{.*}}, !dbg ![[DL1]]
   ; CHECK-NEXT: br {{.*}}, !dbg ![[DL2:.*]]
 
-; CHECK: entry.split:
+; CHECK: entry.split.split:
   ; CHECK: call {{.*}} void @__invoke_void{{.*}}, !dbg ![[DL2]]
 
-; CHECK: entry.split.split:
-  ; CHECK-NEXT: bitcast {{.*}}, !dbg ![[DL3:.*]]
-  ; CHECK-NEXT: call void @free{{.*}}, !dbg ![[DL3]]
+; CHECK: entry.split.split.split:
+  ; CHECK-NEXT: call void @free{{.*}}, !dbg ![[DL3:.*]]
 
 ; CHECK: if.then1:
   ; CHECK: call i32 @testSetjmp{{.*}}, !dbg ![[DL2]]
@@ -36,7 +36,7 @@ entry:
 ; CHECK: if.end:
   ; CHECK: call i32 @getTempRet0{{.*}}, !dbg ![[DL2]]
 
-; CHECK: if.then2:
+; CHECK: call.em.longjmp:
   ; CHECK: call void @emscripten_longjmp{{.*}}, !dbg ![[DL2]]
 
 ; CHECK: if.end2:
@@ -51,21 +51,21 @@ define void @setjmp_debug_info1() !dbg !9 {
 ; CHECK-LABEL: @setjmp_debug_info1
 entry:
   %buf = alloca [1 x %struct.__jmp_buf_tag], align 16
-  %arraydecay = getelementptr inbounds [1 x %struct.__jmp_buf_tag], [1 x %struct.__jmp_buf_tag]* %buf, i32 0, i32 0
-  %call = call i32 @setjmp(%struct.__jmp_buf_tag* %arraydecay) #0
+  %arraydecay = getelementptr inbounds [1 x %struct.__jmp_buf_tag], ptr %buf, i32 0, i32 0
+  %call = call i32 @setjmp(ptr %arraydecay) #0
   call void @foo()
   ret void
-  ; CHECK: call i8* @malloc(i32 40), !dbg ![[DL_DUMMY:.*]]
+  ; CHECK: call ptr @malloc(i32 40), !dbg ![[DL_DUMMY:.*]]
   ; CHECK: call void @free{{.*}}, !dbg ![[DL_DUMMY]]
 }
 
 ; Note that these functions have DISubprograms.
-declare !dbg !10 i8* @malloc(i32)
-declare !dbg !11 void @free(i8*)
+declare !dbg !10 ptr @malloc(i32)
+declare !dbg !11 void @free(ptr)
 
 declare void @foo()
 ; Function Attrs: returns_twice
-declare i32 @setjmp(%struct.__jmp_buf_tag*) #0
+declare i32 @setjmp(ptr) #0
 
 !llvm.dbg.cu = !{!2}
 !llvm.module.flags = !{!0}

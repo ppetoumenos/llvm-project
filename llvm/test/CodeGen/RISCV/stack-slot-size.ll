@@ -18,7 +18,7 @@ define i32 @caller129() nounwind {
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    addi sp, sp, -32
 ; RV32I-NEXT:    sw ra, 28(sp) # 4-byte Folded Spill
-; RV32I-NEXT:    addi a0, zero, 42
+; RV32I-NEXT:    li a0, 42
 ; RV32I-NEXT:    sw a0, 24(sp)
 ; RV32I-NEXT:    sw zero, 16(sp)
 ; RV32I-NEXT:    sw zero, 12(sp)
@@ -36,7 +36,7 @@ define i32 @caller129() nounwind {
 ; RV64I:       # %bb.0:
 ; RV64I-NEXT:    addi sp, sp, -48
 ; RV64I-NEXT:    sd ra, 40(sp) # 8-byte Folded Spill
-; RV64I-NEXT:    addi a0, zero, 42
+; RV64I-NEXT:    li a0, 42
 ; RV64I-NEXT:    sw a0, 36(sp)
 ; RV64I-NEXT:    sd zero, 16(sp)
 ; RV64I-NEXT:    sd zero, 8(sp)
@@ -48,9 +48,9 @@ define i32 @caller129() nounwind {
 ; RV64I-NEXT:    addi sp, sp, 48
 ; RV64I-NEXT:    ret
   %1 = alloca i32
-  store i32 42, i32* %1
+  store i32 42, ptr %1
   call void @callee129(i129 0)
-  %2 = load i32, i32* %1
+  %2 = load i32, ptr %1
   ret i32 %2
 }
 
@@ -59,7 +59,7 @@ define i32 @caller160() nounwind {
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    addi sp, sp, -32
 ; RV32I-NEXT:    sw ra, 28(sp) # 4-byte Folded Spill
-; RV32I-NEXT:    addi a0, zero, 42
+; RV32I-NEXT:    li a0, 42
 ; RV32I-NEXT:    sw a0, 24(sp)
 ; RV32I-NEXT:    sw zero, 16(sp)
 ; RV32I-NEXT:    sw zero, 12(sp)
@@ -77,7 +77,7 @@ define i32 @caller160() nounwind {
 ; RV64I:       # %bb.0:
 ; RV64I-NEXT:    addi sp, sp, -48
 ; RV64I-NEXT:    sd ra, 40(sp) # 8-byte Folded Spill
-; RV64I-NEXT:    addi a0, zero, 42
+; RV64I-NEXT:    li a0, 42
 ; RV64I-NEXT:    sw a0, 36(sp)
 ; RV64I-NEXT:    sd zero, 16(sp)
 ; RV64I-NEXT:    sd zero, 8(sp)
@@ -89,9 +89,9 @@ define i32 @caller160() nounwind {
 ; RV64I-NEXT:    addi sp, sp, 48
 ; RV64I-NEXT:    ret
   %1 = alloca i32
-  store i32 42, i32* %1
+  store i32 42, ptr %1
   call void @callee160(i160 0)
-  %2 = load i32, i32* %1
+  %2 = load i32, ptr %1
   ret i32 %2
 }
 
@@ -100,7 +100,7 @@ define i32 @caller161() nounwind {
 ; RV32I:       # %bb.0:
 ; RV32I-NEXT:    addi sp, sp, -32
 ; RV32I-NEXT:    sw ra, 28(sp) # 4-byte Folded Spill
-; RV32I-NEXT:    addi a0, zero, 42
+; RV32I-NEXT:    li a0, 42
 ; RV32I-NEXT:    sw a0, 24(sp)
 ; RV32I-NEXT:    sw zero, 20(sp)
 ; RV32I-NEXT:    sw zero, 16(sp)
@@ -119,7 +119,7 @@ define i32 @caller161() nounwind {
 ; RV64I:       # %bb.0:
 ; RV64I-NEXT:    addi sp, sp, -48
 ; RV64I-NEXT:    sd ra, 40(sp) # 8-byte Folded Spill
-; RV64I-NEXT:    addi a0, zero, 42
+; RV64I-NEXT:    li a0, 42
 ; RV64I-NEXT:    sw a0, 36(sp)
 ; RV64I-NEXT:    sd zero, 16(sp)
 ; RV64I-NEXT:    sd zero, 8(sp)
@@ -131,8 +131,8 @@ define i32 @caller161() nounwind {
 ; RV64I-NEXT:    addi sp, sp, 48
 ; RV64I-NEXT:    ret
   %1 = alloca i32
-  store i32 42, i32* %1
+  store i32 42, ptr %1
   call void @callee161(i161 0)
-  %2 = load i32, i32* %1
+  %2 = load i32, ptr %1
   ret i32 %2
 }

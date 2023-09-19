@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 -triple x86_64-apple-darwin10.0.0 -fsyntax-only -verify %s -Winvalid-offsetof -std=c++98
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10.0.0 -fsyntax-only -verify %s -Winvalid-offsetof -std=c++98 -fexperimental-new-constant-interpreter
 
 struct NonPOD {
   virtual void f();
@@ -82,4 +83,19 @@ struct Derived : virtual Base {
   void Fun() { (void)__builtin_offsetof(Derived, Field); } // expected-warning {{offset of on non-POD type}} \
                                                               expected-error {{invalid application of 'offsetof' to a field of a virtual base}}
 };
+}
+
+int test_definition(void) {
+  return __builtin_offsetof(struct A // expected-error {{'A' cannot be defined in a type specifier}}
+  {
+    int a;
+    struct B // FIXME: error diagnostic message for nested definitions
+             // https://reviews.llvm.org/D133574
+             // fixme-error{{'A' cannot be defined in '__builtin_offsetof'}}
+    {
+      int c;
+      int d;
+    };
+    B x;
+  }, a);
 }

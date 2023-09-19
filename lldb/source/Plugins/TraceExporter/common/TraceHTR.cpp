@@ -12,6 +12,7 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "llvm/Support/JSON.h"
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -22,10 +23,10 @@ size_t HTRBlockMetadata::GetNumInstructions() const {
   return m_num_instructions;
 }
 
-llvm::Optional<llvm::StringRef>
+std::optional<llvm::StringRef>
 HTRBlockMetadata::GetMostFrequentlyCalledFunction() const {
   size_t max_ncalls = 0;
-  llvm::Optional<llvm::StringRef> max_name = llvm::None;
+  std::optional<llvm::StringRef> max_name;
   for (const auto &it : m_func_calls) {
     ConstString name = it.first;
     size_t ncalls = it.second;
@@ -68,7 +69,7 @@ size_t IHTRLayer::GetLayerId() const { return m_layer_id; }
 
 void HTRBlockLayer::AppendNewBlock(size_t block_id, HTRBlock &&block) {
   m_block_id_trace.emplace_back(block_id);
-  m_block_defs.emplace(block_id, block);
+  m_block_defs.emplace(block_id, std::move(block));
 }
 
 void HTRBlockLayer::AppendRepeatedBlock(size_t block_id) {
@@ -80,7 +81,7 @@ llvm::ArrayRef<lldb::addr_t> HTRInstructionLayer::GetInstructionTrace() const {
 }
 
 void HTRInstructionLayer::AddCallInstructionMetadata(
-    lldb::addr_t load_addr, llvm::Optional<ConstString> func_name) {
+    lldb::addr_t load_addr, std::optional<ConstString> func_name) {
   m_call_isns.emplace(load_addr, func_name);
 }
 
@@ -108,11 +109,11 @@ HTRBlockMetadata HTRInstructionLayer::GetMetadataByIndex(size_t index) const {
 
   auto func_name_it = m_call_isns.find(instruction_load_address);
   if (func_name_it != m_call_isns.end()) {
-    if (llvm::Optional<ConstString> func_name = func_name_it->second) {
+    if (std::optional<ConstString> func_name = func_name_it->second) {
       func_calls[*func_name] = 1;
     }
   }
-  return {instruction_load_address, 1, func_calls};
+  return {instruction_load_address, 1, std::move(func_calls)};
 }
 
 size_t HTRInstructionLayer::GetNumUnits() const {
@@ -130,41 +131,45 @@ TraceHTR::TraceHTR(Thread &thread, TraceCursor &cursor)
 
   // Move cursor to the first instruction in the trace
   cursor.SetForwards(true);
-  cursor.Seek(0, TraceCursor::SeekType::Set);
+  cursor.Seek(0, lldb::eTraceCursorSeekTypeBeginning);
 
+  // TODO: fix after persona0220's patch on a new way to access instruction
+  // kinds
+  /*
   Target &target = thread.GetProcess()->GetTarget();
   auto function_name_from_load_address =
-      [&](lldb::addr_t load_address) -> llvm::Optional<ConstString> {
+      [&](lldb::addr_t load_address) -> std::optional<ConstString> {
     lldb_private::Address pc_addr;
     SymbolContext sc;
     if (target.ResolveLoadAddress(load_address, pc_addr) &&
         pc_addr.CalculateSymbolContext(&sc))
       return sc.GetFunctionName()
-                 ? llvm::Optional<ConstString>(sc.GetFunctionName())
-                 : llvm::None;
+                 ? std::optional<ConstString>(sc.GetFunctionName())
+                 : std::nullopt;
     else
-      return llvm::None;
+      return std::nullopt;
   };
 
-  bool more_data_in_trace = true;
-  while (more_data_in_trace) {
-    if (cursor.IsError()) {
+  while (cursor.HasValue()) { if (cursor.IsError()) {
       // Append a load address of 0 for all instructions that an error occured
       // while decoding.
       // TODO: Make distinction between errors by storing the error messages.
       // Currently, all errors are treated the same.
       m_instruction_layer_up->AppendInstruction(0);
-      more_data_in_trace = cursor.Next();
+      cursor.Next();
+    } else if (cursor.IsEvent()) {
+      cursor.Next();
     } else {
       lldb::addr_t current_instruction_load_address = cursor.GetLoadAddress();
-      lldb::TraceInstructionControlFlowType current_instruction_type =
-          cursor.GetInstructionControlFlowType();
+      lldb::InstructionControlFlowKind current_instruction_type =
+          cursor.GetInstructionControlFlowKind();
 
       m_instruction_layer_up->AppendInstruction(
           current_instruction_load_address);
-      more_data_in_trace = cursor.Next();
+      cursor.Next();
+      bool more_data_in_trace = cursor.HasValue();
       if (current_instruction_type &
-          lldb::eTraceInstructionControlFlowTypeCall) {
+          lldb::eInstructionControlFlowKindCall) {
         if (more_data_in_trace && !cursor.IsError()) {
           m_instruction_layer_up->AddCallInstructionMetadata(
               current_instruction_load_address,
@@ -173,11 +178,12 @@ TraceHTR::TraceHTR(Thread &thread, TraceCursor &cursor)
           // Next instruction is not known - pass None to indicate the name
           // of the function being called is not known
           m_instruction_layer_up->AddCallInstructionMetadata(
-              current_instruction_load_address, llvm::None);
+              current_instruction_load_address, std::nullopt);
         }
       }
     }
   }
+  */
 }
 
 void HTRBlockMetadata::MergeMetadata(
@@ -311,7 +317,7 @@ HTRBlockLayerUP lldb_private::BasicSuperBlockMerge(IHTRLayer &layer) {
     // Each super block always has the same first unit (we call this the
     // super block head) This gurantee allows us to use the super block head as
     // the unique key mapping to the super block it begins
-    llvm::Optional<size_t> superblock_head = llvm::None;
+    std::optional<size_t> superblock_head;
     auto construct_next_layer = [&](size_t merge_start, size_t n) -> void {
       if (!superblock_head)
         return;
@@ -344,7 +350,7 @@ HTRBlockLayerUP lldb_private::BasicSuperBlockMerge(IHTRLayer &layer) {
         // Tail logic
         construct_next_layer(i - superblock_size + 1, superblock_size);
         // Reset the block_head since the prev super block has come to and end
-        superblock_head = llvm::None;
+        superblock_head = std::nullopt;
         superblock_size = 0;
       } else if (isHead) {
         if (superblock_size) { // this handles (tail, head) adjacency -
@@ -364,7 +370,7 @@ HTRBlockLayerUP lldb_private::BasicSuperBlockMerge(IHTRLayer &layer) {
         // End previous super block
         construct_next_layer(i - superblock_size + 1, superblock_size);
         // Reset the block_head since the prev super block has come to and end
-        superblock_head = llvm::None;
+        superblock_head = std::nullopt;
         superblock_size = 0;
       } else {
         if (!superblock_head)
@@ -391,20 +397,35 @@ llvm::json::Value lldb_private::toJSON(const TraceHTR &htr) {
     std::string load_address_hex_string(stream.str());
     display_name.assign(load_address_hex_string);
 
+    // name: load address of the first instruction of the block and the name
+    // of the most frequently called function from the block (if applicable)
+
+    // ph: the event type - 'X' for Complete events (see link to documentation
+    // below)
+
+    // Since trace timestamps aren't yet supported in HTR, the ts (timestamp) is
+    // based on the instruction's offset in the trace and the dur (duration) is
+    // 1 since this layer contains single instructions. Using the instruction
+    // offset and a duration of 1 oversimplifies the true timing information of
+    // the trace, nonetheless, these approximate timestamps/durations provide an
+    // clear visualization of the trace.
+
+    // ts: offset from the beginning of the trace for the first instruction in
+    // the block
+
+    // dur: 1 since this layer contains single instructions.
+
+    // pid: the ID of the HTR layer the blocks belong to
+
+    // See
+    // https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview#heading=h.j75x71ritcoy
+    // for documentation on the Trace Event Format
     layers_as_json.emplace_back(llvm::json::Object{
         {"name", display_name},
-        {"ph", "B"},
+        {"ph", "X"},
         {"ts", (int64_t)i},
-
+        {"dur", 1},
         {"pid", (int64_t)layer_id},
-        {"tid", (int64_t)layer_id},
-    });
-
-    layers_as_json.emplace_back(llvm::json::Object{
-        {"ph", "E"},
-        {"ts", (int64_t)i + 1},
-        {"pid", (int64_t)layer_id},
-        {"tid", (int64_t)layer_id},
     });
   }
 
@@ -420,9 +441,7 @@ llvm::json::Value lldb_private::toJSON(const TraceHTR &htr) {
 
       HTRBlockMetadata metadata = block.GetMetadata();
 
-      size_t end_ts = start_ts + metadata.GetNumInstructions();
-
-      llvm::Optional<llvm::StringRef> most_freq_func =
+      std::optional<llvm::StringRef> most_freq_func =
           metadata.GetMostFrequentlyCalledFunction();
       std::stringstream stream;
       stream << "0x" << std::hex << metadata.GetFirstInstructionLoadAddress();
@@ -431,22 +450,23 @@ llvm::json::Value lldb_private::toJSON(const TraceHTR &htr) {
           most_freq_func ? offset_hex_string + ": " + most_freq_func->str()
                          : offset_hex_string;
 
+      // Since trace timestamps aren't yet supported in HTR, the ts (timestamp)
+      // and dur (duration) are based on the block's offset in the trace and
+      // number of instructions in the block, respectively. Using the block
+      // offset and the number of instructions oversimplifies the true timing
+      // information of the trace, nonetheless, these approximate
+      // timestamps/durations provide an understandable visualization of the
+      // trace.
+      auto duration = metadata.GetNumInstructions();
       layers_as_json.emplace_back(llvm::json::Object{
           {"name", display_name},
-          {"ph", "B"},
+          {"ph", "X"},
           {"ts", (int64_t)start_ts},
+          {"dur", (int64_t)duration},
           {"pid", (int64_t)layer_id},
-          {"tid", (int64_t)layer_id},
-      });
-
-      layers_as_json.emplace_back(llvm::json::Object{
-          {"ph", "E"},
-          {"ts", (int64_t)end_ts},
-          {"pid", (int64_t)layer_id},
-          {"tid", (int64_t)layer_id},
           {"args", block_json},
       });
-      start_ts = end_ts;
+      start_ts += duration;
     }
   }
   return layers_as_json;

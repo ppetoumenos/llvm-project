@@ -9,11 +9,12 @@
 #ifndef FORTRAN_RUNTIME_TOOLS_H_
 #define FORTRAN_RUNTIME_TOOLS_H_
 
-#include "cpp-type.h"
-#include "descriptor.h"
-#include "memory.h"
+#include "freestanding-tools.h"
 #include "terminator.h"
-#include "flang/Common/long-double.h"
+#include "flang/Runtime/cpp-type.h"
+#include "flang/Runtime/descriptor.h"
+#include "flang/Runtime/memory.h"
+#include <cstring>
 #include <functional>
 #include <map>
 #include <type_traits>
@@ -39,7 +40,7 @@ void ToFortranDefaultCharacter(
     char *to, std::size_t toLength, const char *from);
 
 // Utility for dealing with elemental LOGICAL arguments
-inline bool IsLogicalElementTrue(
+inline RT_API_ATTRS bool IsLogicalElementTrue(
     const Descriptor &logical, const SubscriptValue at[]) {
   // A LOGICAL value is false if and only if all of its bytes are zero.
   const char *p{logical.Element<char>(at)};
@@ -52,12 +53,22 @@ inline bool IsLogicalElementTrue(
 }
 
 // Check array conformability; a scalar 'x' conforms.  Crashes on error.
-void CheckConformability(const Descriptor &to, const Descriptor &x,
+RT_API_ATTRS void CheckConformability(const Descriptor &to, const Descriptor &x,
     Terminator &, const char *funcName, const char *toName,
     const char *fromName);
 
+// Helper to store integer value in result[at].
+template <int KIND> struct StoreIntegerAt {
+  void operator()(const Fortran::runtime::Descriptor &result, std::size_t at,
+      std::int64_t value) const {
+    *result.ZeroBasedIndexedElement<Fortran::runtime::CppTypeFor<
+        Fortran::common::TypeCategory::Integer, KIND>>(at) = value;
+  }
+};
+
 // Validate a KIND= argument
-void CheckIntegerKind(Terminator &, int kind, const char *intrinsic);
+RT_API_ATTRS void CheckIntegerKind(
+    Terminator &, int kind, const char *intrinsic);
 
 template <typename TO, typename FROM>
 inline void PutContiguousConverted(TO *to, FROM *from, std::size_t count) {
@@ -66,7 +77,7 @@ inline void PutContiguousConverted(TO *to, FROM *from, std::size_t count) {
   }
 }
 
-static inline std::int64_t GetInt64(
+static inline RT_API_ATTRS std::int64_t GetInt64(
     const char *p, std::size_t bytes, Terminator &terminator) {
   switch (bytes) {
   case 1:
@@ -87,16 +98,16 @@ inline bool SetInteger(INT &x, int kind, std::int64_t value) {
   switch (kind) {
   case 1:
     reinterpret_cast<CppTypeFor<TypeCategory::Integer, 1> &>(x) = value;
-    return true;
+    return value == reinterpret_cast<CppTypeFor<TypeCategory::Integer, 1> &>(x);
   case 2:
     reinterpret_cast<CppTypeFor<TypeCategory::Integer, 2> &>(x) = value;
-    return true;
+    return value == reinterpret_cast<CppTypeFor<TypeCategory::Integer, 2> &>(x);
   case 4:
     reinterpret_cast<CppTypeFor<TypeCategory::Integer, 4> &>(x) = value;
-    return true;
+    return value == reinterpret_cast<CppTypeFor<TypeCategory::Integer, 4> &>(x);
   case 8:
     reinterpret_cast<CppTypeFor<TypeCategory::Integer, 8> &>(x) = value;
-    return true;
+    return value == reinterpret_cast<CppTypeFor<TypeCategory::Integer, 8> &>(x);
   default:
     return false;
   }
@@ -107,7 +118,7 @@ inline bool SetInteger(INT &x, int kind, std::int64_t value) {
 // arguments.
 template <template <TypeCategory, int> class FUNC, typename RESULT,
     typename... A>
-inline RESULT ApplyType(
+inline RT_API_ATTRS RESULT ApplyType(
     TypeCategory cat, int kind, Terminator &terminator, A &&...x) {
   switch (cat) {
   case TypeCategory::Integer:
@@ -120,12 +131,12 @@ inline RESULT ApplyType(
       return FUNC<TypeCategory::Integer, 4>{}(std::forward<A>(x)...);
     case 8:
       return FUNC<TypeCategory::Integer, 8>{}(std::forward<A>(x)...);
-#ifdef __SIZEOF_INT128__
+#if defined __SIZEOF_INT128__ && !AVOID_NATIVE_UINT128_T
     case 16:
       return FUNC<TypeCategory::Integer, 16>{}(std::forward<A>(x)...);
 #endif
     default:
-      terminator.Crash("unsupported INTEGER(KIND=%d)", kind);
+      terminator.Crash("not yet implemented: INTEGER(KIND=%d)", kind);
     }
   case TypeCategory::Real:
     switch (kind) {
@@ -139,16 +150,18 @@ inline RESULT ApplyType(
       return FUNC<TypeCategory::Real, 4>{}(std::forward<A>(x)...);
     case 8:
       return FUNC<TypeCategory::Real, 8>{}(std::forward<A>(x)...);
-#if LONG_DOUBLE == 80
     case 10:
-      return FUNC<TypeCategory::Real, 10>{}(std::forward<A>(x)...);
-#elif LONG_DOUBLE == 128
+      if constexpr (HasCppTypeFor<TypeCategory::Real, 10>) {
+        return FUNC<TypeCategory::Real, 10>{}(std::forward<A>(x)...);
+      }
+      break;
     case 16:
-      return FUNC<TypeCategory::Real, 16>{}(std::forward<A>(x)...);
-#endif
-    default:
-      terminator.Crash("unsupported REAL(KIND=%d)", kind);
+      if constexpr (HasCppTypeFor<TypeCategory::Real, 16>) {
+        return FUNC<TypeCategory::Real, 16>{}(std::forward<A>(x)...);
+      }
+      break;
     }
+    terminator.Crash("not yet implemented: REAL(KIND=%d)", kind);
   case TypeCategory::Complex:
     switch (kind) {
 #if 0 // TODO: COMPLEX(2 & 3)
@@ -161,16 +174,18 @@ inline RESULT ApplyType(
       return FUNC<TypeCategory::Complex, 4>{}(std::forward<A>(x)...);
     case 8:
       return FUNC<TypeCategory::Complex, 8>{}(std::forward<A>(x)...);
-#if LONG_DOUBLE == 80
     case 10:
-      return FUNC<TypeCategory::Complex, 10>{}(std::forward<A>(x)...);
-#elif LONG_DOUBLE == 128
+      if constexpr (HasCppTypeFor<TypeCategory::Real, 10>) {
+        return FUNC<TypeCategory::Complex, 10>{}(std::forward<A>(x)...);
+      }
+      break;
     case 16:
-      return FUNC<TypeCategory::Complex, 16>{}(std::forward<A>(x)...);
-#endif
-    default:
-      terminator.Crash("unsupported COMPLEX(KIND=%d)", kind);
+      if constexpr (HasCppTypeFor<TypeCategory::Real, 16>) {
+        return FUNC<TypeCategory::Complex, 16>{}(std::forward<A>(x)...);
+      }
+      break;
     }
+    terminator.Crash("not yet implemented: COMPLEX(KIND=%d)", kind);
   case TypeCategory::Character:
     switch (kind) {
     case 1:
@@ -180,7 +195,7 @@ inline RESULT ApplyType(
     case 4:
       return FUNC<TypeCategory::Character, 4>{}(std::forward<A>(x)...);
     default:
-      terminator.Crash("unsupported CHARACTER(KIND=%d)", kind);
+      terminator.Crash("not yet implemented: CHARACTER(KIND=%d)", kind);
     }
   case TypeCategory::Logical:
     switch (kind) {
@@ -193,17 +208,19 @@ inline RESULT ApplyType(
     case 8:
       return FUNC<TypeCategory::Logical, 8>{}(std::forward<A>(x)...);
     default:
-      terminator.Crash("unsupported LOGICAL(KIND=%d)", kind);
+      terminator.Crash("not yet implemented: LOGICAL(KIND=%d)", kind);
     }
   default:
-    terminator.Crash("unsupported type category(%d)", static_cast<int>(cat));
+    terminator.Crash(
+        "not yet implemented: type category(%d)", static_cast<int>(cat));
   }
 }
 
 // Maps a runtime INTEGER kind value to the appropriate instantiation of
 // a function object template and calls it with the supplied arguments.
 template <template <int KIND> class FUNC, typename RESULT, typename... A>
-inline RESULT ApplyIntegerKind(int kind, Terminator &terminator, A &&...x) {
+inline RT_API_ATTRS RESULT ApplyIntegerKind(
+    int kind, Terminator &terminator, A &&...x) {
   switch (kind) {
   case 1:
     return FUNC<1>{}(std::forward<A>(x)...);
@@ -213,17 +230,17 @@ inline RESULT ApplyIntegerKind(int kind, Terminator &terminator, A &&...x) {
     return FUNC<4>{}(std::forward<A>(x)...);
   case 8:
     return FUNC<8>{}(std::forward<A>(x)...);
-#ifdef __SIZEOF_INT128__
+#if defined __SIZEOF_INT128__ && !AVOID_NATIVE_UINT128_T
   case 16:
     return FUNC<16>{}(std::forward<A>(x)...);
 #endif
   default:
-    terminator.Crash("unsupported INTEGER(KIND=%d)", kind);
+    terminator.Crash("not yet implemented: INTEGER(KIND=%d)", kind);
   }
 }
 
 template <template <int KIND> class FUNC, typename RESULT, typename... A>
-inline RESULT ApplyFloatingPointKind(
+inline RT_API_ATTRS RESULT ApplyFloatingPointKind(
     int kind, Terminator &terminator, A &&...x) {
   switch (kind) {
 #if 0 // TODO: REAL/COMPLEX (2 & 3)
@@ -236,20 +253,23 @@ inline RESULT ApplyFloatingPointKind(
     return FUNC<4>{}(std::forward<A>(x)...);
   case 8:
     return FUNC<8>{}(std::forward<A>(x)...);
-#if LONG_DOUBLE == 80
   case 10:
-    return FUNC<10>{}(std::forward<A>(x)...);
-#elif LONG_DOUBLE == 128
+    if constexpr (HasCppTypeFor<TypeCategory::Real, 10>) {
+      return FUNC<10>{}(std::forward<A>(x)...);
+    }
+    break;
   case 16:
-    return FUNC<16>{}(std::forward<A>(x)...);
-#endif
-  default:
-    terminator.Crash("unsupported REAL/COMPLEX(KIND=%d)", kind);
+    if constexpr (HasCppTypeFor<TypeCategory::Real, 16>) {
+      return FUNC<16>{}(std::forward<A>(x)...);
+    }
+    break;
   }
+  terminator.Crash("not yet implemented: REAL/COMPLEX(KIND=%d)", kind);
 }
 
 template <template <int KIND> class FUNC, typename RESULT, typename... A>
-inline RESULT ApplyCharacterKind(int kind, Terminator &terminator, A &&...x) {
+inline RT_API_ATTRS RESULT ApplyCharacterKind(
+    int kind, Terminator &terminator, A &&...x) {
   switch (kind) {
   case 1:
     return FUNC<1>{}(std::forward<A>(x)...);
@@ -258,12 +278,13 @@ inline RESULT ApplyCharacterKind(int kind, Terminator &terminator, A &&...x) {
   case 4:
     return FUNC<4>{}(std::forward<A>(x)...);
   default:
-    terminator.Crash("unsupported CHARACTER(KIND=%d)", kind);
+    terminator.Crash("not yet implemented: CHARACTER(KIND=%d)", kind);
   }
 }
 
 template <template <int KIND> class FUNC, typename RESULT, typename... A>
-inline RESULT ApplyLogicalKind(int kind, Terminator &terminator, A &&...x) {
+inline RT_API_ATTRS RESULT ApplyLogicalKind(
+    int kind, Terminator &terminator, A &&...x) {
   switch (kind) {
   case 1:
     return FUNC<1>{}(std::forward<A>(x)...);
@@ -274,7 +295,7 @@ inline RESULT ApplyLogicalKind(int kind, Terminator &terminator, A &&...x) {
   case 8:
     return FUNC<8>{}(std::forward<A>(x)...);
   default:
-    terminator.Crash("unsupported LOGICAL(KIND=%d)", kind);
+    terminator.Crash("not yet implemented: LOGICAL(KIND=%d)", kind);
   }
 }
 
@@ -289,6 +310,11 @@ std::optional<std::pair<TypeCategory, int>> inline constexpr GetResultType(
       return std::make_pair(TypeCategory::Integer, maxKind);
     case TypeCategory::Real:
     case TypeCategory::Complex:
+#if !(defined __SIZEOF_INT128__ && !AVOID_NATIVE_UINT128_T)
+      if (xKind == 16) {
+        break;
+      }
+#endif
       return std::make_pair(yCat, yKind);
     default:
       break;
@@ -297,6 +323,11 @@ std::optional<std::pair<TypeCategory, int>> inline constexpr GetResultType(
   case TypeCategory::Real:
     switch (yCat) {
     case TypeCategory::Integer:
+#if !(defined __SIZEOF_INT128__ && !AVOID_NATIVE_UINT128_T)
+      if (yKind == 16) {
+        break;
+      }
+#endif
       return std::make_pair(TypeCategory::Real, xKind);
     case TypeCategory::Real:
     case TypeCategory::Complex:
@@ -308,6 +339,11 @@ std::optional<std::pair<TypeCategory, int>> inline constexpr GetResultType(
   case TypeCategory::Complex:
     switch (yCat) {
     case TypeCategory::Integer:
+#if !(defined __SIZEOF_INT128__ && !AVOID_NATIVE_UINT128_T)
+      if (yKind == 16) {
+        break;
+      }
+#endif
       return std::make_pair(TypeCategory::Complex, xKind);
     case TypeCategory::Real:
     case TypeCategory::Complex:
@@ -333,6 +369,45 @@ std::optional<std::pair<TypeCategory, int>> inline constexpr GetResultType(
   }
   return std::nullopt;
 }
+
+// Accumulate floating-point results in (at least) double precision
+template <TypeCategory CAT, int KIND>
+using AccumulationType = CppTypeFor<CAT,
+    CAT == TypeCategory::Real || CAT == TypeCategory::Complex
+        ? std::max(KIND, static_cast<int>(sizeof(double)))
+        : KIND>;
+
+// memchr() for any character type
+template <typename CHAR>
+static inline const CHAR *FindCharacter(
+    const CHAR *data, CHAR ch, std::size_t chars) {
+  const CHAR *end{data + chars};
+  for (const CHAR *p{data}; p < end; ++p) {
+    if (*p == ch) {
+      return p;
+    }
+  }
+  return nullptr;
+}
+
+template <>
+inline const char *FindCharacter(const char *data, char ch, std::size_t chars) {
+  return reinterpret_cast<const char *>(
+      std::memchr(data, static_cast<int>(ch), chars));
+}
+
+// Copy payload data from one allocated descriptor to another.
+// Assumes element counts and element sizes match, and that both
+// descriptors are allocated.
+void ShallowCopyDiscontiguousToDiscontiguous(
+    const Descriptor &to, const Descriptor &from);
+void ShallowCopyDiscontiguousToContiguous(
+    const Descriptor &to, const Descriptor &from);
+void ShallowCopyContiguousToDiscontiguous(
+    const Descriptor &to, const Descriptor &from);
+void ShallowCopy(const Descriptor &to, const Descriptor &from,
+    bool toIsContiguous, bool fromIsContiguous);
+void ShallowCopy(const Descriptor &to, const Descriptor &from);
 
 } // namespace Fortran::runtime
 #endif // FORTRAN_RUNTIME_TOOLS_H_

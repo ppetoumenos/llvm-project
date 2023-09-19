@@ -1,4 +1,4 @@
-//===------------------------- chrono.cpp ---------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -12,9 +12,9 @@
 #define _LARGE_TIME_API
 #endif
 
-#include "chrono"
-#include "cerrno"        // errno
-#include "system_error"  // __throw_system_error
+#include <__system_error/system_error.h>
+#include <cerrno> // errno
+#include <chrono>
 
 #if defined(__MVS__)
 #include <__support/ibm/gettod_zos.h> // gettimeofdayMonotonic
@@ -24,15 +24,15 @@
 #include "include/apple_availability.h"
 
 #if __has_include(<unistd.h>)
-# include <unistd.h>
+# include <unistd.h> // _POSIX_TIMERS
 #endif
 
 #if __has_include(<sys/time.h>)
 # include <sys/time.h> // for gettimeofday and timeval
 #endif
 
-#if !defined(__APPLE__) && defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0
-# define _LIBCPP_USE_CLOCK_GETTIME
+#if defined(__APPLE__) || defined (__gnu_hurd__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+# define _LIBCPP_HAS_CLOCK_GETTIME
 #endif
 
 #if defined(_LIBCPP_WIN32API)
@@ -43,6 +43,10 @@
 #    include <winapifamily.h>
 #  endif
 #endif // defined(_LIBCPP_WIN32API)
+
+#if defined(__Fuchsia__)
+#  include <zircon/syscalls.h>
+#endif
 
 #if __has_include(<mach/mach_time.h>)
 # include <mach/mach_time.h>
@@ -63,6 +67,30 @@ namespace chrono
 
 #if defined(_LIBCPP_WIN32API)
 
+#if _WIN32_WINNT < _WIN32_WINNT_WIN8
+
+namespace {
+
+typedef void(WINAPI *GetSystemTimeAsFileTimePtr)(LPFILETIME);
+
+class GetSystemTimeInit {
+public:
+  GetSystemTimeInit() {
+    fp = (GetSystemTimeAsFileTimePtr)GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "GetSystemTimePreciseAsFileTime");
+    if (fp == nullptr)
+      fp = GetSystemTimeAsFileTime;
+  }
+  GetSystemTimeAsFileTimePtr fp;
+};
+
+// Pretend we're inside a system header so the compiler doesn't flag the use of the init_priority
+// attribute with a value that's reserved for the implementation (we're the implementation).
+#include "chrono_system_time_init.h"
+} // namespace
+
+#endif
+
 static system_clock::time_point __libcpp_system_clock_now() {
   // FILETIME is in 100ns units
   using filetime_duration =
@@ -71,13 +99,16 @@ static system_clock::time_point __libcpp_system_clock_now() {
                                                     nanoseconds::period>>;
 
   // The Windows epoch is Jan 1 1601, the Unix epoch Jan 1 1970.
-  static _LIBCPP_CONSTEXPR const seconds nt_to_unix_epoch{11644473600};
+  static constexpr const seconds nt_to_unix_epoch{11644473600};
 
   FILETIME ft;
-#if _WIN32_WINNT >= _WIN32_WINNT_WIN8 && WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8 && WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)) || \
+    (_WIN32_WINNT >= _WIN32_WINNT_WIN10)
   GetSystemTimePreciseAsFileTime(&ft);
-#else
+#elif !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
   GetSystemTimeAsFileTime(&ft);
+#else
+  GetSystemTimeAsFileTimeFunc.fp(&ft);
 #endif
 
   filetime_duration d{(static_cast<__int64>(ft.dwHighDateTime) << 32) |
@@ -85,7 +116,7 @@ static system_clock::time_point __libcpp_system_clock_now() {
   return system_clock::time_point(duration_cast<system_clock::duration>(d - nt_to_unix_epoch));
 }
 
-#elif defined(CLOCK_REALTIME) && defined(_LIBCPP_USE_CLOCK_GETTIME)
+#elif defined(_LIBCPP_HAS_CLOCK_GETTIME)
 
 static system_clock::time_point __libcpp_system_clock_now() {
   struct timespec tp;
@@ -136,59 +167,6 @@ system_clock::from_time_t(time_t t) noexcept
 
 #if defined(__APPLE__)
 
-// TODO(ldionne):
-// This old implementation of steady_clock is retained until Chrome drops supports
-// for macOS < 10.12. The issue is that they link libc++ statically into their
-// application, which means that libc++ must support being built for such deployment
-// targets. See https://llvm.org/D74489 for details.
-#if (defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101200) || \
-    (defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ < 100000) || \
-    (defined(__ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__ < 100000) || \
-    (defined(__ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__ < 30000)
-# define _LIBCPP_USE_OLD_MACH_ABSOLUTE_TIME
-#endif
-
-#if defined(_LIBCPP_USE_OLD_MACH_ABSOLUTE_TIME)
-
-//   mach_absolute_time() * MachInfo.numer / MachInfo.denom is the number of
-//   nanoseconds since the computer booted up.  MachInfo.numer and MachInfo.denom
-//   are run time constants supplied by the OS.  This clock has no relationship
-//   to the Gregorian calendar.  It's main use is as a high resolution timer.
-
-// MachInfo.numer / MachInfo.denom is often 1 on the latest equipment.  Specialize
-//   for that case as an optimization.
-
-static steady_clock::rep steady_simplified() {
-    return static_cast<steady_clock::rep>(mach_absolute_time());
-}
-static double compute_steady_factor() {
-    mach_timebase_info_data_t MachInfo;
-    mach_timebase_info(&MachInfo);
-    return static_cast<double>(MachInfo.numer) / MachInfo.denom;
-}
-
-static steady_clock::rep steady_full() {
-    static const double factor = compute_steady_factor();
-    return static_cast<steady_clock::rep>(mach_absolute_time() * factor);
-}
-
-typedef steady_clock::rep (*FP)();
-
-static FP init_steady_clock() {
-    mach_timebase_info_data_t MachInfo;
-    mach_timebase_info(&MachInfo);
-    if (MachInfo.numer == MachInfo.denom)
-        return &steady_simplified;
-    return &steady_full;
-}
-
-static steady_clock::time_point __libcpp_steady_clock_now() {
-    static FP fp = init_steady_clock();
-    return steady_clock::time_point(steady_clock::duration(fp()));
-}
-
-#else // vvvvv default behavior for Apple platforms  vvvvv
-
 // On Apple platforms, only CLOCK_UPTIME_RAW, CLOCK_MONOTONIC_RAW or
 // mach_absolute_time are able to time functions in the nanosecond range.
 // Furthermore, only CLOCK_MONOTONIC_RAW is truly monotonic, because it
@@ -200,8 +178,6 @@ static steady_clock::time_point __libcpp_steady_clock_now() {
         __throw_system_error(errno, "clock_gettime(CLOCK_MONOTONIC_RAW) failed");
     return steady_clock::time_point(seconds(tp.tv_sec) + nanoseconds(tp.tv_nsec));
 }
-
-#endif
 
 #elif defined(_LIBCPP_WIN32API)
 
@@ -239,7 +215,18 @@ static steady_clock::time_point __libcpp_steady_clock_now() {
   return steady_clock::time_point(seconds(ts.tv_sec) + nanoseconds(ts.tv_nsec));
 }
 
-#elif defined(CLOCK_MONOTONIC)
+#  elif defined(__Fuchsia__)
+
+static steady_clock::time_point __libcpp_steady_clock_now() noexcept {
+  // Implicitly link against the vDSO system call ABI without
+  // requiring the final link to specify -lzircon explicitly when
+  // statically linking libc++.
+#    pragma comment(lib, "zircon")
+
+  return steady_clock::time_point(nanoseconds(_zx_clock_get_monotonic()));
+}
+
+#  elif defined(_LIBCPP_HAS_CLOCK_GETTIME)
 
 static steady_clock::time_point __libcpp_steady_clock_now() {
     struct timespec tp;
@@ -248,9 +235,9 @@ static steady_clock::time_point __libcpp_steady_clock_now() {
     return steady_clock::time_point(seconds(tp.tv_sec) + nanoseconds(tp.tv_nsec));
 }
 
-#else
-#   error "Monotonic clock not implemented on this platform"
-#endif
+#  else
+#    error "Monotonic clock not implemented on this platform"
+#  endif
 
 const bool steady_clock::is_steady;
 

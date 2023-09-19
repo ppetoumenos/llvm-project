@@ -14,7 +14,6 @@
 #define LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
@@ -25,6 +24,7 @@
 #include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
@@ -102,12 +102,12 @@ public:
     BaseLayer.emit(std::move(MR), irgenAndTakeOwnership(*F, ""));
   }
 
-  SymbolFlagsMap getInterface(FunctionAST &F) {
+  MaterializationUnit::Interface getInterface(FunctionAST &F) {
     MangleAndInterner Mangle(BaseLayer.getExecutionSession(), DL);
     SymbolFlagsMap Symbols;
     Symbols[Mangle(F.getName())] =
         JITSymbolFlags(JITSymbolFlags::Exported | JITSymbolFlags::Callable);
-    return Symbols;
+    return MaterializationUnit::Interface(std::move(Symbols), nullptr);
   }
 
 private:
@@ -117,7 +117,7 @@ private:
 
 KaleidoscopeASTMaterializationUnit::KaleidoscopeASTMaterializationUnit(
     KaleidoscopeASTLayer &L, std::unique_ptr<FunctionAST> F)
-    : MaterializationUnit(L.getInterface(*F), nullptr), L(L), F(std::move(F)) {}
+    : MaterializationUnit(L.getInterface(*F)), L(L), F(std::move(F)) {}
 
 void KaleidoscopeASTMaterializationUnit::materialize(
     std::unique_ptr<MaterializationResponsibility> R) {
@@ -176,17 +176,18 @@ public:
 
     auto ES = std::make_unique<ExecutionSession>(std::move(*EPC));
 
-    auto EPCIU = EPCIndirectionUtils::Create(ES->getExecutorProcessControl());
+    auto EPCIU = EPCIndirectionUtils::Create(*ES);
     if (!EPCIU)
       return EPCIU.takeError();
 
     (*EPCIU)->createLazyCallThroughManager(
-        *ES, pointerToJITTargetAddress(&handleLazyCallThroughError));
+        *ES, ExecutorAddr::fromPtr(&handleLazyCallThroughError));
 
     if (auto Err = setUpInProcessLCTMReentryViaEPCIU(**EPCIU))
       return std::move(Err);
 
-    JITTargetMachineBuilder JTMB((*EPC)->getTargetTriple());
+    JITTargetMachineBuilder JTMB(
+        ES->getExecutorProcessControl().getTargetTriple());
 
     auto DL = JTMB.getDefaultDataLayoutForTarget();
     if (!DL)
@@ -213,7 +214,7 @@ public:
     return ASTLayer.add(RT, std::move(F));
   }
 
-  Expected<JITEvaluatedSymbol> lookup(StringRef Name) {
+  Expected<ExecutorSymbolDef> lookup(StringRef Name) {
     return ES->lookup({&MainJD}, Mangle(Name.str()));
   }
 

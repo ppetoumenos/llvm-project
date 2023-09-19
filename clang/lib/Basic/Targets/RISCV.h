@@ -1,4 +1,4 @@
-//===--- RISCV.h - Declare RISCV target feature support ---------*- C++ -*-===//
+//===--- RISCV.h - Declare RISC-V target feature support --------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares RISCV TargetInfo objects.
+// This file declares RISC-V TargetInfo objects.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,8 +15,10 @@
 
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/RISCVISAInfo.h"
+#include "llvm/TargetParser/Triple.h"
+#include <optional>
 
 namespace clang {
 namespace targets {
@@ -25,33 +27,14 @@ namespace targets {
 class RISCVTargetInfo : public TargetInfo {
 protected:
   std::string ABI, CPU;
-  bool HasM = false;
-  bool HasA = false;
-  bool HasF = false;
-  bool HasD = false;
-  bool HasC = false;
-  bool HasB = false;
-  bool HasV = false;
-  bool HasZba = false;
-  bool HasZbb = false;
-  bool HasZbc = false;
-  bool HasZbe = false;
-  bool HasZbf = false;
-  bool HasZbm = false;
-  bool HasZbp = false;
-  bool HasZbproposedc = false;
-  bool HasZbr = false;
-  bool HasZbs = false;
-  bool HasZbt = false;
-  bool HasZfh = false;
-  bool HasZvamo = false;
-  bool HasZvlsseg = false;
-
-  static const Builtin::Info BuiltinInfo[];
+  std::unique_ptr<llvm::RISCVISAInfo> ISAInfo;
 
 public:
   RISCVTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
+    BFloat16Width = 16;
+    BFloat16Align = 16;
+    BFloat16Format = &llvm::APFloat::BFloat();
     LongDoubleWidth = 128;
     LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::IEEEquad();
@@ -61,6 +44,7 @@ public:
     HasRISCVVTypes = true;
     MCountName = "_mcount";
     HasFloat16 = true;
+    HasStrictFP = true;
   }
 
   bool setCPU(const std::string &Name) override {
@@ -80,7 +64,12 @@ public:
     return TargetInfo::VoidPtrBuiltinVaList;
   }
 
-  const char *getClobbers() const override { return ""; }
+  std::string_view getClobbers() const override { return ""; }
+
+  StringRef getConstraintRegister(StringRef Constraint,
+                                  StringRef Expression) const override {
+    return Expression;
+  }
 
   ArrayRef<const char *> getGCCRegNames() const override;
 
@@ -105,12 +94,26 @@ public:
                  StringRef CPU,
                  const std::vector<std::string> &FeaturesVec) const override;
 
+  std::optional<std::pair<unsigned, unsigned>>
+  getVScaleRange(const LangOptions &LangOpts) const override;
+
   bool hasFeature(StringRef Feature) const override;
 
   bool handleTargetFeatures(std::vector<std::string> &Features,
                             DiagnosticsEngine &Diags) override;
 
-  bool hasExtIntType() const override { return true; }
+  bool hasBitIntType() const override { return true; }
+
+  bool hasBFloat16Type() const override { return true; }
+
+  bool useFP16ConversionIntrinsics() const override {
+    return false;
+  }
+
+  bool isValidCPUName(StringRef Name) const override;
+  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
+  bool isValidTuneCPUName(StringRef Name) const override;
+  void fillValidTuneCPUList(SmallVectorImpl<StringRef> &Values) const override;
 };
 class LLVM_LIBRARY_VISIBILITY RISCV32TargetInfo : public RISCVTargetInfo {
 public:
@@ -130,15 +133,10 @@ public:
     return false;
   }
 
-  bool isValidCPUName(StringRef Name) const override;
-  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
-  bool isValidTuneCPUName(StringRef Name) const override;
-  void fillValidTuneCPUList(SmallVectorImpl<StringRef> &Values) const override;
-
   void setMaxAtomicWidth() override {
     MaxAtomicPromoteWidth = 128;
 
-    if (HasA)
+    if (ISAInfo->hasExtension("a"))
       MaxAtomicInlineWidth = 32;
   }
 };
@@ -148,7 +146,7 @@ public:
       : RISCVTargetInfo(Triple, Opts) {
     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
     IntMaxType = Int64Type = SignedLong;
-    resetDataLayout("e-m:e-p:64:64-i64:64-i128:128-n64-S128");
+    resetDataLayout("e-m:e-p:64:64-i64:64-i128:128-n32:64-S128");
   }
 
   bool setABI(const std::string &Name) override {
@@ -159,15 +157,10 @@ public:
     return false;
   }
 
-  bool isValidCPUName(StringRef Name) const override;
-  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
-  bool isValidTuneCPUName(StringRef Name) const override;
-  void fillValidTuneCPUList(SmallVectorImpl<StringRef> &Values) const override;
-
   void setMaxAtomicWidth() override {
     MaxAtomicPromoteWidth = 128;
 
-    if (HasA)
+    if (ISAInfo->hasExtension("a"))
       MaxAtomicInlineWidth = 64;
   }
 };

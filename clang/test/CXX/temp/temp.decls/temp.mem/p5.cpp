@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++2b -fsyntax-only -verify=expected,cxx2b    %s
+// RUN: %clang_cc1 -std=c++23 -fsyntax-only -verify=expected,cxx23    %s
 // RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify=expected,cxx98_20 %s
 // RUN: %clang_cc1 -std=c++98 -fsyntax-only -verify=expected,cxx98_20 %s
 // RUN: %clang_cc1            -fsyntax-only -verify=expected,cxx98_20 %s
@@ -69,14 +69,14 @@ struct X0 {
     T x = T();
     return x; // cxx98_20-error{{cannot initialize return object of type 'const char *' with an lvalue of type 'char'}} \
     // cxx98_20-error{{cannot initialize return object of type 'const int *' with an lvalue of type 'int'}} \
-    // cxx2b-error{{cannot initialize return object of type 'const char *' with an rvalue of type 'char'}} \
-    // cxx2b-error{{cannot initialize return object of type 'const int *' with an rvalue of type 'int'}}
+    // cxx23-error{{cannot initialize return object of type 'const char *' with an rvalue of type 'char'}} \
+    // cxx23-error{{cannot initialize return object of type 'const int *' with an rvalue of type 'int'}}
   }
 };
 
 template X0::operator const char*() const; // expected-note{{'X0::operator const char *<char>' requested here}}
 template X0::operator const int*(); // expected-note{{'X0::operator const int *<const int>' requested here}}
-template X0::operator float*() const; // expected-error{{explicit instantiation of undefined function template}}
+template X0::operator float*() const; // expected-error{{explicit instantiation of undefined function template 'operator type-parameter-0-0 *'}}
 
 void test_X0(X0 x0, const X0 &x0c) {
   x0.operator const int*(); // expected-note{{in instantiation of function template specialization}}

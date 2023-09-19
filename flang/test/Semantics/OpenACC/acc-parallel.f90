@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC clause validity for the following construct and directive:
 !   2.5.1 Parallel
@@ -54,6 +53,10 @@ program openacc_parallel_validity
   !$acc end parallel
 
   !$acc parallel num_gangs(8)
+  !$acc end parallel
+
+  !ERROR: NUM_GANGS clause accepts a maximum of 3 arguments
+  !$acc parallel num_gangs(1, 1, 1, 1)
   !$acc end parallel
 
   !$acc parallel num_workers(8)

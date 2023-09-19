@@ -47,15 +47,7 @@ static bool operator==(const isl::space &LHS, const isl::space &RHS) {
   return bool(LHS.is_equal(RHS));
 }
 
-static bool operator==(const isl::basic_set &LHS, const isl::basic_set &RHS) {
-  return bool(LHS.is_equal(RHS));
-}
-
 static bool operator==(const isl::set &LHS, const isl::set &RHS) {
-  return bool(LHS.is_equal(RHS));
-}
-
-static bool operator==(const isl::basic_map &LHS, const isl::basic_map &RHS) {
   return bool(LHS.is_equal(RHS));
 }
 
@@ -144,7 +136,7 @@ TEST(Isl, APIntToIslVal) {
   {
     APInt APNOne(32, (1ull << 32) - 1, false);
     auto IslNOne = valFromAPInt(IslCtx, APNOne, false);
-    auto IslRef = isl::val(IslCtx, 32).pow2().sub_ui(1);
+    auto IslRef = isl::val(IslCtx, 32).pow2().sub(1);
     EXPECT_EQ(IslNOne, IslRef);
   }
 
@@ -231,7 +223,7 @@ TEST(Isl, IslValToAPInt) {
   }
 
   {
-    auto IslNOne = isl::val(IslCtx, 32).pow2().sub_ui(1);
+    auto IslNOne = isl::val(IslCtx, 32).pow2().sub(1);
     auto APNOne = APIntFromVal(IslNOne);
     EXPECT_EQ((1ull << 32) - 1, APNOne);
     EXPECT_EQ(33u, APNOne.getBitWidth());
@@ -240,7 +232,7 @@ TEST(Isl, IslValToAPInt) {
   {
     auto IslLargeNum = isl::val(IslCtx, 60);
     IslLargeNum = IslLargeNum.pow2();
-    IslLargeNum = IslLargeNum.sub_ui(1);
+    IslLargeNum = IslLargeNum.sub(1);
     auto APLargeNum = APIntFromVal(IslLargeNum);
     EXPECT_EQ((1ull << 60) - 1, APLargeNum);
     EXPECT_EQ(61u, APLargeNum.getBitWidth());
@@ -252,7 +244,7 @@ TEST(Isl, IslValToAPInt) {
     auto APLargePow2 = APIntFromVal(IslLargePow2);
     EXPECT_TRUE(APLargePow2.isPowerOf2());
     EXPECT_EQ(502u, APLargePow2.getBitWidth());
-    EXPECT_EQ(502u, APLargePow2.getMinSignedBits());
+    EXPECT_EQ(502u, APLargePow2.getSignificantBits());
   }
 
   {
@@ -260,7 +252,7 @@ TEST(Isl, IslValToAPInt) {
     auto IslLargeNPow2 = IslExp.pow2().neg();
     auto APLargeNPow2 = APIntFromVal(IslLargeNPow2);
     EXPECT_EQ(501u, APLargeNPow2.getBitWidth());
-    EXPECT_EQ(501u, APLargeNPow2.getMinSignedBits());
+    EXPECT_EQ(501u, APLargeNPow2.getSignificantBits());
     EXPECT_EQ(500, (-APLargeNPow2).exactLogBase2());
   }
 
@@ -270,7 +262,7 @@ TEST(Isl, IslValToAPInt) {
     auto APLargePow2 = APIntFromVal(IslLargePow2);
     EXPECT_TRUE(APLargePow2.isPowerOf2());
     EXPECT_EQ(514u, APLargePow2.getBitWidth());
-    EXPECT_EQ(514u, APLargePow2.getMinSignedBits());
+    EXPECT_EQ(514u, APLargePow2.getSignificantBits());
   }
 
   {
@@ -278,7 +270,7 @@ TEST(Isl, IslValToAPInt) {
     auto IslLargeNPow2 = IslExp.pow2().neg();
     auto APLargeNPow2 = APIntFromVal(IslLargeNPow2);
     EXPECT_EQ(513u, APLargeNPow2.getBitWidth());
-    EXPECT_EQ(513u, APLargeNPow2.getMinSignedBits());
+    EXPECT_EQ(513u, APLargeNPow2.getSignificantBits());
     EXPECT_EQ(512, (-APLargeNPow2).exactLogBase2());
   }
 
@@ -652,16 +644,16 @@ TEST(ISLTools, getNumScatterDims) {
                                                         &isl_ctx_free);
 
   // Basic usage
-  EXPECT_EQ(0, getNumScatterDims(UMAP("{ [] -> [] }")));
-  EXPECT_EQ(1, getNumScatterDims(UMAP("{ [] -> [i] }")));
-  EXPECT_EQ(2, getNumScatterDims(UMAP("{ [] -> [i,j] }")));
-  EXPECT_EQ(3, getNumScatterDims(UMAP("{ [] -> [i,j,k] }")));
+  EXPECT_EQ(0u, getNumScatterDims(UMAP("{ [] -> [] }")));
+  EXPECT_EQ(1u, getNumScatterDims(UMAP("{ [] -> [i] }")));
+  EXPECT_EQ(2u, getNumScatterDims(UMAP("{ [] -> [i,j] }")));
+  EXPECT_EQ(3u, getNumScatterDims(UMAP("{ [] -> [i,j,k] }")));
 
   // Different scatter spaces
-  EXPECT_EQ(0, getNumScatterDims(UMAP("{ A[] -> []; [] -> []}")));
-  EXPECT_EQ(1, getNumScatterDims(UMAP("{ A[] -> []; [] -> [i] }")));
-  EXPECT_EQ(2, getNumScatterDims(UMAP("{ A[] -> [i]; [] -> [i,j] }")));
-  EXPECT_EQ(3, getNumScatterDims(UMAP("{ A[] -> [i]; [] -> [i,j,k] }")));
+  EXPECT_EQ(0u, getNumScatterDims(UMAP("{ A[] -> []; [] -> []}")));
+  EXPECT_EQ(1u, getNumScatterDims(UMAP("{ A[] -> []; [] -> [i] }")));
+  EXPECT_EQ(2u, getNumScatterDims(UMAP("{ A[] -> [i]; [] -> [i,j] }")));
+  EXPECT_EQ(3u, getNumScatterDims(UMAP("{ A[] -> [i]; [] -> [i,j,k] }")));
 }
 
 TEST(ISLTools, getScatterSpace) {
@@ -1142,9 +1134,9 @@ TEST(Isl, Quota) {
     EXPECT_TRUE(BoolResult.is_error());
     EXPECT_FALSE(BoolResult.is_false());
     EXPECT_FALSE(BoolResult.is_true());
-    EXPECT_DEATH((bool)BoolResult,
+    EXPECT_DEATH((void)(bool)BoolResult,
                  "IMPLEMENTATION ERROR: Unhandled error state");
-    EXPECT_DEATH((bool)!BoolResult,
+    EXPECT_DEATH((void)(bool)!BoolResult,
                  "IMPLEMENTATION ERROR: Unhandled error state");
     EXPECT_DEATH(
         {

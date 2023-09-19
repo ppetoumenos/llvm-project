@@ -1,5 +1,4 @@
-! RUN: %S/../test_errors.sh %s %t %flang -fopenacc
-! REQUIRES: shell
+! RUN: %python %S/../test_errors.py %s %flang -fopenacc
 
 ! Check OpenACC clause validity for the following construct and directive:
 !   2.10 Cache
@@ -19,6 +18,8 @@ program openacc_cache_validity
   type(atype) :: t
   type(atype), dimension(10) :: ta
   real(8), dimension(N) :: a
+
+  do i = 1, N
 
   !$acc cache(a(i))
   !$acc cache(a(1:2,3:4))
@@ -40,5 +41,10 @@ program openacc_cache_validity
 
   !ERROR: Only array element or subarray are allowed in CACHE directive
   !$acc cache(/i/)
+
+  end do
+
+  !ERROR: The CACHE directive must be inside a loop
+  !$acc cache(a)
 
 end program openacc_cache_validity

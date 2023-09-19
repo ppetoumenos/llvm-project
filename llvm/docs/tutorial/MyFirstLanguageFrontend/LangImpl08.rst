@@ -114,7 +114,7 @@ features, options or relocation model.
   auto Features = "";
 
   TargetOptions opt;
-  auto RM = Optional<Reloc::Model>();
+  auto RM = std::optional<Reloc::Model>();
   auto TargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features, opt, RM);
 
 
@@ -130,8 +130,8 @@ layout.
 .. code-block:: c++
 
   TheModule->setDataLayout(TargetMachine->createDataLayout());
-  TheModule->setTargetTriple(TargetTriple);   
-  
+  TheModule->setTargetTriple(TargetTriple);
+
 Emit Object Code
 ================
 
@@ -155,7 +155,7 @@ pass:
 .. code-block:: c++
 
   legacy::PassManager pass;
-  auto FileType = CGFT_ObjectFile;
+  auto FileType = CodeGenFileType::ObjectFile;
 
   if (TargetMachine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
     errs() << "TargetMachine can't emit a file of this type";
@@ -179,7 +179,7 @@ Let's run it, and define a simple ``average`` function. Press Ctrl-D
 when you're done.
 
 ::
-   
+
     $ ./toy
     ready> def average(x y) (x + y) * 0.5;
     ^D

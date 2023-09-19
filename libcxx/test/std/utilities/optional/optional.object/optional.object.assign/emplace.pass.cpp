@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03, c++11, c++14
-// UNSUPPORTED: gcc-10
 // <optional>
 
 // template <class... Args> T& optional<T>::emplace(Args&&... args);
@@ -41,6 +40,8 @@ public:
     static bool dtor_called;
     Y() = default;
     Y(int) { TEST_THROW(6);}
+    Y(const Y&) = default;
+    Y& operator=(const Y&) = default;
     ~Y() {dtor_called = true;}
 };
 

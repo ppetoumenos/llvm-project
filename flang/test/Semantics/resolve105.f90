@@ -1,5 +1,4 @@
-! RUN: %S/test_errors.sh %s %t %flang_fc1
-! REQUIRES: shell
+! RUN: %python %S/test_errors.py %s %flang_fc1
 ! Test instantiation of components that are procedure pointers.
 ! 
 program test
@@ -44,6 +43,7 @@ contains
   end subroutine testGoodDefault
 
   subroutine testStar(arg)
+    !ERROR: Value of KIND type parameter 'kindparam' must be constant
     type(dtype(*)),intent(inout) :: arg
     if (associated(arg%field)) stop 'fail'
   end subroutine testStar

@@ -15,7 +15,6 @@
 #include "polly/Canonicalization.h"
 #include "polly/LinkAllPasses.h"
 #include "polly/Options.h"
-#include "polly/RewriteByReferenceParameters.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -38,11 +37,10 @@ using namespace polly;
 static cl::opt<bool>
     PollyInliner("polly-run-inliner",
                  cl::desc("Run an early inliner pass before Polly"), cl::Hidden,
-                 cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+                 cl::cat(PollyCategory));
 
 void polly::registerCanonicalicationPasses(llvm::legacy::PassManagerBase &PM) {
   bool UseMemSSA = true;
-  PM.add(polly::createRewriteByrefParamsWrapperPass());
   PM.add(llvm::createPromoteMemoryToRegisterPass());
   PM.add(llvm::createEarlyCSEPass(UseMemSSA));
   PM.add(llvm::createInstructionCombiningPass());
@@ -52,14 +50,12 @@ void polly::registerCanonicalicationPasses(llvm::legacy::PassManagerBase &PM) {
   PM.add(llvm::createReassociatePass());
   PM.add(llvm::createLoopRotatePass());
   if (PollyInliner) {
-    PM.add(llvm::createFunctionInliningPass(200));
     PM.add(llvm::createPromoteMemoryToRegisterPass());
     PM.add(llvm::createCFGSimplificationPass());
     PM.add(llvm::createInstructionCombiningPass());
     PM.add(createBarrierNoopPass());
   }
   PM.add(llvm::createInstructionCombiningPass());
-  PM.add(llvm::createIndVarSimplifyPass());
 }
 
 /// Adapted from llvm::PassBuilder::buildInlinerPipeline
@@ -98,7 +94,6 @@ polly::buildCanonicalicationPassesForNPM(llvm::ModulePassManager &MPM,
   FunctionPassManager FPM;
 
   bool UseMemSSA = true;
-  FPM.addPass(RewriteByrefParamsPass());
   FPM.addPass(PromotePass());
   FPM.addPass(EarlyCSEPass(UseMemSSA));
   FPM.addPass(InstCombinePass());
@@ -135,7 +130,7 @@ polly::buildCanonicalicationPassesForNPM(llvm::ModulePassManager &MPM,
 }
 
 namespace {
-class PollyCanonicalize : public ModulePass {
+class PollyCanonicalize final : public ModulePass {
   PollyCanonicalize(const PollyCanonicalize &) = delete;
   const PollyCanonicalize &operator=(const PollyCanonicalize &) = delete;
 

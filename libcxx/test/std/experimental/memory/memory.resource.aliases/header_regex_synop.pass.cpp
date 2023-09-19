@@ -1,4 +1,3 @@
-// -*- C++ -*-
 //===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -8,7 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: c++03
-// UNSUPPORTED: libcpp-has-no-localization
+// UNSUPPORTED: no-localization
+
+// XFAIL: availability-aligned_allocation-missing
 
 // <experimental/regex>
 
@@ -25,6 +26,8 @@
 //  typedef match_results<wstring::const_iterator> wsmatch;
 //
 // }}} // namespace std::experimental::pmr
+
+// ADDITIONAL_COMPILE_FLAGS: -D_LIBCPP_DISABLE_DEPRECATION_WARNINGS
 
 #include <experimental/regex>
 #include <type_traits>
@@ -46,9 +49,11 @@ int main(int, char**)
 {
     {
         test_match_result_typedef<const char*, pmr::cmatch>();
-        test_match_result_typedef<const wchar_t*, pmr::wcmatch>();
         test_match_result_typedef<pmr::string::const_iterator, pmr::smatch>();
+#ifndef TEST_HAS_NO_WIDE_CHARACTERS
+        test_match_result_typedef<const wchar_t*, pmr::wcmatch>();
         test_match_result_typedef<pmr::wstring::const_iterator, pmr::wsmatch>();
+#endif
     }
     {
         // Check that std::match_results has been included and is complete.

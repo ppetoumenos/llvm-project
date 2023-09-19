@@ -2,18 +2,26 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("//llvm:tblgen.bzl", "gentbl")
+load("//llvm:binary_alias.bzl", "binary_alias")
+load(
+    "//:vars.bzl",
+    "LLVM_VERSION",
+)
 
 package(
     default_visibility = ["//visibility:public"],
-    licenses = ["notice"],
+    features = ["layering_check"],
 )
+
+licenses(["notice"])
 
 # TODO: Actually compute version info
 genrule(
     name = "config_version_gen",
     outs = ["include/lld/Common/Version.inc"],
-    cmd = "echo '#define LLD_VERSION_STRING \"git\"' > $@",
+    cmd = "echo '#define LLD_VERSION_STRING \"{}\"' > $@".format(LLVM_VERSION),
 )
 
 genrule(
@@ -39,9 +47,13 @@ cc_library(
         ":vcs_version",
         "//llvm:CodeGen",
         "//llvm:Core",
+        "//llvm:DebugInfoDWARF",
+        "//llvm:IRPrinter",
         "//llvm:Option",
         "//llvm:Support",
         "//llvm:Target",
+        "//llvm:TargetParser",
+        "//llvm:config",
     ],
 )
 
@@ -92,8 +104,13 @@ cc_library(
         "//llvm:Object",
         "//llvm:Option",
         "//llvm:Passes",
+        "//llvm:Remarks",
         "//llvm:Support",
+        "//llvm:TargetParser",
         "//llvm:TransformUtils",
+        "//llvm:config",
+        "@llvm_zlib//:zlib",
+        "@llvm_zstd//:zstd",
     ],
 )
 
@@ -126,10 +143,15 @@ cc_library(
         "//llvm:AllTargetsCodeGens",
         "//llvm:AllTargetsDisassemblers",
         "//llvm:Analysis",
+        "//llvm:BinaryFormat",
         "//llvm:BitReader",
         "//llvm:BitWriter",
         "//llvm:Core",
+        "//llvm:DebugInfo",
+        "//llvm:DebugInfoCodeView",
+        "//llvm:DebugInfoMSF",
         "//llvm:DebugInfoPDB",
+        "//llvm:Demangle",
         "//llvm:IPO",
         "//llvm:LTO",
         "//llvm:LibDriver",
@@ -139,8 +161,12 @@ cc_library(
         "//llvm:Option",
         "//llvm:Support",
         "//llvm:Symbolize",
+        "//llvm:Target",
+        "//llvm:TargetParser",
         "//llvm:TransformUtils",
+        "//llvm:WindowsDriver",
         "//llvm:WindowsManifest",
+        "//llvm:config",
     ],
 )
 
@@ -169,49 +195,7 @@ cc_library(
         ":mingw_options_inc_gen",
         "//llvm:Option",
         "//llvm:Support",
-    ],
-)
-
-cc_library(
-    name = "Core",
-    srcs = glob([
-        "lib/Core/*.cpp",
-        "lib/Core/*.h",
-    ]),
-    hdrs = glob(["include/lld/Core/*.h"]),
-    deps = [
-        ":Common",
-    ],
-)
-
-cc_library(
-    name = "YAML",
-    srcs = glob([
-        "lib/ReaderWriter/YAML/*.cpp",
-        "lib/ReaderWriter/YAML/*.h",
-    ]),
-    hdrs = ["include/lld/ReaderWriter/YamlContext.h"],
-    deps = [
-        ":Common",
-        ":Core",
-        "//llvm:Support",
-    ],
-)
-
-cc_library(
-    name = "MachOOld",
-    srcs = glob([
-        "lib/ReaderWriter/MachO/*.cpp",
-        "lib/ReaderWriter/MachO/*.h",
-    ]),
-    hdrs = ["include/lld/ReaderWriter/MachOLinkingContext.h"],
-    deps = [
-        ":Common",
-        ":Core",
-        ":YAML",
-        "//llvm:DebugInfoDWARF",
-        "//llvm:Object",
-        "//llvm:Support",
+        "//llvm:TargetParser",
     ],
 )
 
@@ -241,57 +225,21 @@ cc_library(
         ":Common",
         ":macho_options_inc_gen",
         "//libunwind:unwind_headers_only",
+        "//llvm:BinaryFormat",
+        "//llvm:BitReader",
+        "//llvm:BitWriter",
+        "//llvm:Core",
+        "//llvm:DebugInfoDWARF",
+        "//llvm:Demangle",
         "//llvm:LTO",
-    ],
-)
-
-cc_library(
-    name = "ReaderWriter",
-    srcs = glob([
-        "lib/ReaderWriter/*.cpp",
-        "lib/ReaderWriter/*.h",
-    ]),
-    deps = [
-        ":Common",
-        ":Core",
-        ":YAML",
-        "//llvm:Object",
-        "//llvm:Support",
-    ],
-)
-
-gentbl(
-    name = "darwin_driver_options_inc_gen",
-    # See https://github.com/bazelbuild/bazel/issues/13803
-    strip_include_prefix = "lib/Driver",
-    tbl_outs = [(
-        "-gen-opt-parser-defs",
-        "lib/Driver/DarwinLdOptions.inc",
-    )],
-    tblgen = "//llvm:llvm-tblgen",
-    td_file = "lib/Driver/DarwinLdOptions.td",
-    td_srcs = [
-        "//llvm:include/llvm/Option/OptParser.td",
-    ],
-)
-
-cc_library(
-    name = "Driver",
-    srcs = glob([
-        "lib/Driver/*.cpp",
-        "lib/Driver/*.h",
-    ]),
-    includes = ["lib/Driver"],
-    deps = [
-        ":Common",
-        ":Core",
-        ":MachOOld",
-        ":ReaderWriter",
-        ":YAML",
-        ":darwin_driver_options_inc_gen",
+        "//llvm:MC",
+        "//llvm:ObjCARC",
         "//llvm:Object",
         "//llvm:Option",
         "//llvm:Support",
+        "//llvm:TargetParser",
+        "//llvm:TextAPI",
+        "//llvm:config",
     ],
 )
 
@@ -324,11 +272,24 @@ cc_library(
         "//llvm:AllTargetsCodeGens",
         "//llvm:BinaryFormat",
         "//llvm:Core",
+        "//llvm:Demangle",
         "//llvm:LTO",
+        "//llvm:MC",
         "//llvm:Object",
         "//llvm:Option",
         "//llvm:Support",
+        "//llvm:TargetParser",
+        "//llvm:config",
     ],
+)
+
+expand_template(
+    name = "lld_main",
+    out = "lld-driver.cpp",
+    substitutions = {
+        "@TOOL_NAME@": "lld",
+    },
+    template = "//llvm:cmake/modules/llvm-driver-template.cpp.in",
 )
 
 cc_binary(
@@ -336,24 +297,16 @@ cc_binary(
     srcs = glob([
         "tools/lld/*.cpp",
         "tools/lld/*.h",
-    ]),
-    tags = [
-        "manual",  # External dependency (libxml through WindowsManifest)
-        "nobuildkite",  # TODO(gcmn): Remote executors don't have libxml
-    ],
+    ]) + ["lld-driver.cpp"],
     deps = [
         ":COFF",
         ":Common",
-        ":Core",
-        ":Driver",
         ":ELF",
-        ":MachOOld",
         ":MachO",
         ":MinGW",
-        ":ReaderWriter",
         ":Wasm",
-        ":YAML",
         "//llvm:Support",
+        "//llvm:TargetParser",
     ],
 )
 
@@ -363,21 +316,15 @@ cc_binary(
 # macOS require that the binary be named "ld64.lld".
 # Windows require that the binary be named "lld-link".
 # WebAssembly builds require that the binary be named "wasm-ld".
-genrule(
-    name = "gen_lld",
-    srcs = [":lld"],
-    outs = [
+[
+    binary_alias(
+        name = name,
+        binary = ":lld",
+    )
+    for name in [
         "ld.lld",
-        "ld64.lld.darwinnew",
         "ld64.lld",
         "lld-link",
         "wasm-ld",
-    ],
-    cmd =
-        "target=$$(basename $<); for n in ld.lld ld64.lld.darwinnew ld64.lld lld-link wasm-ld; do ln -sf $$target $(@D)/$$n; done",
-    output_to_bindir = 1,
-    tags = [
-        "manual",  # External dependency (libxml through WindowsManifest)
-        "nobuildkite",  # TODO(gcmn): Remote executors don't have libxml
-    ],
-)
+    ]
+]

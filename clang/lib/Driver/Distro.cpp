@@ -11,11 +11,11 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/Support/ErrorOr.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Threading.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 using namespace clang::driver;
 using namespace clang;
@@ -90,6 +90,10 @@ static Distro::DistroType DetectLsbRelease(llvm::vfs::FileSystem &VFS) {
                     .Case("groovy", Distro::UbuntuGroovy)
                     .Case("hirsute", Distro::UbuntuHirsute)
                     .Case("impish", Distro::UbuntuImpish)
+                    .Case("jammy", Distro::UbuntuJammy)
+                    .Case("kinetic", Distro::UbuntuKinetic)
+                    .Case("lunar", Distro::UbuntuLunar)
+                    .Case("mantic", Distro::UbuntuMantic)
                     .Default(Distro::UnknownDistro);
   return Version;
 }
@@ -108,7 +112,7 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
   if (Version != Distro::UnknownDistro)
     return Version;
 
-  // Otherwise try some distro-specific quirks for RedHat...
+  // Otherwise try some distro-specific quirks for Red Hat...
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> File =
       VFS.getBufferForFile("/etc/redhat-release");
 
@@ -118,11 +122,11 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
       return Distro::Fedora;
     if (Data.startswith("Red Hat Enterprise Linux") ||
         Data.startswith("CentOS") || Data.startswith("Scientific Linux")) {
-      if (Data.find("release 7") != StringRef::npos)
+      if (Data.contains("release 7"))
         return Distro::RHEL7;
-      else if (Data.find("release 6") != StringRef::npos)
+      else if (Data.contains("release 6"))
         return Distro::RHEL6;
-      else if (Data.find("release 5") != StringRef::npos)
+      else if (Data.contains("release 5"))
         return Distro::RHEL5;
     }
     return Distro::UnknownDistro;
@@ -150,6 +154,10 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
         return Distro::DebianBuster;
       case 11:
         return Distro::DebianBullseye;
+      case 12:
+        return Distro::DebianBookworm;
+      case 13:
+        return Distro::DebianTrixie;
       default:
         return Distro::UnknownDistro;
       }
@@ -161,6 +169,8 @@ static Distro::DistroType DetectDistro(llvm::vfs::FileSystem &VFS) {
         .Case("stretch/sid", Distro::DebianStretch)
         .Case("buster/sid", Distro::DebianBuster)
         .Case("bullseye/sid", Distro::DebianBullseye)
+        .Case("bookworm/sid", Distro::DebianBookworm)
+        .Case("trixie/sid", Distro::DebianTrixie)
         .Default(Distro::UnknownDistro);
   }
 

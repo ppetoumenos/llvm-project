@@ -9,7 +9,6 @@
 #include "ScriptInterpreterNone.h"
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/PluginManager.h"
-#include "lldb/Core/StreamFile.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StringList.h"
 
@@ -57,17 +56,6 @@ ScriptInterpreterNone::CreateInstance(Debugger &debugger) {
   return std::make_shared<ScriptInterpreterNone>(debugger);
 }
 
-lldb_private::ConstString ScriptInterpreterNone::GetPluginNameStatic() {
-  static ConstString g_name("script-none");
-  return g_name;
-}
-
-const char *ScriptInterpreterNone::GetPluginDescriptionStatic() {
+llvm::StringRef ScriptInterpreterNone::GetPluginDescriptionStatic() {
   return "Null script interpreter";
 }
-
-lldb_private::ConstString ScriptInterpreterNone::GetPluginName() {
-  return GetPluginNameStatic();
-}
-
-uint32_t ScriptInterpreterNone::GetPluginVersion() { return 1; }

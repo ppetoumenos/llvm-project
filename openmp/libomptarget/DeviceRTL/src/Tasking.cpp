@@ -18,13 +18,15 @@
 #include "Types.h"
 #include "Utils.h"
 
-using namespace _OMP;
+using namespace ompx;
 
-#pragma omp declare target
+#pragma omp begin declare target device_type(nohost)
 
-TaskDescriptorTy *__kmpc_omp_task_alloc(IdentTy *, uint32_t, int32_t,
-                                        uint64_t TaskSizeInclPrivateValues,
-                                        uint64_t SharedValuesSize,
+extern "C" {
+
+TaskDescriptorTy *__kmpc_omp_task_alloc(IdentTy *, int32_t, int32_t,
+                                        size_t TaskSizeInclPrivateValues,
+                                        size_t SharedValuesSize,
                                         TaskFnTy TaskFn) {
   auto TaskSizeInclPrivateValuesPadded =
       utils::roundUp(TaskSizeInclPrivateValues, uint64_t(sizeof(void *)));
@@ -46,7 +48,7 @@ int32_t __kmpc_omp_task(IdentTy *Loc, uint32_t TId,
 int32_t __kmpc_omp_task_with_deps(IdentTy *Loc, uint32_t TId,
                                   TaskDescriptorTy *TaskDescriptor, int32_t,
                                   void *, int32_t, void *) {
-  state::DateEnvironmentRAII DERAII;
+  state::DateEnvironmentRAII DERAII(Loc);
 
   TaskDescriptor->TaskFn(0, TaskDescriptor);
 
@@ -56,7 +58,7 @@ int32_t __kmpc_omp_task_with_deps(IdentTy *Loc, uint32_t TId,
 
 void __kmpc_omp_task_begin_if0(IdentTy *Loc, uint32_t TId,
                                TaskDescriptorTy *TaskDescriptor) {
-  state::enterDataEnvironment();
+  state::enterDataEnvironment(Loc);
 }
 
 void __kmpc_omp_task_complete_if0(IdentTy *Loc, uint32_t TId,
@@ -100,5 +102,6 @@ int omp_in_final(void) {
 }
 
 int omp_get_max_task_priority(void) { return 0; }
+}
 
 #pragma omp end declare target

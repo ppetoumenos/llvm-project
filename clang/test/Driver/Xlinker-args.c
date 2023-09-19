@@ -12,19 +12,20 @@
 // RUN:   -Wl,two,--no-demangle,three -Xlinker four -z five -r %s 2> %t
 // RUN: FileCheck -check-prefix=LINUX < %t %s
 
-// RUN: %clang -target powerpc-unknown-aix -### \
-// RUN:   -b one %s 2> %t
-// RUN: FileCheck -check-prefix=AIX < %t %s
+/// Check that --no-demangle gets forwarded to the mingw linker
+// RUN: %clang -target x86_64-w64-mingw32 -### \
+// RUN:   -Wl,--no-demangle %s 2> %t
+// RUN: FileCheck -check-prefix=MINGW < %t %s
 
-// RUN: %clang -target powerpc-unknown-linux -### \
-// RUN:   -b one %s 2> %t
-// RUN: FileCheck -check-prefix=NOT-AIX < %t %s
+// RUN: %clang -target powerpc-unknown-aix -### \
+// RUN:   -b one -b two %s 2> %t
+// RUN: FileCheck -check-prefix=AIX < %t %s
 
 // DARWIN-NOT: --no-demangle
 // DARWIN: "one" "two" "three" "four" "-z" "five" "-r"
 // LINUX: "--no-demangle" "-e" "_start" "one" "two" "three" "four" "-z" "five" "-r" {{.*}} "-T" "a.lds"
-// AIX: "-b" "one" 
-// NOT-AIX: error: unsupported option '-b' for target 'powerpc-unknown-linux'
+// MINGW: "--no-demangle"
+// AIX: "-b" "one" "-b" "two"
 
 // Check that we forward '-Xlinker' and '-Wl,' on Windows.
 // RUN: %clang -target i686-pc-win32 -fuse-ld=link -### \

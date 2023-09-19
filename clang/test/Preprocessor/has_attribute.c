@@ -25,7 +25,6 @@ int has_has_attribute();
 int has_something_we_dont_have();
 #endif
 
-// rdar://10253857
 #if __has_attribute(__const)
  int fn3() __attribute__ ((__const));
 #endif
@@ -56,3 +55,11 @@ int has_no_volatile_attribute();
 
 #if __has_cpp_attribute(selectany) // expected-error {{function-like macro '__has_cpp_attribute' is not defined}}
 #endif
+
+// Test that macro expansion of the builtin argument works.
+#define F fallthrough
+
+#if __has_attribute(F)
+int has_fallthrough;
+#endif
+// CHECK: int has_fallthrough;

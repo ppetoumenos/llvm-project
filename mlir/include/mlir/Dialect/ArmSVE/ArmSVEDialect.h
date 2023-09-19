@@ -13,16 +13,13 @@
 #ifndef MLIR_DIALECT_ARMSVE_ARMSVEDIALECT_H
 #define MLIR_DIALECT_ARMSVE_ARMSVEDIALECT_H
 
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mlir/Dialect/ArmSVE/ArmSVEDialect.h.inc"
-#include "mlir/Dialect/StandardOps/IR/Ops.h"
-
-#define GET_TYPEDEF_CLASSES
-#include "mlir/Dialect/ArmSVE/ArmSVETypes.h.inc"
 
 #define GET_OP_CLASSES
 #include "mlir/Dialect/ArmSVE/ArmSVE.h.inc"
