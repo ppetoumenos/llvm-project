@@ -45,28 +45,23 @@
 #ifndef LLVM_TRANSFORMS_IPO_FUNCTIONMERGING_H
 #define LLVM_TRANSFORMS_IPO_FUNCTIONMERGING_H
 
-//#include "llvm/ADT/KeyValueCache.h"
-
-#include "llvm/InitializePasses.h"
+#include "llvm/ADT/SequenceAlignment.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+
+#include "llvm/InitializePasses.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringSet.h"
-
 #include "llvm/Transforms/Utils/Cloning.h"
-
-#include "llvm/ADT/SequenceAlignment.h"
-
 #include "llvm/Transforms/IPO/SearchStrategy.h"
-#include "llvm/Transforms/IPO/tsl/robin_map.h"
 
 #include <map>
 #include <vector>
@@ -100,6 +95,44 @@ struct FunctionMergingOptions {
     EnableUnifiedReturnType = URT;
     return *this;
   }
+};
+
+class AlignedCode : public AlignedSequence<Value *> {
+  public:
+    int Insts{0};
+    int Matches{0};
+    int CoreMatches{0};
+
+    AlignedCode() = default;
+
+    AlignedCode(const AlignedCode &Other) :
+      AlignedSequence(Other), Insts{Other.Insts},
+      Matches{Other.Matches}, CoreMatches{Other.CoreMatches} {}
+
+    AlignedCode(AlignedCode &&Other) :
+      AlignedSequence(Other), Insts{Other.Insts},
+      Matches{Other.Matches}, CoreMatches{Other.CoreMatches} {}
+
+    AlignedCode(const AlignedSequence<Value *> &Other) : AlignedSequence(Other) {}
+
+    AlignedCode(AlignedSequence<Value *> &&Other) : AlignedSequence(Other) {}
+
+    AlignedCode(BasicBlock *B1, BasicBlock *B2);
+
+    AlignedCode &operator=(const AlignedCode &Other) {
+      Data = Other.Data;
+      LargestMatch = Other.LargestMatch;
+      Insts = Other.Insts;
+      Matches = Other.Matches;
+      CoreMatches = Other.CoreMatches;
+      return (*this);
+    }
+
+    void extend(const AlignedCode &Other);
+    void extend(int index, const BasicBlock *BB);
+
+    bool hasMatches() const {return (Matches == Insts) || (CoreMatches > 0);};
+    bool isProfitable() const;
 };
 
 class FunctionMergeResult {
@@ -171,14 +204,6 @@ public:
   //  static const FunctionMergeResult Error;
 };
 
-struct AlignmentStats {
-  int Insts{0};
-  int Matches{0};
-  int CoreMatches{0};
-  bool isProfitable() const {return (Matches == Insts) || (CoreMatches > 0);};
-};
-
-
 class FunctionMerger {
 private:
   Module *M;
@@ -204,10 +229,6 @@ private:
 
   void linearize(Function *F, SmallVectorImpl<Value *> &FVec,
                  LinearizationKind LK = LinearizationKind::LK_Canonical);
-
-  static bool matchInstructions(Instruction *I1, Instruction *I2,
-                                const FunctionMergingOptions &Options = {});
-  static bool matchWholeBlocks(Value *V1, Value *V2);
 
   void replaceByCall(Function *F, FunctionMergeResult &MergedFunc,
                      const FunctionMergingOptions &Options = {});
@@ -236,13 +257,12 @@ public:
   static bool areTypesEquivalent(Type *Ty1, Type *Ty2, const DataLayout *DL,
                                  const FunctionMergingOptions &Options = {});
 
-  static bool isSAProfitable(AlignedSequence<Value *> &AlignedBlocks);
-  static bool isPAProfitable(BasicBlock *BB1, BasicBlock *BB2);
-
-  static void extendAlignedSeq(AlignedSequence<Value *> &AlignedSeq, AlignedSequence<Value *> &AlignedSubSeq, AlignmentStats &stats);
-  static void extendAlignedSeq(AlignedSequence<Value *> &AlignedSeq, BasicBlock *BB1, BasicBlock *BB2, AlignmentStats &stats);
 
   static bool match(Value *V1, Value *V2);
+  static bool matchInstructions(Instruction *I1, Instruction *I2,
+                                const FunctionMergingOptions &Options = {});
+  static bool matchWholeBlocks(Value *V1, Value *V2);
+  static bool matchBlocks(BasicBlock *B1, BasicBlock *B2);
 
   void updateCallGraph(FunctionMergeResult &Result,
                        StringSet<> &AlwaysPreserved,
@@ -251,15 +271,13 @@ public:
   FunctionMergeResult merge(Function *F1, Function *F2, std::string Name = "",
                             const FunctionMergingOptions &Options = {});
 
-  template <typename BlockListType> class CodeGenerator {
+  class CodeGenerator {
   private:
     LLVMContext *ContextPtr;
     Type *IntPtrTy;
 
     Value *IsFunc1;
 
-    // BlockListType &Blocks1;
-    // BlockListType &Blocks2;
     std::vector<BasicBlock *> Blocks1;
     std::vector<BasicBlock *> Blocks2;
 
@@ -283,15 +301,13 @@ public:
                                      DominatorTree &DT);
 
   public:
-    // CodeGenerator(BlockListType &Blocks1, BlockListType &Blocks2) :
-    // Blocks1(Blocks1), Blocks2(Blocks2) {}
-    CodeGenerator(BlockListType &Blocks1, BlockListType &Blocks2) {
-      for (BasicBlock &BB : Blocks1)
-        this->Blocks1.push_back(&BB);
-      for (BasicBlock &BB : Blocks2)
-        this->Blocks2.push_back(&BB);
+    CodeGenerator(Function* F1, Function* F2) 
+    {
+        for (BasicBlock &BB: *F1)
+            Blocks1.push_back(&BB);
+        for (BasicBlock &BB: *F2)
+            Blocks2.push_back(&BB);
     }
-
     virtual ~CodeGenerator() {}
 
     CodeGenerator &setContext(LLVMContext *ContextPtr) {
@@ -364,7 +380,7 @@ public:
     void erase(BasicBlock *BB) { CreatedBBs.erase(BB); }
     void erase(Instruction *I) { CreatedInsts.erase(I); }
 
-    virtual bool generate(AlignedSequence<Value *> &AlignedSeq,
+    virtual bool generate(AlignedCode &AlignedSeq,
                           ValueToValueMapTy &VMap,
                           const FunctionMergingOptions &Options = {}) = 0;
 
@@ -378,14 +394,12 @@ public:
     }
   };
 
-  template <typename BlockListType>
-  class SALSSACodeGen : public FunctionMerger::CodeGenerator<BlockListType> {
+  class SALSSACodeGen : public FunctionMerger::CodeGenerator {
 
   public:
-    SALSSACodeGen(BlockListType &Blocks1, BlockListType &Blocks2)
-        : CodeGenerator<BlockListType>(Blocks1, Blocks2) {}
+    SALSSACodeGen(Function *F1, Function *F2) : CodeGenerator(F1, F2) {}
     virtual ~SALSSACodeGen() {}
-    virtual bool generate(AlignedSequence<Value *> &AlignedSeq,
+    virtual bool generate(AlignedCode &AlignedSeq,
                           ValueToValueMapTy &VMap,
                           const FunctionMergingOptions &Options = {}) override;
   };

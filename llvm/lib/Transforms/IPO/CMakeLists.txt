@@ -17,10 +17,6 @@ add_llvm_component_library(LLVMipo
   FunctionAttrs.cpp
   FunctionImport.cpp
   FunctionMerging.cpp
-  MergeSimilarFunctions.cpp
-  MinSizeAttr.cpp
-  FMSA.cpp
-  FastFM.cpp
   FunctionSpecialization.cpp
   GlobalDCE.cpp
   GlobalOpt.cpp

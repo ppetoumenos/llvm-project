@@ -15,13 +15,14 @@
 #ifndef LLVM_ADT_SEQUENCE_ALIGNMENT_H
 #define LLVM_ADT_SEQUENCE_ALIGNMENT_H
 
-#include "llvm/ADT/ArrayView.h"
-
-#include <cassert>
-#include <list>
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include <functional>
-#include <limits.h> // INT_MIN
+#include <limits> // INT_MIN
+#include <list>
+
+#include "llvm/ADT/ArrayView.h"
 
 #define ScoreSystemType  int
 
@@ -42,19 +43,19 @@ public:
 
     Entry(Ty V1, Ty V2, bool Matching) : Pair(V1,V2), IsMatchingPair(Matching) {}
 
-    Ty get(size_t index) {
+    Ty get(size_t index) const {
       assert((index==0 || index==1) && "Index out of bounds!");
       if (index==0) return Pair.first;
       else return Pair.second;
     }
 
-    bool empty() { return (Pair.first==Blank && Pair.second==Blank); }
-    bool hasBlank() { return (Pair.first==Blank || Pair.second==Blank); }
+    bool empty() const { return (Pair.first==Blank && Pair.second==Blank); }
+    bool hasBlank() const { return (Pair.first==Blank || Pair.second==Blank); }
 
-    bool match() { return IsMatchingPair; }
-    bool mismatch() { return (!IsMatchingPair); }
+    bool match() const { return IsMatchingPair; }
+    bool mismatch() const { return (!IsMatchingPair); }
 
-    Ty getNonBlank() {
+    Ty getNonBlank() const {
       if (Pair.first != Blank)
         return Pair.first;
       else
@@ -64,9 +65,9 @@ public:
   };
 
   std::list< Entry > Data;
-  size_t LargestMatch;
+  size_t LargestMatch{0};
 
-  AlignedSequence() : LargestMatch(0) {}
+  AlignedSequence() = default;
 
   AlignedSequence(const AlignedSequence<Ty, Blank> &Other) : Data(Other.Data), LargestMatch(Other.LargestMatch) {}
   AlignedSequence(AlignedSequence<Ty, Blank> &&Other) : Data(std::move(Other.Data)), LargestMatch(Other.LargestMatch) {}
@@ -87,6 +88,8 @@ public:
 
   typename std::list< Entry >::iterator begin() { return Data.begin(); }
   typename std::list< Entry >::iterator end() { return Data.end(); }
+  typename std::list< Entry >::const_iterator begin() const { return Data.cbegin(); }
+  typename std::list< Entry >::const_iterator end() const { return Data.cend(); }
 
   size_t size() { return Data.size(); }
 
