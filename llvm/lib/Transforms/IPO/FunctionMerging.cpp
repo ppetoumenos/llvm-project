@@ -2658,6 +2658,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name, const Functi
               B2Max = BB2->size();
             }
           }
+		}
 
         if (!HyFMProfitability || AlignedBlocks.isProfitable()) {
           AlignedSeq.extend(AlignedBlocks);
