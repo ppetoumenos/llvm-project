@@ -486,9 +486,6 @@ static bool matchIntrinsicCalls(Intrinsic::ID ID, const CallBase *CI1,
     // visitDbgIntrinsic("declare",
     // cast<DbgInfoIntrinsic>(*CS.getInstruction()));
     break;
-  case Intrinsic::dbg_addr: // llvm.dbg.addr
-    // visitDbgIntrinsic("addr", cast<DbgInfoIntrinsic>(*CS.getInstruction()));
-    break;
   case Intrinsic::dbg_value: // llvm.dbg.value
     // visitDbgIntrinsic("value", cast<DbgInfoIntrinsic>(*CS.getInstruction()));
     break;
@@ -3694,14 +3691,12 @@ bool FunctionMerging::runImpl(
   }
   
   SearchStrategy strategy(LSHRows, LSHBands);
-  size_t count=0;
   for (auto &F : M) {
     if (F.isDeclaration() || F.isVarArg() || (!HasWholeProgram && F.hasAvailableExternallyLinkage()))
       continue;
     if (ignoreFunction(F))
       continue;
     matcher->add_candidate(&F, EstimateFunctionSize(&F, GTTI(F)));
-    count++;
   }
 
 #ifdef TIME_STEPS_DEBUG
@@ -4073,10 +4068,8 @@ void FunctionMerger::CodeGenerator::removeRedundantInstructions(
     }
   }
 
-  int count = 0;
   for (auto &kv : UpdateList) {
     for (auto *I : kv.second) {
-      count++;
       erase(I);
       I->replaceAllUsesWith(kv.first);
       I->eraseFromParent();
