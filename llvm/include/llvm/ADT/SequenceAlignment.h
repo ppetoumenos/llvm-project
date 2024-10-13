@@ -15,10 +15,13 @@
 #define LLVM_ADT_SEQUENCE_ALIGNMENT_H
 
 #include <cassert>
+
+#ifndef LLVM_ADT_SEQUENCE_ALIGNMENT_H
+#define LLVM_ADT_SEQUENCE_ALIGNMENT_H
+
 #include <functional>
 #include <limits> // INT_MIN
 #include <list>
-
 
 #define ScoreSystemType  int
 

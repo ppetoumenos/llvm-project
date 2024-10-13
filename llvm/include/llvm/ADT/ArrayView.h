@@ -5,7 +5,6 @@
 
 namespace llvm {
   
-
 template<typename ArrayBaseType>
 class ArrayView {
 public:
