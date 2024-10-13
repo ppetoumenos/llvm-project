@@ -1,3 +1,15 @@
+#ifndef NEEDMAN_WUNSCH_H
+#define NEEDMAN_WUNSCH_H
+
+#include <functional>
+
+#include "llvm/ADT/SequenceAlignment.h"
+
+namespace llvm {
+
+template<typename ContainerType, typename Ty, Ty, typename MatchFnTy>
+class SequenceAligner;
+
 template <typename ContainerType,
           typename Ty = typename ContainerType::value_type, Ty Blank = Ty(0),
           typename MatchFnTy = std::function<bool(Ty, Ty)>>
@@ -13,8 +25,7 @@ private:
 
   const static unsigned END = 0;
   const static unsigned DIAGONAL = 1;
-  const static unsigned UP = 2;
-  const static unsigned LEFT = 3;
+  const static unsigned UP = 2; const static unsigned LEFT = 3;
 
   size_t MaxRow;
   size_t MaxCol;
@@ -266,3 +277,7 @@ public:
     return Result;
   }
 };
+
+} // namespace llvm
+
+#endif

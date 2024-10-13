@@ -1,3 +1,12 @@
+#ifndef SA_HIRSCHBERG_H
+#define SA_HIRSCHBERG_H
+
+#include "llvm/ADT/ArrayView.h"
+#include "llvm/ADT/SANeedlemanWunsch.h"
+#include "llvm/ADT/SequenceAlignment.h"
+
+namespace llvm {
+
 template<typename ContainerType, typename Ty=typename ContainerType::value_type, Ty Blank=Ty(0), typename MatchFnTy=std::function<bool(Ty,Ty)>>
 class DiagonalWindowsSA : public SequenceAligner<ContainerType,Ty,Blank,MatchFnTy> {
 private:
@@ -72,3 +81,6 @@ public:
 
 };
 
+} // namespace llvm
+
+#endif
