@@ -11,20 +11,21 @@
 // alignment.
 //
 //===----------------------------------------------------------------------===//
+#ifndef LLVM_ADT_SEQUENCE_ALIGNMENT_H
+#define LLVM_ADT_SEQUENCE_ALIGNMENT_H
+
+#include <cassert>
 
 #ifndef LLVM_ADT_SEQUENCE_ALIGNMENT_H
 #define LLVM_ADT_SEQUENCE_ALIGNMENT_H
 
-#include <algorithm>
-#include <cassert>
-#include <cstddef>
 #include <functional>
 #include <limits> // INT_MIN
 #include <list>
 
-#include "llvm/ADT/ArrayView.h"
-
 #define ScoreSystemType  int
+
+namespace llvm{
 
 // Store alignment result here
 template<typename Ty, Ty Blank=Ty(0)>
@@ -161,8 +162,6 @@ public:
   virtual size_t getMemoryRequirement(ContainerType &Seq0, ContainerType &Seq1) = 0;
 };
 
-#include "llvm/ADT/SANeedlemanWunsch.h"
-#include "llvm/ADT/SAHirschberg.h"
-#include "llvm/ADT/SADiagonalWindows.h"
+} // namespace llvm
 
 #endif

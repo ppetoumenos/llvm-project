@@ -86,6 +86,7 @@
 //#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/ADT/SANeedlemanWunsch.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 

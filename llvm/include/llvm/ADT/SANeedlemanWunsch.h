@@ -1,3 +1,15 @@
+#ifndef NEEDMAN_WUNSCH_H
+#define NEEDMAN_WUNSCH_H
+
+#include <functional>
+
+#include "llvm/ADT/SequenceAlignment.h"
+
+namespace llvm {
+
+template<typename ContainerType, typename Ty, Ty, typename MatchFnTy>
+class SequenceAligner;
+
 template <typename ContainerType,
           typename Ty = typename ContainerType::value_type, Ty Blank = Ty(0),
           typename MatchFnTy = std::function<bool(Ty, Ty)>>
@@ -266,3 +278,7 @@ public:
     return Result;
   }
 };
+
+} // namespace llvm
+
+#endif
