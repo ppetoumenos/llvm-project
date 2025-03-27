@@ -4332,7 +4332,11 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                 NewBB = BasicBlock::Create(MergedFunc->getContext(), BBName,
                                            MergedFunc);
                 ChainBlocks(LastMergedBB, NewBB, IsFunc1);
+#ifdef CHANGES
+                BlocksFX[NewBB] = BlocksFX[LastMergedBB];
+#else
                 BlocksFX[NewBB] = BB;
+#endif
               }
               LastMergedBB = nullptr;
 
