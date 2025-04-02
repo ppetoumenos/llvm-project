@@ -134,6 +134,7 @@
 //#define SKIP_MERGING
 
 #define CHANGES
+#define F3M_FIXES
 
 using namespace llvm;
 
@@ -794,16 +795,11 @@ static bool matchAllocaInsts(const AllocaInst *AI1, const AllocaInst *AI2) {
       AI1->getAlign() != AI2->getAlign())
     return false;
 
-  /*
-  // If size is known, I2 can be seen as equivalent to I1 if it allocates
-  // the same or less memory.
-  if (DL->getTypeAllocSize(AI->getAllocatedType())
-        < DL->getTypeAllocSize(cast<AllocaInst>(I2)->getAllocatedType()))
-    return false;
-
-  */
-
+#ifdef F3M_FIXES
+  return AI1->getAllocatedType() == AI2->getAllocatedType();
+#else
   return true;
+#endif
 }
 
 static bool matchGetElementPtrInsts(const GetElementPtrInst *GEP1,
@@ -3976,7 +3972,7 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                 NewBB = BasicBlock::Create(MergedFunc->getContext(), BBName,
                                            MergedFunc);
                 ChainBlocks(LastMergedBB, NewBB, IsFunc1);
-#ifdef CHANGES
+#ifdef F3M_FIXES
                 BlocksFX[NewBB] = BlocksFX[LastMergedBB];
 #else
                 BlocksFX[NewBB] = BB;
