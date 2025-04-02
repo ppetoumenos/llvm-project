@@ -140,6 +140,7 @@
 #define TIME_STEPS_DEBUG
 
 #define CHANGES
+#define F3M_FIXES
 
 using namespace llvm;
 
@@ -830,16 +831,11 @@ static bool matchAllocaInsts(const AllocaInst *AI1, const AllocaInst *AI2) {
       AI1->getAlign() != AI2->getAlign())
     return false;
 
-  /*
-  // If size is known, I2 can be seen as equivalent to I1 if it allocates
-  // the same or less memory.
-  if (DL->getTypeAllocSize(AI->getAllocatedType())
-        < DL->getTypeAllocSize(cast<AllocaInst>(I2)->getAllocatedType()))
-    return false;
-
-  */
-
+#ifdef F3M_FIXES
+  return AI1->getAllocatedType() == AI2->getAllocatedType();
+#else
   return true;
+#endif
 }
 
 static bool matchGetElementPtrInsts(const GetElementPtrInst *GEP1,
@@ -3204,7 +3200,6 @@ static size_t EstimateFunctionSize(Function *F, TargetTransformInfo *TTI) {
   return size_t(std::ceil(size));
 }
 
-
 unsigned instToInt(Instruction *I) {
   uint32_t value = 0;
   static uint32_t pseudorand_value = 100;
@@ -4332,7 +4327,7 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                 NewBB = BasicBlock::Create(MergedFunc->getContext(), BBName,
                                            MergedFunc);
                 ChainBlocks(LastMergedBB, NewBB, IsFunc1);
-#ifdef CHANGES
+#ifdef F3M_FIXES
                 BlocksFX[NewBB] = BlocksFX[LastMergedBB];
 #else
                 BlocksFX[NewBB] = BB;
@@ -4993,7 +4988,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
   SmallSet<PHINode *, 8> RemovedPHIs;
   for (auto [PT, PF] : CandPHI) {
     if ((RemovedPHIs.count(PT) > 0) || (RemovedPHIs.count(PF) > 0))
-	  continue;
+      continue;
     // Merge PT and PF if:
     // 1) their defined incoming values do not overlap
     // 2) their uses are only select statements on IsFunc1
