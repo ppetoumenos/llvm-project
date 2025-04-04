@@ -60,8 +60,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/IPO/SearchStrategy.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <map>
 #include <vector>
@@ -69,43 +69,43 @@
 namespace llvm {
 
 class AlignedCode : public AlignedSequence<Value *> {
-  public:
-    int Insts{0};
-    int Matches{0};
-    int CoreMatches{0};
+public:
+  int Insts{0};
+  int Matches{0};
+  int CoreMatches{0};
 
-    AlignedCode() = default;
+  AlignedCode() = default;
 
-    AlignedCode(const AlignedCode &Other) :
-      AlignedSequence(Other), Insts{Other.Insts},
-      Matches{Other.Matches}, CoreMatches{Other.CoreMatches} {}
+  AlignedCode(const AlignedCode &Other)
+      : AlignedSequence(Other), Insts{Other.Insts}, Matches{Other.Matches},
+        CoreMatches{Other.CoreMatches} {}
 
-    AlignedCode(AlignedCode &&Other) :
-      AlignedSequence(Other), Insts{Other.Insts},
-      Matches{Other.Matches}, CoreMatches{Other.CoreMatches} {}
+  AlignedCode(AlignedCode &&Other)
+      : AlignedSequence(Other), Insts{Other.Insts}, Matches{Other.Matches},
+        CoreMatches{Other.CoreMatches} {}
 
-    AlignedCode(const AlignedSequence<Value *> &Other) : AlignedSequence(Other) {}
+  AlignedCode(const AlignedSequence<Value *> &Other) : AlignedSequence(Other) {}
 
-    AlignedCode(AlignedSequence<Value *> &&Other) : AlignedSequence(Other) {}
+  AlignedCode(AlignedSequence<Value *> &&Other) : AlignedSequence(Other) {}
 
-    AlignedCode(BasicBlock *B1, BasicBlock *B2);
+  AlignedCode(BasicBlock *B1, BasicBlock *B2);
 
-    AlignedCode &operator=(const AlignedCode &Other) {
-      Data = Other.Data;
-      LargestMatch = Other.LargestMatch;
-      Insts = Other.Insts;
-      Matches = Other.Matches;
-      CoreMatches = Other.CoreMatches;
-      return (*this);
-    }
+  AlignedCode &operator=(const AlignedCode &Other) {
+    Data = Other.Data;
+    LargestMatch = Other.LargestMatch;
+    Insts = Other.Insts;
+    Matches = Other.Matches;
+    CoreMatches = Other.CoreMatches;
+    return (*this);
+  }
 
-    void extend(const AlignedCode &Other);
-    void extend(int index, const BasicBlock *BB);
+  void extend(const AlignedCode &Other);
+  void extend(int index, const BasicBlock *BB);
 
-    bool hasMatches() const {return (Matches == Insts) || (CoreMatches > 0);};
-    bool isProfitable() const;
+  bool hasMatches() const { return (Matches == Insts) || (CoreMatches > 0); };
+  bool isProfitable() const;
 
-    void dump() const;
+  void dump() const;
 };
 
 class FunctionMergeResult {
@@ -193,13 +193,13 @@ public:
   bool validMergeTypes(Function *F1, Function *F2);
   static bool areTypesEquivalent(Type *Ty1, Type *Ty2, const DataLayout *DL);
 
-
   static bool match(Value *V1, Value *V2);
   static bool matchInstructions(Instruction *I1, Instruction *I2);
   static bool matchWholeBlocks(Value *V1, Value *V2);
   static bool matchBlocks(BasicBlock *B1, BasicBlock *B2);
 
-  void updateCallGraph(FunctionMergeResult &Result, StringSet<> &AlwaysPreserved);
+  void updateCallGraph(FunctionMergeResult &Result,
+                       StringSet<> &AlwaysPreserved);
 
   std::optional<AlignedCode> align(Function *F1, Function *F2);
   FunctionMergeResult merge(Function *F1, Function *F2, std::string Name = "");
@@ -225,12 +225,11 @@ public:
     Function *MergedFunc;
 
   public:
-    CodeGenerator(Function* F1, Function* F2) 
-    {
-        for (BasicBlock &BB: *F1)
-            Blocks1.push_back(&BB);
-        for (BasicBlock &BB: *F2)
-            Blocks2.push_back(&BB);
+    CodeGenerator(Function *F1, Function *F2) {
+      for (BasicBlock &BB : *F1)
+        Blocks1.push_back(&BB);
+      for (BasicBlock &BB : *F2)
+        Blocks2.push_back(&BB);
     }
     virtual ~CodeGenerator() = default;
 
@@ -295,7 +294,6 @@ public:
 
     Type *getIntPtrType() { return IntPtrTy; }
 
-
     virtual bool generate(AlignedCode &AlignedSeq, ValueToValueMapTy &VMap) = 0;
   };
 
@@ -304,7 +302,8 @@ public:
   public:
     SALSSACodeGen(Function *F1, Function *F2) : CodeGenerator(F1, F2) {}
     virtual ~SALSSACodeGen() = default;
-    virtual bool generate(AlignedCode &AlignedSeq, ValueToValueMapTy &VMap) override;
+    virtual bool generate(AlignedCode &AlignedSeq,
+                          ValueToValueMapTy &VMap) override;
   };
 };
 

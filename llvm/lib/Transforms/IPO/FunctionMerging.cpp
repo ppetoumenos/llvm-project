@@ -42,10 +42,12 @@
 // Rodrigo C. O. Rocha, Pavlos Petoumenos, Zheng Wang, Murray Cole, Hugh Leather
 //
 // HyFM: Function Merging for Free (LCTES'21)
-// Rodrigo C. O. Rocha, Pavlos Petoumenos, Zheng Wang, Murray Cole, Kim Hazelwood, Hugh Leather
+// Rodrigo C. O. Rocha, Pavlos Petoumenos, Zheng Wang, Murray Cole, Kim
+// Hazelwood, Hugh Leather
 //
 // F3M: Fast Focused Function Merging (CGO'22)
-// Sean Sterling, Rodrigo C. O. Rocha, Hugh Leather, Kim Hazelwood, Michael O'Boyle, Pavlos Petoumenos
+// Sean Sterling, Rodrigo C. O. Rocha, Hugh Leather, Kim Hazelwood, Michael
+// O'Boyle, Pavlos Petoumenos
 //
 //===----------------------------------------------------------------------===//
 
@@ -70,11 +72,11 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
 
-#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/IteratedDominanceFrontier.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
 
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -104,7 +106,6 @@
 #include "llvm/Transforms/Utils.h"
 
 #include "llvm/Analysis/InlineSizeEstimatorAnalysis.h"
-
 
 #include <algorithm>
 #include <array>
@@ -143,11 +144,14 @@ static cl::opt<int> MergingOverheadThreshold(
 static cl::opt<bool> Debug("func-merging-debug", cl::init(false), cl::Hidden,
                            cl::desc("Outputs debug information"));
 
-static cl::opt<bool> TimingDebug("func-merging-timing", cl::init(false), cl::Hidden,
-                           cl::desc("Outputs timing information"));
+static cl::opt<bool> TimingDebug("func-merging-timing", cl::init(false),
+                                 cl::Hidden,
+                                 cl::desc("Outputs timing information"));
 
-static cl::opt<bool> Verbose("func-merging-verbose", cl::init(false),
-                             cl::Hidden, cl::desc("Outputs detailed information about what function merging is doing"));
+static cl::opt<bool> Verbose(
+    "func-merging-verbose", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Outputs detailed information about what function merging is doing"));
 
 static cl::opt<bool>
     EnableOperandReordering("func-merging-operand-reorder", cl::init(false),
@@ -159,11 +163,11 @@ static cl::opt<bool>
 
 static cl::opt<bool>
     EnablePA("func-merging-pa", cl::init(false), cl::Hidden,
-                 cl::desc("Enable Function Merging using Pairwise Alignment"));
+             cl::desc("Enable Function Merging using Pairwise Alignment"));
 
-static cl::opt<bool>
-    EnableNW("func-merging-nw", cl::init(false), cl::Hidden,
-                 cl::desc("Enable Function Merging using Needleman-Wunsch Alignment"));
+static cl::opt<bool> EnableNW(
+    "func-merging-nw", cl::init(false), cl::Hidden,
+    cl::desc("Enable Function Merging using Needleman-Wunsch Alignment"));
 
 static cl::opt<bool> EnableSALSSACoalescing(
     "func-merging-coalescing", cl::init(true), cl::Hidden,
@@ -177,17 +181,17 @@ static cl::opt<unsigned>
     MaxNumSelection("func-merging-max-selects", cl::init(500), cl::Hidden,
                     cl::desc("Maximum number of allowed operand selection"));
 
-static cl::opt<bool> EnableF3M(
-    "func-merging-f3m", cl::init(false), cl::Hidden,
-    cl::desc("Enable function pairing based on MinHashes and LSH"));
+static cl::opt<bool>
+    EnableF3M("func-merging-f3m", cl::init(false), cl::Hidden,
+              cl::desc("Enable function pairing based on MinHashes and LSH"));
 
-static cl::opt<unsigned> LSHRows(
-    "hyfm-f3m-rows", cl::init(2), cl::Hidden,
-    cl::desc("Number of rows in the LSH structure"));
+static cl::opt<unsigned>
+    LSHRows("hyfm-f3m-rows", cl::init(2), cl::Hidden,
+            cl::desc("Number of rows in the LSH structure"));
 
-static cl::opt<unsigned> LSHBands(
-    "hyfm-f3m-bands", cl::init(100), cl::Hidden,
-    cl::desc("Number of bands in the LSH structure"));
+static cl::opt<unsigned>
+    LSHBands("hyfm-f3m-bands", cl::init(100), cl::Hidden,
+             cl::desc("Number of bands in the LSH structure"));
 
 static cl::opt<bool> AdaptiveThreshold(
     "adaptive-threshold", cl::init(false), cl::Hidden,
@@ -197,27 +201,29 @@ static cl::opt<bool> AdaptiveBands(
     "adaptive-bands", cl::init(false), cl::Hidden,
     cl::desc("Adaptively define the LSH geometry based on the application"));
 
-static cl::opt<double> RankingDistance(
-    "ranking-distance", cl::init(1.0), cl::Hidden,
-    cl::desc("Define a threshold to be used"));
+static cl::opt<double>
+    RankingDistance("ranking-distance", cl::init(1.0), cl::Hidden,
+                    cl::desc("Define a threshold to be used"));
 
-static cl::opt<bool> ReportStats(
-    "func-merging-report", cl::init(false), cl::Hidden,
-    cl::desc("Only report the distances and alignment between all allowed function pairs"));
+static cl::opt<bool>
+    ReportStats("func-merging-report", cl::init(false), cl::Hidden,
+                cl::desc("Only report the distances and alignment between all "
+                         "allowed function pairs"));
 
 static cl::opt<bool> Deterministic(
     "func-merging-deterministic", cl::init(true), cl::Hidden,
     cl::desc("Replace all random number generators with deterministic values"));
 
-static cl::opt<unsigned> BucketSizeCap(
-    "bucket-size-cap", cl::init(1000000000), cl::Hidden,
-    cl::desc("Define a threshold to be used"));
+static cl::opt<unsigned>
+    BucketSizeCap("bucket-size-cap", cl::init(1000000000), cl::Hidden,
+                  cl::desc("Define a threshold to be used"));
 
 // Command line option to specify the function to merge. This is
 // mainly used for debugging.
 static cl::opt<std::string> ToMergeFile(
     "func-merging-pairs-file", cl::init(""), cl::value_desc("filename"),
-    cl::desc("File containing the functions and basic blocks to merge"), cl::Hidden);
+    cl::desc("File containing the functions and basic blocks to merge"),
+    cl::Hidden);
 
 static std::string GetValueName(const Value *V);
 
@@ -302,9 +308,11 @@ static bool matchIntrinsicCalls(Intrinsic::ID ID, const CallBase *CI1,
     const auto *AMI1 = cast<AtomicMemIntrinsic>(CI1);
     const auto *AMI2 = cast<AtomicMemIntrinsic>(CI2);
 
-    auto *ElementSizeCI1 = dyn_cast<ConstantInt>(AMI1->getRawElementSizeInBytes());
+    auto *ElementSizeCI1 =
+        dyn_cast<ConstantInt>(AMI1->getRawElementSizeInBytes());
 
-    auto *ElementSizeCI2 = dyn_cast<ConstantInt>(AMI2->getRawElementSizeInBytes());
+    auto *ElementSizeCI2 =
+        dyn_cast<ConstantInt>(AMI2->getRawElementSizeInBytes());
 
     return (ElementSizeCI1 != nullptr && ElementSizeCI1 == ElementSizeCI2);
   }
@@ -326,7 +334,7 @@ static bool matchIntrinsicCalls(Intrinsic::ID ID, const CallBase *CI1,
     // llvm.invariant.end parameter #2 must be a constant integer
     return CI1->getArgOperand(1) == CI2->getArgOperand(1);
   };
-  return false; 
+  return false;
 }
 
 // bool FunctionMerger::matchLandingPad(LandingPadInst *LP1, LandingPadInst
@@ -491,12 +499,11 @@ bool FunctionMerger::matchInstructions(Instruction *I1, Instruction *I2) {
     if (I1->getOperand(i)->getType() != I2->getOperand(i)->getType())
       return false;
 
-
   switch (I1->getOpcode()) {
     // case Instruction::Br: return false; //{ return (I1->getNumOperands()==1);
     // }
 
-    //#define MatchCaseInst(Kind, I1, I2) case Instruction::#Kind
+    // #define MatchCaseInst(Kind, I1, I2) case Instruction::#Kind
 
   case Instruction::Load:
     return matchLoadInsts(dyn_cast<LoadInst>(I1), dyn_cast<LoadInst>(I2));
@@ -600,7 +607,7 @@ bool FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2) {
     if (LP1 == nullptr || LP2 == nullptr)
       return false;
     return matchLandingPad(LP1, LP2);
-  } 
+  }
   return true;
 }
 
@@ -643,8 +650,8 @@ static void vectorizeBB(SmallVectorImpl<Value *> &Vec, BasicBlock *BB) {
 }
 
 bool FunctionMerger::validMergeTypes(Function *F1, Function *F2) {
-  Type* F1Ty = F1->getReturnType();
-  Type* F2Ty = F2->getReturnType();
+  Type *F1Ty = F1->getReturnType();
+  Type *F2Ty = F2->getReturnType();
   if (areTypesEquivalent(F1Ty, F2Ty, DL))
     return true;
 
@@ -652,141 +659,169 @@ bool FunctionMerger::validMergeTypes(Function *F1, Function *F2) {
 }
 
 class Timers {
-  public:
-    enum Name : size_t{
-      codegen_linear = 0,
-      codegen_align,
-      codegen_rank,
-      codegen_param,
-      codegen_gen,
-      codegen_fix,
-      codegen_postopt,
-      codegen_total,
-      preprocess,
-      rank,
-      verify,
-      update,
-      total,
-      SIZE,
-    };
+public:
+  enum Name : size_t {
+    codegen_linear = 0,
+    codegen_align,
+    codegen_rank,
+    codegen_param,
+    codegen_gen,
+    codegen_fix,
+    codegen_postopt,
+    codegen_total,
+    preprocess,
+    rank,
+    verify,
+    update,
+    total,
+    SIZE,
+  };
 
-    Timers() = default;
+  Timers() = default;
 
-    void start(Name Timer) {
-      if (!TimingDebug)
-        return;
-      IterTimers.at(Timer).startTimer();
-      TotalTimers.at(Timer).startTimer();
-    }
+  void start(Name Timer) {
+    if (!TimingDebug)
+      return;
+    IterTimers.at(Timer).startTimer();
+    TotalTimers.at(Timer).startTimer();
+  }
 
-    void stop(Name Timer) {
-      if (!TimingDebug)
-        return;
+  void stop(Name Timer) {
+    if (!TimingDebug)
+      return;
+    IterTimers.at(Timer).stopTimer();
+    TotalTimers.at(Timer).stopTimer();
+  }
+
+  void force_stop(Name Timer) {
+    if (!TimingDebug)
+      return;
+
+    if (IterTimers.at(Timer).isRunning()) {
       IterTimers.at(Timer).stopTimer();
       TotalTimers.at(Timer).stopTimer();
     }
+  }
 
-    void force_stop(Name Timer) {
-      if (!TimingDebug)
-        return;
+  void attemptStart() {
+    if (!TimingDebug)
+      return;
+    IterTimers.at(Name::total).startTimer();
+  }
 
-      if (IterTimers.at(Timer).isRunning()) {
-        IterTimers.at(Timer).stopTimer();
-        TotalTimers.at(Timer).stopTimer();
-      }
+  void attemptEnd(bool printStats) {
+    if (!TimingDebug)
+      return;
+
+    if (IterTimers.at(Name::total).isRunning())
+      IterTimers.at(Name::total).stopTimer();
+
+    if (printStats)
+      errs() << " TotalTime: "
+             << IterTimers[Name::total].getTotalTime().getWallTime() * 1000000
+             << " RankingTime: "
+             << IterTimers[Name::rank].getTotalTime().getWallTime() * 1000000
+             << " AlignTime: "
+             << IterTimers[Name::codegen_align].getTotalTime().getWallTime() *
+                    1000000
+             << " CodegenTime: "
+             << (IterTimers[Name::codegen_total].getTotalTime().getWallTime() -
+                 IterTimers[Name::codegen_align].getTotalTime().getWallTime()) *
+                    1000000
+             << " VerifyTime: "
+             << IterTimers[Name::verify].getTotalTime().getWallTime() * 1000000
+             << " UpdateTime: "
+             << IterTimers[Name::update].getTotalTime().getWallTime() * 1000000
+             << "\n";
+
+    for (auto &timer : IterTimers) {
+      assert(!timer.isRunning());
+      timer.clear();
+    }
+  }
+
+  void mergeStart() {
+    if (!TimingDebug)
+      return;
+
+    IterTimers.clear();
+    TotalTimers.clear();
+    for (size_t i = 0; i < Name::SIZE; ++i) {
+      IterTimers.emplace_back(Descr[i], Descr[i]);
+      TotalTimers.emplace_back(Descr[i], Descr[i]);
     }
 
-    void attemptStart() {
-      if (!TimingDebug)
-        return;
-      IterTimers.at(Name::total).startTimer();
+    TotalTimers.at(Name::total).startTimer();
+  }
+
+  void mergeEnd() {
+    if (!TimingDebug)
+      return;
+
+    if (TotalTimers.at(Name::total).isRunning())
+      TotalTimers.at(Name::total).stopTimer();
+
+    errs() << "Timer:Rank: "
+           << TotalTimers[Name::rank].getTotalTime().getWallTime() << "\n";
+    errs() << "Timer:CodeGen:Total: "
+           << TotalTimers[Name::codegen_total].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:Align: "
+           << TotalTimers[Name::codegen_align].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:Align:Rank: "
+           << TotalTimers[Name::codegen_rank].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:Param: "
+           << TotalTimers[Name::codegen_param].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:Gen: "
+           << TotalTimers[Name::codegen_gen].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:Fix: "
+           << TotalTimers[Name::codegen_fix].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:CodeGen:PostOpt: "
+           << TotalTimers[Name::codegen_postopt].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:Verify: "
+           << TotalTimers[Name::verify].getTotalTime().getWallTime() << "\n";
+    errs() << "Timer:PreProcess: "
+           << TotalTimers[Name::preprocess].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:Lin: "
+           << TotalTimers[Name::codegen_linear].getTotalTime().getWallTime()
+           << "\n";
+    errs() << "Timer:Update: "
+           << TotalTimers[Name::update].getTotalTime().getWallTime() << "\n";
+    errs() << "Timer:Total: "
+           << TotalTimers[Name::total].getTotalTime().getWallTime() << "\n";
+
+    for (auto &timer : TotalTimers) {
+      assert(!timer.isRunning());
+      timer.clear();
     }
 
-    void attemptEnd(bool printStats) {
-      if (!TimingDebug)
-        return;
+    IterTimers.clear();
+    TotalTimers.clear();
+  }
 
-      if (IterTimers.at(Name::total).isRunning())
-        IterTimers.at(Name::total).stopTimer();
-
-      if (printStats)
-        errs() << " TotalTime: " << IterTimers[Name::total].getTotalTime().getWallTime() * 1000000
-               << " RankingTime: " << IterTimers[Name::rank].getTotalTime().getWallTime() * 1000000
-               << " AlignTime: " << IterTimers[Name::codegen_align].getTotalTime().getWallTime() * 1000000
-               << " CodegenTime: " << (IterTimers[Name::codegen_total].getTotalTime().getWallTime() - IterTimers[Name::codegen_align].getTotalTime().getWallTime()) * 1000000
-               << " VerifyTime: " << IterTimers[Name::verify].getTotalTime().getWallTime() * 1000000
-               << " UpdateTime: " << IterTimers[Name::update].getTotalTime().getWallTime() * 1000000
-               << "\n";
-
-      for (auto& timer : IterTimers) {
-        assert(!timer.isRunning());
-        timer.clear();
-      }
-    }
-
-    void mergeStart() {
-      if (!TimingDebug)
-        return;
-
-      IterTimers.clear();
-      TotalTimers.clear();
-      for (size_t i = 0; i < Name::SIZE; ++i) {
-        IterTimers.emplace_back(Descr[i], Descr[i]);
-        TotalTimers.emplace_back(Descr[i], Descr[i]);
-      }
-
-      TotalTimers.at(Name::total).startTimer();
-    }
-
-    void mergeEnd() {
-      if (!TimingDebug)
-        return;
-
-      if (TotalTimers.at(Name::total).isRunning())
-        TotalTimers.at(Name::total).stopTimer();
-
-      errs() << "Timer:Rank: " << TotalTimers[Name::rank].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Total: " << TotalTimers[Name::codegen_total].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Align: " << TotalTimers[Name::codegen_align].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Align:Rank: " << TotalTimers[Name::codegen_rank].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Param: " << TotalTimers[Name::codegen_param].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Gen: " << TotalTimers[Name::codegen_gen].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:Fix: " << TotalTimers[Name::codegen_fix].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:CodeGen:PostOpt: " << TotalTimers[Name::codegen_postopt].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:Verify: " << TotalTimers[Name::verify].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:PreProcess: " << TotalTimers[Name::preprocess].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:Lin: " << TotalTimers[Name::codegen_linear].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:Update: " << TotalTimers[Name::update].getTotalTime().getWallTime() << "\n";
-      errs() << "Timer:Total: " << TotalTimers[Name::total].getTotalTime().getWallTime() << "\n";
-
-      for (auto& timer : TotalTimers) {
-        assert(!timer.isRunning());
-        timer.clear();
-      }
-
-      IterTimers.clear();
-      TotalTimers.clear();
-    }
-
-
-
-  private:
-    std::vector<Timer> IterTimers;
-    std::vector<Timer> TotalTimers;
-    std::array<std::string, Name::SIZE> Descr = {
-      "Merge::CodeGen::Lin",
-      "Merge::CodeGen::Align",
-      "Merge::CodeGen::Align::Rank",
-      "Merge::CodeGen::Param",
-      "Merge::CodeGen::Gen",
-      "Merge::CodeGen::Fix",
-      "Merge::CodeGen::PostOpt",
-      "Merge::CodeGen::Total",
-      "Merge::Preprocess",
-      "Merge::Rank",
-      "Merge::Verify",
-      "Merge::Update",
-      "Merge::Total"};
+private:
+  std::vector<Timer> IterTimers;
+  std::vector<Timer> TotalTimers;
+  std::array<std::string, Name::SIZE> Descr = {"Merge::CodeGen::Lin",
+                                               "Merge::CodeGen::Align",
+                                               "Merge::CodeGen::Align::Rank",
+                                               "Merge::CodeGen::Param",
+                                               "Merge::CodeGen::Gen",
+                                               "Merge::CodeGen::Fix",
+                                               "Merge::CodeGen::PostOpt",
+                                               "Merge::CodeGen::Total",
+                                               "Merge::Preprocess",
+                                               "Merge::Rank",
+                                               "Merge::Verify",
+                                               "Merge::Update",
+                                               "Merge::Total"};
 };
 
 Timers MergeTimers{};
@@ -986,9 +1021,9 @@ static void SetFunctionAttributes(Function *F1, Function *F2,
     }
   } else if (F1->hasPersonalityFn()) {
     if (Verbose)
-    // TODO: check if this is valid: merge function with personality with
-    // function without it
-    MergedFunc->setPersonalityFn(F1->getPersonalityFn());
+      // TODO: check if this is valid: merge function with personality with
+      // function without it
+      MergedFunc->setPersonalityFn(F1->getPersonalityFn());
     if (Verbose)
       errs() << "WARNING: only one personality function!\n";
   } else if (F2->hasPersonalityFn()) {
@@ -1034,7 +1069,6 @@ iterator_range<BasicBlock::iterator> getInstructions(BasicBlock *BB) {
   return make_range(BB->begin(), BB->end());
 }
 
-
 template <class T> class FingerprintMH {
 private:
   // The number of instructions defining a shingle. 2 or 3 is best.
@@ -1051,7 +1085,8 @@ public:
 public:
   FingerprintMH() = default;
 
-  FingerprintMH(T owner, SearchStrategy &searchStrategy) : _footprint(searchStrategy.item_footprint()) {
+  FingerprintMH(T owner, SearchStrategy &searchStrategy)
+      : _footprint(searchStrategy.item_footprint()) {
     std::vector<uint32_t> integers;
     std::array<uint32_t, MaxOpcode> OpcodeFreq;
 
@@ -1065,7 +1100,7 @@ public:
       integers.push_back(instToInt(&I));
       OpcodeFreq[I.getOpcode()]++;
       if (I.isTerminator())
-          OpcodeFreq[0] += I.getNumSuccessors();
+        OpcodeFreq[0] += I.getNumSuccessors();
     }
 
     for (size_t i = 0; i < MaxOpcode; ++i) {
@@ -1106,7 +1141,8 @@ public:
     size_t pos1 = 0;
     size_t pos2 = 0;
     size_t nHashes = hash.size();
-    size_t best_nintersect = static_cast<size_t>(2.0 * nHashes  * (1.f - best_distance) / (2.f - best_distance));
+    size_t best_nintersect = static_cast<size_t>(
+        2.0 * nHashes * (1.f - best_distance) / (2.f - best_distance));
     size_t best_mismatches = 2 * (nHashes - best_nintersect);
 
     while (pos1 != nHashes && pos2 != nHashes) {
@@ -1129,7 +1165,6 @@ public:
     return 1.f - (nintersect / (float)nunion);
   }
 };
-
 
 template <class T> class Fingerprint {
 public:
@@ -1194,7 +1229,6 @@ public:
   bool Valid{false};
   bool Profitable{false};
 
-
   MatchInfo() = default;
   MatchInfo(T candidate) : candidate(candidate) {};
   MatchInfo(T candidate, size_t Size) : candidate(candidate), Size(Size) {};
@@ -1213,23 +1247,26 @@ public:
   virtual void print_stats() = 0;
 };
 
-template <class T, template<typename> class FPTy = Fingerprint> class MatcherManual : public Matcher<T>{
+template <class T, template <typename> class FPTy = Fingerprint>
+class MatcherManual : public Matcher<T> {
 private:
   struct MatcherEntry {
     T candidate;
     size_t size;
     FPTy<T> FP;
-    MatcherEntry() : MatcherEntry(nullptr, 0){};
+    MatcherEntry() : MatcherEntry(nullptr, 0) {};
 
-    template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
-    MatcherEntry(T candidate, size_t size, 
-    typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
-        : candidate(candidate), size(size), FP(candidate){}
-    
+    template <typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+    MatcherEntry(
+        T candidate, size_t size,
+        typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate) {}
+
     template <typename T1 = FPTy<T>, typename T2 = FingerprintMH<T>>
-    MatcherEntry(T candidate, size_t size, SearchStrategy &strategy,
-    typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
-        : candidate(candidate), size(size), FP(candidate, strategy){}
+    MatcherEntry(
+        T candidate, size_t size, SearchStrategy &strategy,
+        typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate, strategy) {}
   };
   using MatcherIt = typename std::list<MatcherEntry>::iterator;
 
@@ -1243,13 +1280,13 @@ public:
   MatcherManual() = default;
   MatcherManual(FunctionMerger &FM, std::string Filename)
       : FM(FM), match_handle{candidates.end()} {
-        std::ifstream File{Filename};
-        std::string FuncName1, FuncName2;
-        while (File >> FuncName1 >> FuncName2) {
-          matchNames[FuncName1] = FuncName2;
-          matchNames[FuncName2] = FuncName1;
-        }
-      }
+    std::ifstream File{Filename};
+    std::string FuncName1, FuncName2;
+    while (File >> FuncName1 >> FuncName2) {
+      matchNames[FuncName1] = FuncName2;
+      matchNames[FuncName2] = FuncName1;
+    }
+  }
 
   virtual ~MatcherManual() = default;
 
@@ -1259,11 +1296,11 @@ public:
     add_candidate_helper(candidate, size);
   }
 
-  template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
-  void add_candidate_helper(T candidate, size_t size, 
-  typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
-  {
-      candidates.emplace_front(candidate, size);
+  template <typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+  void add_candidate_helper(
+      T candidate, size_t size,
+      typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr) {
+    candidates.emplace_front(candidate, size);
   }
 
   void remove_candidate(T candidate) override {
@@ -1300,11 +1337,13 @@ public:
     best_match.OtherMagnitude = it->FP.magnitude;
     best_match.Distance = std::numeric_limits<float>::max();
 
-    for (auto entry = std::next(candidates.begin()); entry != candidates.end(); ++entry) {
+    for (auto entry = std::next(candidates.begin()); entry != candidates.end();
+         ++entry) {
       if (!FM.validMergeTypes(it->candidate, entry->candidate) ||
           !validMergePair(it->candidate, entry->candidate))
         continue;
-      if (matchNames[GetValueName(it->candidate)] == GetValueName(entry->candidate)) {
+      if (matchNames[GetValueName(it->candidate)] ==
+          GetValueName(entry->candidate)) {
         best_match.candidate = entry->candidate;
         best_match.Size = entry->size;
         best_match.Magnitude = entry->FP.magnitude;
@@ -1325,7 +1364,8 @@ public:
     float MaxDistance = 0;
 
     int Index1 = 0;
-    for (auto It1 = candidates.begin(), E1 = candidates.end(); It1!=E1; It1++) {
+    for (auto It1 = candidates.begin(), E1 = candidates.end(); It1 != E1;
+         It1++) {
 
       int BestIndex = 0;
       bool FoundCandidate = false;
@@ -1354,8 +1394,10 @@ public:
       if (FoundCandidate) {
         int Distance = std::abs(Index1 - BestIndex);
         Sum += Distance;
-        if (Distance > MaxDistance) MaxDistance = Distance;
-        if (Distance < MinDistance) MinDistance = Distance;
+        if (Distance > MaxDistance)
+          MaxDistance = Distance;
+        if (Distance < MinDistance)
+          MinDistance = Distance;
         Count++;
       }
       Index1++;
@@ -1363,27 +1405,30 @@ public:
     errs() << "Total: " << Count << "\n";
     errs() << "Min Distance: " << MinDistance << "\n";
     errs() << "Max Distance: " << MaxDistance << "\n";
-    errs() << "Average Distance: " << (((double)Sum)/((double)Count)) << "\n";
+    errs() << "Average Distance: " << (((double)Sum) / ((double)Count)) << "\n";
   }
 };
 
-template <class T, template<typename> class FPTy = Fingerprint> class MatcherFQ : public Matcher<T>{
+template <class T, template <typename> class FPTy = Fingerprint>
+class MatcherFQ : public Matcher<T> {
 private:
   struct MatcherEntry {
     T candidate;
     size_t size;
     FPTy<T> FP;
-    MatcherEntry() : MatcherEntry(nullptr, 0){};
+    MatcherEntry() : MatcherEntry(nullptr, 0) {};
 
-    template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
-    MatcherEntry(T candidate, size_t size, 
-    typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
-        : candidate(candidate), size(size), FP(candidate){}
-    
+    template <typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+    MatcherEntry(
+        T candidate, size_t size,
+        typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate) {}
+
     template <typename T1 = FPTy<T>, typename T2 = FingerprintMH<T>>
-    MatcherEntry(T candidate, size_t size, SearchStrategy &strategy,
-    typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
-        : candidate(candidate), size(size), FP(candidate, strategy){}
+    MatcherEntry(
+        T candidate, size_t size, SearchStrategy &strategy,
+        typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr)
+        : candidate(candidate), size(size), FP(candidate, strategy) {}
   };
   using MatcherIt = typename std::list<MatcherEntry>::iterator;
 
@@ -1395,8 +1440,8 @@ private:
 
 public:
   MatcherFQ() = default;
-  MatcherFQ(FunctionMerger &FM, size_t rows=2, size_t bands=100)
-      : FM(FM), strategy(rows, bands){};
+  MatcherFQ(FunctionMerger &FM, size_t rows = 2, size_t bands = 100)
+      : FM(FM), strategy(rows, bands) {};
 
   virtual ~MatcherFQ() = default;
 
@@ -1404,18 +1449,19 @@ public:
     add_candidate_helper(candidate, size);
   }
 
-  template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
-  void add_candidate_helper(T candidate, size_t size, 
-  typename std::enable_if_t<std::is_same<T1,T2>::value, int> * = nullptr)
-  {
-      candidates.emplace_front(candidate, size);
+  template <typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+  void add_candidate_helper(
+      T candidate, size_t size,
+      typename std::enable_if_t<std::is_same<T1, T2>::value, int> * = nullptr) {
+    candidates.emplace_front(candidate, size);
   }
 
-  template<typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
-  void add_candidate_helper(T candidate, size_t size, 
-  typename std::enable_if_t<!std::is_same<T1,T2>::value, int> * = nullptr)
-  {
-      candidates.emplace_front(candidate, size, strategy);
+  template <typename T1 = FPTy<T>, typename T2 = Fingerprint<T>>
+  void add_candidate_helper(
+      T candidate, size_t size,
+      typename std::enable_if_t<!std::is_same<T1, T2>::value, int> * =
+          nullptr) {
+    candidates.emplace_front(candidate, size, strategy);
   }
 
   void remove_candidate(T candidate) override {
@@ -1452,7 +1498,8 @@ public:
     best_match.OtherMagnitude = it->FP.magnitude;
     best_match.Distance = std::numeric_limits<float>::max();
 
-    for (auto entry = std::next(candidates.begin()); entry != candidates.end(); ++entry) {
+    for (auto entry = std::next(candidates.begin()); entry != candidates.end();
+         ++entry) {
       if (!FM.validMergeTypes(it->candidate, entry->candidate) ||
           !validMergePair(it->candidate, entry->candidate))
         continue;
@@ -1484,7 +1531,8 @@ public:
     float MaxDistance = 0;
 
     int Index1 = 0;
-    for (auto It1 = candidates.begin(), E1 = candidates.end(); It1!=E1; It1++) {
+    for (auto It1 = candidates.begin(), E1 = candidates.end(); It1 != E1;
+         It1++) {
 
       int BestIndex = 0;
       bool FoundCandidate = false;
@@ -1513,8 +1561,10 @@ public:
       if (FoundCandidate) {
         int Distance = std::abs(Index1 - BestIndex);
         Sum += Distance;
-        if (Distance > MaxDistance) MaxDistance = Distance;
-        if (Distance < MinDistance) MinDistance = Distance;
+        if (Distance > MaxDistance)
+          MaxDistance = Distance;
+        if (Distance < MinDistance)
+          MinDistance = Distance;
         Count++;
       }
       Index1++;
@@ -1522,7 +1572,7 @@ public:
     errs() << "Total: " << Count << "\n";
     errs() << "Min Distance: " << MinDistance << "\n";
     errs() << "Max Distance: " << MaxDistance << "\n";
-    errs() << "Average Distance: " << (((double)Sum)/((double)Count)) << "\n";
+    errs() << "Average Distance: " << (((double)Sum) / ((double)Count)) << "\n";
   }
 };
 
@@ -1532,10 +1582,9 @@ private:
     T candidate;
     size_t size;
     FingerprintMH<T> FP;
-    MatcherEntry() : MatcherEntry(nullptr, 0){};
+    MatcherEntry() : MatcherEntry(nullptr, 0) {};
     MatcherEntry(T candidate, size_t size, SearchStrategy &strategy)
-        : candidate(candidate), size(size),
-        FP(candidate, strategy){};
+        : candidate(candidate), size(size), FP(candidate, strategy) {};
   };
   using MatcherIt = typename std::list<MatcherEntry>::iterator;
 
@@ -1552,7 +1601,8 @@ private:
 public:
   MatcherLSH() = default;
   MatcherLSH(FunctionMerger &FM, size_t rows, size_t bands)
-      : rows(rows), bands(bands), FM(FM), strategy(rows, bands), match_handle(candidates.end()) {};
+      : rows(rows), bands(bands), FM(FM), strategy(rows, bands),
+        match_handle(candidates.end()) {};
 
   virtual ~MatcherLSH() = default;
 
@@ -1634,20 +1684,22 @@ public:
 
         MatchInfo<T> new_match(match_it->candidate, match_it->size);
         if (best_match.Distance < 0.1)
-          new_match.Distance = FP.distance_under(match_it->FP, best_match.Distance);
+          new_match.Distance =
+              FP.distance_under(match_it->FP, best_match.Distance);
         else
           new_match.Distance = FP.distance(match_it->FP);
         new_match.OtherSize = it->size;
         new_match.OtherMagnitude = FP.magnitude;
         new_match.Magnitude = match_it->FP.magnitude;
-        if (new_match.Distance < best_match.Distance && new_match.Distance < RankingDistance ) {
+        if (new_match.Distance < best_match.Distance &&
+            new_match.Distance < RankingDistance) {
           best_match = new_match;
           match_handle = match_it;
         }
       }
       // If we've gone through i = 0 without finding a distance of 0.0
       // the minimum distance we might ever find is 2.0 / (nHashes + 1)
-      if (best_match.Distance < (2.0 / (rows * bands) ))
+      if (best_match.Distance < (2.0 / (rows * bands)))
         break;
     }
     return best_match;
@@ -1665,10 +1717,10 @@ public:
     }
 
     for (size_t i = 0; i < 20; i++)
-      errs() << "STATS: Histogram Bucket Size " << (1 << i) << " : " << hist_bucket_size[i] << "\n";
+      errs() << "STATS: Histogram Bucket Size " << (1 << i) << " : "
+             << hist_bucket_size[i] << "\n";
   }
 };
-
 
 template <class T> class MatcherReport {
 private:
@@ -1677,7 +1729,7 @@ private:
     Fingerprint<T> FPF;
     FingerprintMH<T> FPMH;
     MatcherEntry(T candidate, SearchStrategy &strategy)
-        : candidate(candidate), FPF(candidate), FPMH(candidate, strategy){};
+        : candidate(candidate), FPF(candidate), FPMH(candidate, strategy) {};
   };
   using MatcherIt = typename std::list<MatcherEntry>::iterator;
 
@@ -1699,9 +1751,9 @@ public:
   void report() const {
     char distance_mh_str[20];
 
-    for (auto &entry: candidates) {
+    for (auto &entry : candidates) {
       uint64_t val = 0;
-      for (auto &num: entry.FPF.OpcodeFreq)
+      for (auto &num : entry.FPF.OpcodeFreq)
         val += num;
       errs() << "Function Name: " << GetValueName(entry.candidate)
              << " Fingerprint Size: " << val << "\n";
@@ -1721,7 +1773,8 @@ public:
                << "F2: " << it2 - candidates.cbegin() << " "
                << "FQ: " << static_cast<int>(distance_fq) << " "
                << "MH: " << distance_mh_str << "\n";
-        FunctionMergeResult Result = FM.merge(it1->candidate, it2->candidate, Name);
+        FunctionMergeResult Result =
+            FM.merge(it1->candidate, it2->candidate, Name);
       }
     }
   }
@@ -1778,50 +1831,50 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
     It1++;
     It2++;
   }
-  assert ((It1 == BB1->end()) && (It2 == BB2->end()));
+  assert((It1 == BB1->end()) && (It2 == BB2->end()));
 }
 
 bool AlignedCode::isProfitable() const {
-    int OriginalCost = 0;
-    int MergedCost = 0;
+  int OriginalCost = 0;
+  int MergedCost = 0;
 
-    bool InsideSplit = false;
+  bool InsideSplit = false;
 
-    for (auto &Entry : Data) {
-      Instruction *I1 = nullptr;
-      if (Entry.get(0))
-        I1 = dyn_cast<Instruction>(Entry.get(0));
+  for (auto &Entry : Data) {
+    Instruction *I1 = nullptr;
+    if (Entry.get(0))
+      I1 = dyn_cast<Instruction>(Entry.get(0));
 
-      Instruction *I2 = nullptr;
-      if (Entry.get(1))
-        I2 = dyn_cast<Instruction>(Entry.get(1));
+    Instruction *I2 = nullptr;
+    if (Entry.get(1))
+      I2 = dyn_cast<Instruction>(Entry.get(1));
 
-      bool IsInstruction = I1 != nullptr || I2 != nullptr;
-      if (Entry.match()) {
-        if (IsInstruction) {
-          OriginalCost += 2;
-          MergedCost += 1;
-        }
-        if (InsideSplit) {
-          InsideSplit = false;
-          MergedCost += 2;
-        }
-      } else {
-        if (IsInstruction) {
-          OriginalCost += 1;
-          MergedCost += 1;
-        }
-        if (!InsideSplit) {
-          InsideSplit = true;
-          MergedCost += 1;
-        }
+    bool IsInstruction = I1 != nullptr || I2 != nullptr;
+    if (Entry.match()) {
+      if (IsInstruction) {
+        OriginalCost += 2;
+        MergedCost += 1;
+      }
+      if (InsideSplit) {
+        InsideSplit = false;
+        MergedCost += 2;
+      }
+    } else {
+      if (IsInstruction) {
+        OriginalCost += 1;
+        MergedCost += 1;
+      }
+      if (!InsideSplit) {
+        InsideSplit = true;
+        MergedCost += 1;
       }
     }
+  }
 
-    bool Profitable = (MergedCost <= OriginalCost);
-    if (Verbose)
-      errs() << ((Profitable) ? "Profitable" : "Unprofitable") << "\n";
-    return Profitable;
+  bool Profitable = (MergedCost <= OriginalCost);
+  if (Verbose)
+    errs() << ((Profitable) ? "Profitable" : "Unprofitable") << "\n";
+  return Profitable;
 }
 
 void AlignedCode::extend(const AlignedCode &Other) {
@@ -1888,7 +1941,8 @@ void AlignedCode::dump() const {
 std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
 
   AlignedCode AlignedSeq;
-  NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2), FunctionMerger::match);
+  NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2),
+                                                 FunctionMerger::match);
 
   // Old alignment options are removed
   // Can now be only NW or PA
@@ -1920,10 +1974,10 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
     auto ItSetDecr = std::reverse_iterator(ItSetIncr);
     std::vector<decltype(ItSetIncr)> ItSets;
 
-    if (EnableNW) { 
+    if (EnableNW) {
       while (ItSetDecr != Blocks.rend() && ItSetIncr != Blocks.end()) {
-        if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size){
-          ItSets.push_back(std::prev(ItSetDecr.base())); 
+        if (BD2.Size - ItSetDecr->first < ItSetIncr->first - BD2.Size) {
+          ItSets.push_back(std::prev(ItSetDecr.base()));
           ItSetDecr++;
         } else {
           ItSets.push_back(ItSetIncr);
@@ -1932,7 +1986,7 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
       }
 
       while (ItSetDecr != Blocks.rend()) {
-        ItSets.push_back(std::prev(ItSetDecr.base())); 
+        ItSets.push_back(std::prev(ItSetDecr.base()));
         ItSetDecr++;
       }
 
@@ -1952,7 +2006,8 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
     float BestDist = std::numeric_limits<float>::max();
 
     for (auto ItSet : ItSets) {
-      for (auto BDIt = ItSet->second.begin(), E = ItSet->second.end(); BDIt != E; BDIt++) {
+      for (auto BDIt = ItSet->second.begin(), E = ItSet->second.end();
+           BDIt != E; BDIt++) {
         auto D = BD2.distance(*BDIt);
         if (D < BestDist) {
           BestDist = D;
@@ -2039,24 +2094,24 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
         // Always inside a basic block
         assert(CurrBB0 != nullptr);
         assert(CurrBB1 != nullptr);
-      } 
+      }
     }
 
-    errs() << "Matches: " << NumMatches << ", " << TotalEntries << ", " << ( (double) NumMatches/ (double) TotalEntries) << "\n";
+    errs() << "Matches: " << NumMatches << ", " << TotalEntries << ", "
+           << ((double)NumMatches / (double)TotalEntries) << "\n";
   }
 
   if (Debug)
     AlignedSeq.dump();
-  
+
   if (ReportStats)
     return {};
 
   return AlignedSeq;
 }
 
-
-FunctionMergeResult
-FunctionMerger::merge(Function *F1, Function *F2, std::string Name) {
+FunctionMergeResult FunctionMerger::merge(Function *F1, Function *F2,
+                                          std::string Name) {
   LLVMContext &Context = *ContextPtr;
   FunctionMergeResult ErrorResponse(F1, F2, nullptr);
 
@@ -2077,7 +2132,8 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name) {
   std::map<unsigned, unsigned> ParamMap2;
   std::vector<Type *> Args;
 
-  MergeArguments(Context, F1, F2, AlignedSeq.value(), ParamMap1, ParamMap2, Args);
+  MergeArguments(Context, F1, F2, AlignedSeq.value(), ParamMap1, ParamMap2,
+                 Args);
 
   Type *RetType1 = F1->getReturnType();
   Type *RetType2 = F2->getReturnType();
@@ -2110,7 +2166,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name) {
     ArgsList.push_back(&arg);
   }
   Value *FuncId = ArgsList[0];
-  
+
   int ArgId = 0;
   for (auto I = F1->arg_begin(), E = F1->arg_end(); I != E; I++) {
     VMap[&(*I)] = ArgsList[ParamMap1[ArgId]];
@@ -2124,7 +2180,7 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name) {
 
     ArgId++;
   }
-  
+
   MergeTimers.stop(Timers::Name::codegen_param);
 
   SetFunctionAttributes(F1, F2, MergedFunc);
@@ -2146,7 +2202,8 @@ FunctionMerger::merge(Function *F1, Function *F2, std::string Name) {
       if (Verbose)
         errs() << "ERROR: Failed to generate the merged function!\n";
 
-      // We might have reached here with the timers still running if generate() returned early
+      // We might have reached here with the timers still running if generate()
+      // returned early
       MergeTimers.force_stop(Timers::Name::codegen_gen);
       MergeTimers.force_stop(Timers::Name::codegen_fix);
     }
@@ -2369,13 +2426,13 @@ static size_t EstimateFunctionSize(Function *F, TargetTransformInfo *TTI) {
     //  size += 1.2;
     //  break;
     default:
-      auto cost = TTI->getInstructionCost(&I, TargetTransformInfo::TargetCostKind::TCK_CodeSize);
+      auto cost = TTI->getInstructionCost(
+          &I, TargetTransformInfo::TargetCostKind::TCK_CodeSize);
       size += cost.getValue().value();
     }
   }
   return size_t(std::ceil(size));
 }
-
 
 unsigned instToInt(Instruction *I) {
   uint32_t value = 0;
@@ -2408,7 +2465,8 @@ unsigned instToInt(Instruction *I) {
   }
 
   for (size_t i = 0; i < I->getNumOperands(); i++) {
-    auto operTypeID = static_cast<uint32_t>(I->getOperand(i)->getType()->getTypeID());
+    auto operTypeID =
+        static_cast<uint32_t>(I->getOperand(i)->getType()->getTypeID());
     value = value * (operTypeID + 1);
 
     auto *IOperTypePtr = I->getOperand(i)->getType();
@@ -2430,7 +2488,7 @@ unsigned instToInt(Instruction *I) {
 
     const LoadInst *LI = dyn_cast<LoadInst>(I);
     uint32_t lValue = LI->isVolatile() ? 1 : 10;        // Volatility
-    lValue += LI->getAlign().value();                       // Alignment
+    lValue += LI->getAlign().value();                   // Alignment
     lValue += static_cast<unsigned>(LI->getOrdering()); // Ordering
 
     value = value * lValue;
@@ -2442,7 +2500,7 @@ unsigned instToInt(Instruction *I) {
 
     const StoreInst *SI = dyn_cast<StoreInst>(I);
     uint32_t sValue = SI->isVolatile() ? 2 : 20;        // Volatility
-    sValue += SI->getAlign().value();                       // Alignment
+    sValue += SI->getAlign().value();                   // Alignment
     sValue += static_cast<unsigned>(SI->getOrdering()); // Ordering
 
     value = value * sValue;
@@ -2496,8 +2554,9 @@ unsigned instToInt(Instruction *I) {
           if (Deterministic)
             value = pseudorand_value++;
           else
-            value = std::rand() % 10000 + 100; // Use a random number as we don't
-                                               // want this to match with anything
+            value =
+                std::rand() % 10000 + 100; // Use a random number as we don't
+                                           // want this to match with anything
           break;
         }
 
@@ -2720,9 +2779,9 @@ bool ignoreFunction(Function &F) {
   return false;
 }
 
-bool isMergeable(Function& F) {
+bool isMergeable(Function &F) {
   if (F.isDeclaration())
-    return false; 
+    return false;
   if (F.isVarArg())
     return false;
   if (!HasWholeProgram && F.hasAvailableExternallyLinkage())
@@ -2744,7 +2803,7 @@ bool FunctionMerging::runImpl(
     FunctionMerger FM(&M);
     MatcherReport<Function *> reporter(LSHRows, LSHBands, FM);
 
-    for (auto &F : M) 
+    for (auto &F : M)
       if (isMergeable(F))
         reporter.add_candidate(&F);
 
@@ -2761,27 +2820,27 @@ bool FunctionMerging::runImpl(
   {
     // Check whether to use a linear scan instead
     int size = 0;
-    for (auto &F : M) 
+    for (auto &F : M)
       if (isMergeable(F))
         size++;
 
     // Create a threshold based on the application's size
-    if (AdaptiveThreshold || AdaptiveBands)
-    {
+    if (AdaptiveThreshold || AdaptiveBands) {
       double x = std::log10(size) / 10;
-      RankingDistance = (double) (x - 0.3);
+      RankingDistance = (double)(x - 0.3);
       if (RankingDistance < 0.05)
         RankingDistance = 0.05;
       if (RankingDistance > 0.4)
         RankingDistance = 0.4;
-    
+
       if (AdaptiveBands) {
         float target_probability = 0.9;
         float offset = 0.1;
-        unsigned tempBands = std::ceil(std::log(1.0 - target_probability) / std::log(1.0 - std::pow(RankingDistance + offset, LSHRows)));
+        unsigned tempBands = std::ceil(
+            std::log(1.0 - target_probability) /
+            std::log(1.0 - std::pow(RankingDistance + offset, LSHRows)));
         if (tempBands < LSHBands)
           LSHBands = tempBands;
-
       }
       if (AdaptiveThreshold)
         RankingDistance = 1 - RankingDistance;
@@ -2809,9 +2868,9 @@ bool FunctionMerging::runImpl(
     if (Verbose)
       errs() << "LIN SCAN FP\n";
   }
-  
+
   SearchStrategy strategy(LSHRows, LSHBands);
-  for (auto &F : M) 
+  for (auto &F : M)
     if (isMergeable(F))
       matcher->add_candidate(&F, EstimateFunctionSize(&F, GTTI(F)));
 
@@ -2856,7 +2915,8 @@ bool FunctionMerging::runImpl(
     }
 
     if (Verbose)
-      errs() << "Attempting: " << F1Name << ", " << F2Name << " : " << match.Distance << "\n";
+      errs() << "Attempting: " << F1Name << ", " << F2Name << " : "
+             << match.Distance << "\n";
 
     std::string Name = "_m_f_" + std::to_string(TotalMerges);
     FunctionMergeResult Result = FM.merge(F1, F2, Name);
@@ -2881,7 +2941,8 @@ bool FunctionMerging::runImpl(
       if (!match.Valid) {
         Result.getMergedFunction()->eraseFromParent();
       } else {
-        size_t MergedSize = EstimateFunctionSize(Result.getMergedFunction(), GTTI(*Result.getMergedFunction()));
+        size_t MergedSize = EstimateFunctionSize(
+            Result.getMergedFunction(), GTTI(*Result.getMergedFunction()));
         size_t Overhead = EstimateThunkOverhead(Result, AlwaysPreserved);
 
         size_t SizeF12 = MergedSize + Overhead;
@@ -2900,7 +2961,8 @@ bool FunctionMerging::runImpl(
             // feed new function back into the working lists
             matcher->add_candidate(
                 Result.getMergedFunction(),
-                EstimateFunctionSize(Result.getMergedFunction(), GTTI(*Result.getMergedFunction())));
+                EstimateFunctionSize(Result.getMergedFunction(),
+                                     GTTI(*Result.getMergedFunction())));
           }
         } else {
           Result.getMergedFunction()->eraseFromParent();
@@ -2912,8 +2974,8 @@ bool FunctionMerging::runImpl(
 
     if (Verbose) {
       errs() << F1Name << " + " << F2Name << " <= " << Name
-             << " Valid: " << match.Valid
-             << " BinSizes: " << match.OtherSize << " + " << match.Size << " <= " << match.MergedSize
+             << " Valid: " << match.Valid << " BinSizes: " << match.OtherSize
+             << " + " << match.Size << " <= " << match.MergedSize
              << " IRSizes: " << match.OtherMagnitude << " + " << match.Magnitude
              << " Profitable: " << match.Profitable
              << " Distance: " << match.Distance;
@@ -2960,13 +3022,13 @@ template <typename BlockListType>
 static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
                     BasicBlock *EntryBB1, BasicBlock *EntryBB2,
                     Function *MergedFunc, Value *IsFunc1, BasicBlock *PreBB,
-                    AlignedCode &AlignedSeq,
-                    ValueToValueMapTy &VMap,
+                    AlignedCode &AlignedSeq, ValueToValueMapTy &VMap,
                     std::unordered_map<BasicBlock *, BasicBlock *> &BlocksF1,
                     std::unordered_map<BasicBlock *, BasicBlock *> &BlocksF2,
                     std::unordered_map<Value *, BasicBlock *> &MaterialNodes) {
 
-  auto CloneInst = [](IRBuilder<> &Builder, Function *MF, Instruction *I) -> Instruction * {
+  auto CloneInst = [](IRBuilder<> &Builder, Function *MF,
+                      Instruction *I) -> Instruction * {
     Instruction *NewI = nullptr;
     if (I->getOpcode() == Instruction::Ret) {
       if (MF->getReturnType()->isVoidTy()) {
@@ -2995,8 +3057,8 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
       NewI->setMetadata(MDPair.first, nullptr);
     }
 
-    if (auto* GEP = dyn_cast<GetElementPtrInst>(I)) {
-     dyn_cast<GetElementPtrInst>(NewI)->setIsInBounds(GEP->isInBounds());
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      dyn_cast<GetElementPtrInst>(NewI)->setIsInBounds(GEP->isInBounds());
     }
 
     /*
@@ -3167,14 +3229,12 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
       };
 
   auto ProcessEachFunction_NonSeq =
-      [&](int FuncIdx, 
-          std::unordered_map<BasicBlock *, BasicBlock *> &BlocksFX,
+      [&](int FuncIdx, std::unordered_map<BasicBlock *, BasicBlock *> &BlocksFX,
           Value *IsFunc1) {
-
         BasicBlock *LastMergedBB = nullptr;
         BasicBlock *NewBB = nullptr;
 
-        for (auto &Entry: AlignedSeq) {
+        for (auto &Entry : AlignedSeq) {
           Value *V = Entry.get(FuncIdx);
           if (V == nullptr)
             continue;
@@ -3269,8 +3329,8 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
   }
 }
 
-bool FunctionMerger::SALSSACodeGen::generate(
-    AlignedCode &AlignedSeq, ValueToValueMapTy &VMap) {
+bool FunctionMerger::SALSSACodeGen::generate(AlignedCode &AlignedSeq,
+                                             ValueToValueMapTy &VMap) {
 
   MergeTimers.start(Timers::Name::codegen_gen);
 
@@ -3327,7 +3387,8 @@ bool FunctionMerger::SALSSACodeGen::generate(
       if (I1->getOpcode() == Instruction::Ret) {
         I = (I1->getNumOperands() >= I2->getNumOperands()) ? I1 : I2;
       } else {
-        assert(I1->getNumOperands() == I2->getNumOperands() && "Num of Operands SHOULD be EQUAL\n");
+        assert(I1->getNumOperands() == I2->getNumOperands() &&
+               "Num of Operands SHOULD be EQUAL\n");
       }
 
       auto *NewI = dyn_cast<Instruction>(VMap[I]);
@@ -3454,7 +3515,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
             Instruction *NewLP = LP->clone();
             BuilderBB.Insert(NewLP);
             VMap[LP] = NewLP;
-            BlocksReMap[LPadBB] = I->getParent(); //FXBB;
+            BlocksReMap[LPadBB] = I->getParent(); // FXBB;
 
             BuilderBB.CreateBr(dyn_cast<BasicBlock>(V));
 
@@ -3491,12 +3552,15 @@ bool FunctionMerger::SALSSACodeGen::generate(
     if (V1 == V2)
       return V1;
 
-    if (V1 == ConstantInt::getTrue(Context) && V2 == ConstantInt::getFalse(Context))
+    if (V1 == ConstantInt::getTrue(Context) &&
+        V2 == ConstantInt::getFalse(Context))
       return IsFunc1;
 
-    if (V1 == ConstantInt::getFalse(Context) && V2 == ConstantInt::getTrue(Context)) {
+    if (V1 == ConstantInt::getFalse(Context) &&
+        V2 == ConstantInt::getTrue(Context)) {
       IRBuilder<> Builder(InsertPt);
-      /// TODO: create a single not(IsFunc1) for each merged function that needs it
+      /// TODO: create a single not(IsFunc1) for each merged function that needs
+      /// it
       return Builder.CreateNot(IsFunc1);
     }
 
@@ -3730,7 +3794,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
 
   // Collect candidate pairs of PHI Nodes
   SmallSet<std::pair<PHINode *, PHINode *>, 16> CandPHI;
-  for (Instruction *I: ListSelects) {
+  for (Instruction *I : ListSelects) {
     SelectInst *SI = dyn_cast<SelectInst>(I);
     assert(SI != nullptr);
 
@@ -3750,7 +3814,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
   SmallSet<PHINode *, 8> RemovedPHIs;
   for (auto [PT, PF] : CandPHI) {
     if ((RemovedPHIs.count(PT) > 0) || (RemovedPHIs.count(PF) > 0))
-	  continue;
+      continue;
     // Merge PT and PF if:
     // 1) their defined incoming values do not overlap
     // 2) their uses are only select statements on IsFunc1
@@ -3776,7 +3840,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
         }
       }
       Value *VF = PF->getIncomingValueForBlock(PredBB);
-      if(dyn_cast<UndefValue>(VF) != nullptr)
+      if (dyn_cast<UndefValue>(VF) != nullptr)
         continue;
 
       // If the two incoming values are the same, then we can merge them
@@ -3790,7 +3854,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
       continue;
 
     // Are PHIs only used together in select statements?
-    for (auto *UI: PT->users()) {
+    for (auto *UI : PT->users()) {
       SelectInst *SI = dyn_cast<SelectInst>(UI);
       if (SI == nullptr) {
         valid = false;
@@ -3828,7 +3892,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
     RemovedPHIs.insert(PF);
 
     // Replace all uses of the select statements with PT
-    for (SelectInst *SI: CandSel) {
+    for (SelectInst *SI : CandSel) {
       SI->replaceAllUsesWith(PT);
       SI->eraseFromParent();
     }
@@ -3847,7 +3911,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
         if (BB == nullptr) {
           if (Verbose)
             errs() << "ERROR: Null incoming block\n";
-            return false;
+          return false;
         }
 
         Value *V = PHI->getIncomingValue(i);
@@ -3957,7 +4021,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
       }
       if (isa<PHINode>(InsertPt) || isa<LandingPadInst>(InsertPt)) {
         Builder.SetInsertPoint(&*IV->getParent()->getFirstInsertionPt());
-        //Builder.SetInsertPoint(IV->getParent()->getTerminator());
+        // Builder.SetInsertPoint(IV->getParent()->getTerminator());
       } else
         Builder.SetInsertPoint(InsertPt);
 
@@ -3981,10 +4045,12 @@ bool FunctionMerger::SALSSACodeGen::generate(
 
         if (auto *PHI = dyn_cast<PHINode>(User)) {
           /// TODO: make sure getOperandNo is getting the correct incoming edge
-          auto InsertionPt = PHI->getIncomingBlock(UI.getOperandNo())->getTerminator();
+          auto InsertionPt =
+              PHI->getIncomingBlock(UI.getOperandNo())->getTerminator();
           /// TODO: If the terminator of the incoming block is the producer of
-          //        the value we want to store, the load cannot be inserted between
-          //        the producer and the user. Something more complex is needed.
+          //        the value we want to store, the load cannot be inserted
+          //        between the producer and the user. Something more complex is
+          //        needed.
           if (InsertionPt == I)
             continue;
           IRBuilder<> Builder(InsertionPt);
@@ -4109,7 +4175,7 @@ bool FunctionMerger::SALSSACodeGen::generate(
     DominatorTree DT(*MergedFunc);
     PromoteMemToReg(Allocas, DT, nullptr);
 
-    if (Debug) 
+    if (Debug)
       errs() << "Mem2Reg:\n";
 
     if (verifyFunction(*MergedFunc)) {
