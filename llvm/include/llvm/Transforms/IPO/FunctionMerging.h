@@ -68,19 +68,6 @@
 
 namespace llvm {
 
-/// A set of parameters used to control the transforms by MergeFunctions.
-struct FunctionMergingOptions {
-  bool IdenticalTypesOnly;
-
-  FunctionMergingOptions(bool IdenticalTypesOnly = true)
-      : IdenticalTypesOnly(IdenticalTypesOnly) {}
-
-  FunctionMergingOptions &matchOnlyIdenticalTypes(bool IT) {
-    IdenticalTypesOnly = IT;
-    return *this;
-  }
-};
-
 class AlignedCode : public AlignedSequence<Value *> {
   public:
     int Insts{0};
@@ -117,6 +104,8 @@ class AlignedCode : public AlignedSequence<Value *> {
 
     bool hasMatches() const {return (Matches == Insts) || (CoreMatches > 0);};
     bool isProfitable() const;
+
+    void dump() const;
 };
 
 class FunctionMergeResult {
@@ -125,19 +114,15 @@ private:
   Function *F2;
   Function *MergedFunction;
   bool HasIdArg;
-  bool NeedUnifiedReturn;
   std::map<unsigned, unsigned> ParamMap1;
   std::map<unsigned, unsigned> ParamMap2;
 
   FunctionMergeResult()
-      : F1(nullptr), F2(nullptr), MergedFunction(nullptr), HasIdArg(false),
-        NeedUnifiedReturn(false) {}
+      : F1(nullptr), F2(nullptr), MergedFunction(nullptr), HasIdArg(false) {}
 
 public:
-  FunctionMergeResult(Function *F1, Function *F2, Function *MergedFunction,
-                      bool NeedUnifiedReturn = false)
-      : F1(F1), F2(F2), MergedFunction(MergedFunction), HasIdArg(true),
-        NeedUnifiedReturn(NeedUnifiedReturn) {}
+  FunctionMergeResult(Function *F1, Function *F2, Function *MergedFunction)
+      : F1(F1), F2(F2), MergedFunction(MergedFunction), HasIdArg(true) {}
 
   std::pair<Function *, Function *> getFunctions() {
     return std::pair<Function *, Function *>(F1, F2);
@@ -150,21 +135,14 @@ public:
   Value *getFunctionIdValue(Function *F) {
     if (F == F1)
       return ConstantInt::getTrue(IntegerType::get(F1->getContext(), 1));
-    else if (F == F2)
+    if (F == F2)
       return ConstantInt::getFalse(IntegerType::get(F2->getContext(), 1));
-    else
-      return nullptr;
+    return nullptr;
   }
 
   void setFunctionIdArgument(bool HasFuncIdArg) { HasIdArg = HasFuncIdArg; }
 
   bool hasFunctionIdArgument() { return HasIdArg; }
-
-  void setUnifiedReturn(bool NeedUnifiedReturn) {
-    this->NeedUnifiedReturn = NeedUnifiedReturn;
-  }
-
-  bool needUnifiedReturn() { return NeedUnifiedReturn; }
 
   // returns whether or not the merge operation was successful
   operator bool() const { return (MergedFunction != nullptr); }
@@ -184,15 +162,12 @@ public:
   }
 
   Function *getMergedFunction() { return MergedFunction; }
-
-  //  static const FunctionMergeResult Error;
 };
 
 class FunctionMerger {
 private:
   Module *M;
 
-  // ProfileSummaryInfo *PSI;
   function_ref<BlockFrequencyInfo *(Function &)> LookupBFI;
 
   Type *IntPtrTy;
@@ -200,34 +175,14 @@ private:
   const DataLayout *DL;
   LLVMContext *ContextPtr;
 
-  // cache of linear functions
-  // KeyValueCache<Function *, SmallVector<Value *, 8>> LFCache;
-
-  // statistics for analyzing this optimization for future improvements
-  // unsigned LastMaxParamScore = 0;
-  // unsigned TotalParamScore = 0;
-  // int CountOpReorder = 0;
-  // int CountBinOps = 0;
-
-  enum LinearizationKind { LK_Random, LK_Canonical };
-
-  void linearize(Function *F, SmallVectorImpl<Value *> &FVec,
-                 LinearizationKind LK = LinearizationKind::LK_Canonical);
-
-  void replaceByCall(Function *F, FunctionMergeResult &MergedFunc,
-                     const FunctionMergingOptions &Options = {});
-  bool replaceCallsWith(Function *F, FunctionMergeResult &MergedFunc,
-                        const FunctionMergingOptions &Options = {});
+  void replaceByCall(Function *F, FunctionMergeResult &MergedFunc);
+  bool replaceCallsWith(Function *F, FunctionMergeResult &MergedFunc);
 
   void updateCallGraph(Function *F, FunctionMergeResult &MFR,
-                       StringSet<> &AlwaysPreserved,
-                       const FunctionMergingOptions &Options);
+                       StringSet<> &AlwaysPreserved);
 
 public:
   FunctionMerger(Module *M) : M(M), IntPtrTy(nullptr) {
-    //, ProfileSummaryInfo *PSI=nullptr, function_ref<BlockFrequencyInfo
-    //*(Function &)> LookupBFI=nullptr) : M(M), PSI(PSI), LookupBFI(LookupBFI),
-    // IntPtrTy(nullptr) {
     if (M) {
       DL = &M->getDataLayout();
       ContextPtr = &M->getContext();
@@ -235,25 +190,19 @@ public:
     }
   }
 
-  bool validMergeTypes(Function *F1, Function *F2,
-                       const FunctionMergingOptions &Options = {});
-
-  static bool areTypesEquivalent(Type *Ty1, Type *Ty2, const DataLayout *DL,
-                                 const FunctionMergingOptions &Options = {});
+  bool validMergeTypes(Function *F1, Function *F2);
+  static bool areTypesEquivalent(Type *Ty1, Type *Ty2, const DataLayout *DL);
 
 
   static bool match(Value *V1, Value *V2);
-  static bool matchInstructions(Instruction *I1, Instruction *I2,
-                                const FunctionMergingOptions &Options = {});
+  static bool matchInstructions(Instruction *I1, Instruction *I2);
   static bool matchWholeBlocks(Value *V1, Value *V2);
   static bool matchBlocks(BasicBlock *B1, BasicBlock *B2);
 
-  void updateCallGraph(FunctionMergeResult &Result,
-                       StringSet<> &AlwaysPreserved,
-                       const FunctionMergingOptions &Options = {});
+  void updateCallGraph(FunctionMergeResult &Result, StringSet<> &AlwaysPreserved);
 
-  FunctionMergeResult merge(Function *F1, Function *F2, std::string Name = "",
-                            const FunctionMergingOptions &Options = {});
+  std::optional<AlignedCode> align(Function *F1, Function *F2);
+  FunctionMergeResult merge(Function *F1, Function *F2, std::string Name = "");
 
   class CodeGenerator {
   private:
@@ -273,16 +222,7 @@ public:
     Type *RetType2;
     Type *ReturnType;
 
-    bool RequiresUnifiedReturn;
-
     Function *MergedFunc;
-
-    SmallPtrSet<BasicBlock *, 8> CreatedBBs;
-    SmallPtrSet<Instruction *, 8> CreatedInsts;
-
-  protected:
-    void removeRedundantInstructions(std::vector<Instruction *> &WorkInst,
-                                     DominatorTree &DT);
 
   public:
     CodeGenerator(Function* F1, Function* F2) 
@@ -292,7 +232,7 @@ public:
         for (BasicBlock &BB: *F2)
             Blocks2.push_back(&BB);
     }
-    virtual ~CodeGenerator() {}
+    virtual ~CodeGenerator() = default;
 
     CodeGenerator &setContext(LLVMContext *ContextPtr) {
       this->ContextPtr = ContextPtr;
@@ -326,10 +266,8 @@ public:
       return *this;
     }
 
-    CodeGenerator &setMergedReturnType(Type *ReturnType,
-                                       bool RequiresUnifiedReturn = false) {
+    CodeGenerator &setMergedReturnType(Type *ReturnType) {
       this->ReturnType = ReturnType;
-      this->RequiresUnifiedReturn = RequiresUnifiedReturn;
       return *this;
     }
 
@@ -340,7 +278,6 @@ public:
 
     Function *getMergedFunction() { return MergedFunc; }
     Type *getMergedReturnType() { return ReturnType; }
-    bool getRequiresUnifiedReturn() { return RequiresUnifiedReturn; }
 
     Value *getFunctionIdentifier() { return IsFunc1; }
 
@@ -358,39 +295,20 @@ public:
 
     Type *getIntPtrType() { return IntPtrTy; }
 
-    void insert(BasicBlock *BB) { CreatedBBs.insert(BB); }
-    void insert(Instruction *I) { CreatedInsts.insert(I); }
 
-    void erase(BasicBlock *BB) { CreatedBBs.erase(BB); }
-    void erase(Instruction *I) { CreatedInsts.erase(I); }
-
-    virtual bool generate(AlignedCode &AlignedSeq,
-                          ValueToValueMapTy &VMap,
-                          const FunctionMergingOptions &Options = {}) = 0;
-
-    void destroyGeneratedCode();
-
-    SmallPtrSet<Instruction *, 8>::const_iterator begin() const {
-      return CreatedInsts.begin();
-    }
-    SmallPtrSet<Instruction *, 8>::const_iterator end() const {
-      return CreatedInsts.end();
-    }
+    virtual bool generate(AlignedCode &AlignedSeq, ValueToValueMapTy &VMap) = 0;
   };
 
   class SALSSACodeGen : public FunctionMerger::CodeGenerator {
 
   public:
     SALSSACodeGen(Function *F1, Function *F2) : CodeGenerator(F1, F2) {}
-    virtual ~SALSSACodeGen() {}
-    virtual bool generate(AlignedCode &AlignedSeq,
-                          ValueToValueMapTy &VMap,
-                          const FunctionMergingOptions &Options = {}) override;
+    virtual ~SALSSACodeGen() = default;
+    virtual bool generate(AlignedCode &AlignedSeq, ValueToValueMapTy &VMap) override;
   };
 };
 
-FunctionMergeResult MergeFunctions(Function *F1, Function *F2,
-                                   const FunctionMergingOptions &Options = {});
+FunctionMergeResult MergeFunctions(Function *F1, Function *F2);
 
 class FunctionMergingPass : public PassInfoMixin<FunctionMergingPass> {
 public:
