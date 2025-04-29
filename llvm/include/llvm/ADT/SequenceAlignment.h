@@ -43,10 +43,9 @@ public:
 
     Entry(Ty V1, Ty V2, bool Matching) : Pair(V1,V2), IsMatchingPair(Matching) {}
 
-    Ty get(size_t index) const {
-      assert((index==0 || index==1) && "Index out of bounds!");
-      if (index==0) return Pair.first;
-      else return Pair.second;
+    Ty get(size_t Index) const {
+      assert((Index==0 || Index==1) && "Index out of bounds!");
+      return (Index == 0) ? Pair.first : Pair.second;
     }
 
     bool empty() const { return (Pair.first==Blank && Pair.second==Blank); }
@@ -58,8 +57,7 @@ public:
     Ty getNonBlank() const {
       if (Pair.first != Blank)
         return Pair.first;
-      else
-        return Pair.second;
+      return Pair.second;
     }
 
   };
@@ -72,10 +70,10 @@ public:
   AlignedSequence(const AlignedSequence<Ty, Blank> &Other) : Data(Other.Data), LargestMatch(Other.LargestMatch) {}
   AlignedSequence(AlignedSequence<Ty, Blank> &&Other) : Data(std::move(Other.Data)), LargestMatch(Other.LargestMatch) {}
 
-  AlignedSequence<Ty> &operator=(const AlignedSequence<Ty, Blank> &Other) {
+  AlignedSequence& operator=(const AlignedSequence<Ty, Blank> &Other) {
     Data = Other.Data;
     LargestMatch = Other.LargestMatch;
-    return (*this);
+    return *this;
   }
 
   void append(const AlignedSequence<Ty, Blank> &Other) {
@@ -98,30 +96,8 @@ public:
 class ScoringSystem {
   ScoreSystemType Gap;
   ScoreSystemType Match;
-  ScoreSystemType Mismatch;
-  bool AllowMismatch;
 public:
-  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match) {
-    this->Gap = Gap;
-    this->Match = Match;
-    this->Mismatch = std::numeric_limits<ScoreSystemType>::min();
-    this->AllowMismatch = false;
-  }
-
-  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match, ScoreSystemType Mismatch, bool AllowMismatch = true) {
-    this->Gap = Gap;
-    this->Match = Match;
-    this->Mismatch = Mismatch;
-    this->AllowMismatch = AllowMismatch;
-  }
-
-  bool getAllowMismatch() {
-    return AllowMismatch;
-  }
-
-  ScoreSystemType getMismatchPenalty() {
-    return Mismatch;
-  }
+  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match) : Gap{Gap}, Match{Match} {}
 
   ScoreSystemType getGapPenalty() {
     return Gap;
@@ -160,9 +136,5 @@ public:
   virtual AlignedSequence<Ty,Blank> getAlignment(ContainerType &Seq0, ContainerType &Seq1) = 0;
   virtual size_t getMemoryRequirement(ContainerType &Seq0, ContainerType &Seq1) = 0;
 };
-
-#include "llvm/ADT/SANeedlemanWunsch.h"
-#include "llvm/ADT/SAHirschberg.h"
-#include "llvm/ADT/SADiagonalWindows.h"
 
 #endif

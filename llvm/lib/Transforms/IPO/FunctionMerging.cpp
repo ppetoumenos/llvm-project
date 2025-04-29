@@ -218,6 +218,10 @@ static cl::opt<unsigned>
     BucketSizeCap("bucket-size-cap", cl::init(1000000000), cl::Hidden,
                   cl::desc("Define a threshold to be used"));
 
+static cl::opt<bool> ImprovedAlloca(
+    "func-merging-improved-alloca", cl::init(true), cl::Hidden,
+    cl::desc("Enable the new, hopefully improved, treatment of alloca statements"));
+
 // Command line option to specify the function to merge. This is
 // mainly used for debugging.
 static cl::opt<std::string> ToMergeFile(
@@ -374,6 +378,7 @@ static bool matchAllocaInsts(const AllocaInst *AI1, const AllocaInst *AI2) {
       AI1->getAlign() != AI2->getAlign())
     return false;
 
+  //TODO: Figure out which allocas are interchangeable
 #ifdef F3M_FIXES
   return AI1->getAllocatedType() == AI2->getAllocatedType();
 #else
@@ -623,10 +628,19 @@ bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
   auto It1 = BB1->begin();
   auto It2 = BB2->begin();
 
-  while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
-    It1++;
-  while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
-    It2++;
+  if (ImprovedAlloca) {
+    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1) || isa<AllocaInst>(*It1))
+      It1++;
+
+    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2) || isa<AllocaInst>(*It2))
+      It2++;
+  } else {
+    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
+      It1++;
+
+    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
+      It2++;
+  }
 
   while (It1 != BB1->end() && It2 != BB2->end()) {
     if (!matchInstructions(&*It1, &*It2))
@@ -644,9 +658,15 @@ bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
 
 static void vectorizeBB(SmallVectorImpl<Value *> &Vec, BasicBlock *BB) {
   Vec.push_back(BB);
-  for (Instruction &I : *BB)
-    if (!isa<LandingPadInst>(&I) && !isa<PHINode>(&I))
-      Vec.push_back(&I);
+  for (Instruction &I : *BB) {
+    if (ImprovedAlloca) {
+      if (!isa<LandingPadInst>(&I) && !isa<PHINode>(&I) && !isa<AllocaInst>(&I))
+        Vec.push_back(&I);
+    } else {
+      if (!isa<LandingPadInst>(&I) && !isa<PHINode>(&I))
+        Vec.push_back(&I);
+    }
+  }
 }
 
 bool FunctionMerger::validMergeTypes(Function *F1, Function *F2) {
@@ -1790,6 +1810,8 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
     for (Instruction &I : *BB1) {
       if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
         continue;
+      if (ImprovedAlloca && isa<AllocaInst>(&I))
+        continue;
       Data.emplace_back(&I, nullptr, false);
     }
     return;
@@ -1801,6 +1823,8 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
     for (Instruction &I : *BB2) {
       if (isa<PHINode>(&I) || isa<LandingPadInst>(&I))
         continue;
+      if (ImprovedAlloca && isa<AllocaInst>(&I))
+        continue;
       Data.emplace_back(nullptr, &I, false);
     }
     return;
@@ -1810,12 +1834,20 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
   Data.emplace_back(BB1, BB2, FunctionMerger::matchBlocks(BB1, BB2));
 
   auto It1 = BB1->begin();
-  while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
-    It1++;
-
   auto It2 = BB2->begin();
-  while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
-    It2++;
+  if (ImprovedAlloca) {
+    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1) || isa<AllocaInst>(*It1))
+      It1++;
+
+    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2) || isa<AllocaInst>(*It2))
+      It2++;
+  } else {
+    while (isa<PHINode>(*It1) || isa<LandingPadInst>(*It1))
+      It1++;
+
+    while (isa<PHINode>(*It2) || isa<LandingPadInst>(*It2))
+      It2++;
+  }
 
   while (It1 != BB1->end() && It2 != BB2->end()) {
     Instruction *I1 = &*It1;
@@ -2043,17 +2075,19 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
       }
 
       if (AlignedBlocks.isProfitable()) {
+        // add this matched pair to the overall sequence
         AlignedSeq.extend(AlignedBlocks);
         BestSet->second.erase(BestIt);
         MergedBlock = true;
       }
     }
 
+    // Append the unsuccessful block
     if (!MergedBlock)
       AlignedSeq.extend(AlignedCode(nullptr, BB2));
   }
 
-  // add this matched pair to the overall sequence
+  // Append the remaining Blocks
   for (auto &Pair : Blocks)
     for (auto &BD1 : Pair.second)
       AlignedSeq.extend(AlignedCode(BD1.BB, nullptr));
@@ -2126,6 +2160,7 @@ FunctionMergeResult FunctionMerger::merge(Function *F1, Function *F2,
     return ErrorResponse;
 
   MergeTimers.start(Timers::Name::codegen_param);
+
 
   // Merging parameters
   std::map<unsigned, unsigned> ParamMap1;
@@ -3070,6 +3105,124 @@ static void CodeGen(BlockListType &Blocks1, BlockListType &Blocks2,
 
     return NewI;
   };
+
+  if (ImprovedAlloca) {
+    // We removed all allocas when we linearised the blocks
+    // Now we will try inserting them into PreBB, taking into account
+    // which Alloca users have matched
+    std::unordered_map<AllocaInst*, AllocaInst*> MatchedAllocas;
+
+    // Identify pairs of Allocas associated with matched instructions
+    for (auto& Entry : AlignedSeq) {
+      if (!Entry.match())
+        continue;
+
+      Instruction *I1 = dyn_cast<Instruction>(Entry.get(0));
+      Instruction *I2 = dyn_cast<Instruction>(Entry.get(1));
+      if (I1 == nullptr) {
+        assert(I2 == nullptr);
+        continue;
+      }
+      assert(I2 != nullptr);
+
+      int NumOps = std::min(I1->getNumOperands(), I2->getNumOperands());
+      for (int Idx = 0; Idx < NumOps; ++Idx) {
+        auto *AI1 = dyn_cast<AllocaInst>(I1->getOperand(Idx));
+        auto *AI2 = dyn_cast<AllocaInst>(I2->getOperand(Idx));
+        if (AI1 == nullptr || AI2 == nullptr)
+          continue;
+        if (!matchAllocaInsts(AI1, AI2))
+          continue;
+        if (MatchedAllocas.count(AI1) == 0)
+          MatchedAllocas[AI1] = AI2;
+      }
+    }
+
+    // Identify pairs of Allocas associated with PHI nodes in matched blocks
+    for (auto& Entry : AlignedSeq) {
+      if (!Entry.match())
+        continue;
+
+      BasicBlock *BB1 = dyn_cast<BasicBlock>(Entry.get(0));
+      BasicBlock *BB2 = dyn_cast<BasicBlock>(Entry.get(1));
+      if (BB1 == nullptr) {
+        assert(BB2 == nullptr);
+        continue;
+      }
+      assert(BB2 != nullptr);
+
+      std::unordered_set<AllocaInst*> allocas1;
+      for (PHINode& PHI : BB1->phis()) {
+        for (Value *V : PHI.operands()) {
+          AllocaInst *AI = dyn_cast<AllocaInst>(V);
+          if (AI == nullptr)
+            continue;
+          if (VMap.count(AI) > 0)
+            continue;
+          allocas1.insert(AI);
+        }
+      }
+
+      std::unordered_set<AllocaInst*> allocas2;
+      for (PHINode& PHI : BB2->phis()) {
+        for (Value *V : PHI.operands()) {
+          AllocaInst *AI = dyn_cast<AllocaInst>(V);
+          if (AI == nullptr)
+            continue;
+          if (VMap.count(AI) > 0)
+            continue;
+          allocas1.insert(AI);
+        }
+      }
+
+      bool stop = false;
+      for (AllocaInst* AI1 : allocas1) {
+        for (AllocaInst* AI2 : allocas1) {
+          if (matchAllocaInsts(AI1, AI2)) {
+            MatchedAllocas[AI1] = AI2;
+            stop = true;
+            break;
+          }
+        }
+        if (stop)
+          break;
+      }
+    }
+
+
+    // Insert them in the Merged Function
+    // Partially replicating the cloning logic below
+    // But without creating one block per instruction
+    // and without setting BlocksF1/2 which will be set
+    // for PreBB later
+    IRBuilder<> PreBuilder(PreBB);
+    for (auto [AI1, AI2] : MatchedAllocas) {
+      MaterialNodes[AI1] = PreBB;
+      MaterialNodes[AI2] = PreBB;
+
+      Instruction *NewI = CloneInst(PreBuilder, MergedFunc, AI1);
+      VMap[AI1] = NewI;
+      VMap[AI2] = NewI;
+    }
+
+    // Insert any unmatched Allocas
+    // TODO: Are allocas only found in entry blocks?
+    for (BasicBlock *EntryBB : {EntryBB1, EntryBB2}) {
+      for (Instruction& I : *EntryBB) {
+        if (!isa<AllocaInst>(&I))
+          continue;
+
+        // Already inserted
+        if (VMap.count(&I) > 0)
+          continue;
+
+        MaterialNodes[&I] = PreBB;
+
+        Instruction *NewI = CloneInst(PreBuilder, MergedFunc, &I);
+        VMap[&I] = NewI;
+      }
+    }
+  }
 
   for (auto &Entry : AlignedSeq) {
     if (Entry.match()) {

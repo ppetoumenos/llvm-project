@@ -46,6 +46,7 @@
 #define LLVM_TRANSFORMS_IPO_FUNCTIONMERGING_H
 
 #include "llvm/ADT/SequenceAlignment.h"
+#include "llvm/ADT/SANeedlemanWunsch.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 
