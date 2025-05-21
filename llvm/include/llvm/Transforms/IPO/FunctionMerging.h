@@ -74,6 +74,7 @@ public:
   int Insts{0};
   int Matches{0};
   int CoreMatches{0};
+  std::unordered_map<Instruction*,Instruction*> MatchedValues;
 
   AlignedCode() = default;
 
@@ -101,9 +102,9 @@ public:
   }
 
   void extend(const AlignedCode &Other);
-  void extend(int index, const BasicBlock *BB);
 
   bool hasMatches() const { return (Matches == Insts) || (CoreMatches > 0); };
+  bool isFullyMerged() const {return Matches == Insts;};
   bool isProfitable() const;
 
   void dump() const;
@@ -194,10 +195,10 @@ public:
   bool validMergeTypes(Function *F1, Function *F2);
   static bool areTypesEquivalent(Type *Ty1, Type *Ty2, const DataLayout *DL);
 
-  static bool match(Value *V1, Value *V2);
-  static bool matchInstructions(Instruction *I1, Instruction *I2);
-  static bool matchWholeBlocks(Value *V1, Value *V2);
-  static bool matchBlocks(BasicBlock *B1, BasicBlock *B2);
+  static MatchScore match(Value *V1, Value *V2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues);
+  static MatchScore matchInstructions(Instruction *I1, Instruction *I2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues);
+  static MatchScore matchWholeBlocks(Value *V1, Value *V2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues);
+  static MatchScore matchBlocks(BasicBlock *B1, BasicBlock *B2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues);
 
   void updateCallGraph(FunctionMergeResult &Result,
                        StringSet<> &AlwaysPreserved);

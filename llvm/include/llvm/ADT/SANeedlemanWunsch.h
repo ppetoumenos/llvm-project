@@ -40,11 +40,11 @@ class Vec2D {
 
 template <typename ContainerType,
           typename Ty = typename ContainerType::value_type, Ty Blank = Ty(0),
-          typename MatchFnTy = std::function<bool(Ty, Ty)>>
+          typename MatchFnTy = std::function<MatchScore(Ty, Ty)>>
 class NeedlemanWunschSA
     : public SequenceAligner<ContainerType, Ty, Blank, MatchFnTy> {
 private:
-  Vec2D<char> Matches;
+  Vec2D<MatchScore> Matches;
   Vec2D<ScoreSystemType> Matrix;
 
   const static unsigned END = 0;
@@ -62,7 +62,7 @@ private:
     if (BaseType::getMatchOperation() == nullptr) {
       for (unsigned i = 0; i < SizeSeq1; i++)
         for (unsigned j = 0; j < SizeSeq2; j++)
-          Matches(i, j) = (Seq1[i] == Seq2[j]);
+          Matches(i, j) = (Seq1[i] == Seq2[j]) ? MatchScore::MATCH : MatchScore::MISMATCH;
     } else {
       for (unsigned i = 0; i < SizeSeq1; i++)
         for (unsigned j = 0; j < SizeSeq2; j++)
@@ -81,6 +81,7 @@ private:
     ScoringSystem &Scoring = BaseType::getScoring();
     const ScoreSystemType Gap = Scoring.getGapPenalty();
     const ScoreSystemType Match = Scoring.getMatchProfit();
+    const ScoreSystemType FullMatch = Scoring.getFullMatchProfit();
     const ScoreSystemType Mismatch = std::numeric_limits<ScoreSystemType>::min();
 
     for (unsigned i = 0; i < NumRows; i++)
@@ -90,8 +91,12 @@ private:
 
     for (unsigned i = 1; i < NumRows; i++) {
       for (unsigned j = 1; j < NumCols; j++) {
-        ScoreSystemType Diagonal =
-            Matches(i - 1, j - 1) ? (Matrix(i - 1, j - 1) + Match) : Mismatch;
+        ScoreSystemType Diagonal = Mismatch;
+        if (Matches(i - 1, j - 1) == MatchScore::FULL_MATCH)
+          Diagonal = Matrix(i - 1, j - 1) + FullMatch;
+        else if (Matches(i - 1, j - 1) == MatchScore::MATCH)
+          Diagonal = Matrix(i - 1, j - 1) + Match;
+
         ScoreSystemType Upper = Matrix(i - 1, j) + Gap;
         ScoreSystemType Left = Matrix(i, j - 1) + Gap;
         ScoreSystemType Score = std::max(std::max(Diagonal, Upper), Left);
@@ -107,11 +112,21 @@ private:
     ScoringSystem &Scoring = BaseType::getScoring();
     const ScoreSystemType Gap = Scoring.getGapPenalty();
     const ScoreSystemType Match = Scoring.getMatchProfit();
+    const ScoreSystemType FullMatch = Scoring.getFullMatchProfit();
 
     int i = Seq1.size(), j = Seq2.size();
 
     while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && Matches(i - 1, j - 1) && (Matrix(i, j) == (Matrix(i - 1, j - 1) + Match))) {
+      if (i > 0 && j > 0 && 
+          (Matches(i - 1, j - 1) == MatchScore::FULL_MATCH) && 
+          (Matrix(i, j) == (Matrix(i - 1, j - 1) + FullMatch))) {
+        // Diagonal
+        Data.push_front(typename BaseType::EntryType(Seq1[i - 1], Seq2[j - 1], true));
+        --i;
+        --j;
+      } else if (i > 0 && j > 0 && 
+          (Matches(i - 1, j - 1) == MatchScore::MATCH) && 
+          (Matrix(i, j) == (Matrix(i - 1, j - 1) + Match))) {
         // Diagonal
         Data.push_front(typename BaseType::EntryType(Seq1[i - 1], Seq2[j - 1], true));
         --i;
@@ -153,7 +168,7 @@ public:
     MemorySize += sizeof(ScoreSystemType)*(SizeSeq1+1)*(SizeSeq2+1);
 
     if (BaseType::getMatchOperation() != nullptr)
-      MemorySize += SizeSeq1*SizeSeq2*sizeof(bool);
+      MemorySize += SizeSeq1*SizeSeq2*sizeof(MatchScore);
 
     return MemorySize;
   }

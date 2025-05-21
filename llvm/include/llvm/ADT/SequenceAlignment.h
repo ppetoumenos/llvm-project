@@ -93,11 +93,21 @@ public:
 
 };
 
+
+enum class MatchScore : unsigned char {
+  MISMATCH = 0,
+  MATCH = 1,
+  FULL_MATCH = 2
+};
+
 class ScoringSystem {
   ScoreSystemType Gap;
   ScoreSystemType Match;
+  ScoreSystemType FullMatch;
 public:
-  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match) : Gap{Gap}, Match{Match} {}
+  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match) : Gap{Gap}, Match{Match}, FullMatch{Match} {}
+
+  ScoringSystem(ScoreSystemType Gap, ScoreSystemType Match, ScoreSystemType FullMatch) : Gap{Gap}, Match{Match}, FullMatch{FullMatch} {}
 
   ScoreSystemType getGapPenalty() {
     return Gap;
@@ -106,9 +116,13 @@ public:
   ScoreSystemType getMatchProfit() {
     return Match;
   }
+
+  ScoreSystemType getFullMatchProfit() {
+    return FullMatch;
+  }
 };
 
-template<typename ContainerType, typename Ty=typename ContainerType::value_type, Ty Blank=Ty(0), typename MatchFnTy=std::function<bool(Ty,Ty)>>
+template<typename ContainerType, typename Ty=typename ContainerType::value_type, Ty Blank=Ty(0), typename MatchFnTy=std::function<MatchScore(Ty,Ty)>>
 class SequenceAligner {
 private:
   ScoringSystem Scoring;
@@ -125,7 +139,7 @@ public:
 
   ScoringSystem &getScoring() { return Scoring; }
 
-  bool match(Ty Val1, Ty Val2) {
+  MatchScore match(Ty Val1, Ty Val2) {
     return Match(Val1,Val2);
   }
 

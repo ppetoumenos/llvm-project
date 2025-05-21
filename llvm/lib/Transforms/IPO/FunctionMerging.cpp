@@ -219,7 +219,11 @@ static cl::opt<unsigned>
                   cl::desc("Define a threshold to be used"));
 
 static cl::opt<bool> ImprovedAlloca(
-    "func-merging-improved-alloca", cl::init(true), cl::Hidden,
+    "func-merging-improved-alloca", cl::init(false), cl::Hidden,
+    cl::desc("Enable the new, hopefully improved, treatment of alloca statements"));
+
+static cl::opt<bool> CallSiteOverheads(
+    "func-merging-callsite-overheads", cl::init(false), cl::Hidden,
     cl::desc("Enable the new, hopefully improved, treatment of alloca statements"));
 
 // Command line option to specify the function to merge. This is
@@ -228,6 +232,12 @@ static cl::opt<std::string> ToMergeFile(
     "func-merging-pairs-file", cl::init(""), cl::value_desc("filename"),
     cl::desc("File containing the functions and basic blocks to merge"),
     cl::Hidden);
+
+// Command line option to specify the function to merge. This is
+// mainly used for debugging.
+static cl::opt<bool> MergeAll(
+    "func-merging-merge-all", cl::init(false), cl::Hidden, 
+    cl::desc("Merge selected functions regardless of whether they are profitable or not"));
 
 static std::string GetValueName(const Value *V);
 
@@ -480,30 +490,94 @@ static bool matchFenceInsts(const FenceInst *FI1, const FenceInst *FI2) {
          FI1->getSyncScopeID() == FI2->getSyncScopeID();
 }
 
-bool FunctionMerger::matchInstructions(Instruction *I1, Instruction *I2) {
+MatchScore FunctionMerger::matchInstructions(Instruction *I1, Instruction *I2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues) {
 
   if (I1->getOpcode() != I2->getOpcode())
-    return false;
+    return MatchScore::MISMATCH;
 
-  if (I1->getOpcode() == Instruction::CallBr)
-    return false;
+  if (I1->getOpcode() == Instruction::CallBr) 
+    return MatchScore::MISMATCH;
 
   // Returns are special cases that can differ in the number of operands
   if (I1->getOpcode() == Instruction::Ret)
-    return true;
+    return MatchScore::MATCH;
 
   // Result type should be the same
   if (I1->getType() != I2->getType())
-    return false;
+    return MatchScore::MISMATCH;
 
   // Operand number and types should be the same
   if (I1->getNumOperands() != I2->getNumOperands())
-    return false;
+    return MatchScore::MISMATCH;
 
   for (unsigned i = 0; i < I1->getNumOperands(); i++)
     if (I1->getOperand(i)->getType() != I2->getOperand(i)->getType())
-      return false;
+      return MatchScore::MISMATCH;
 
+
+  bool MergeableOperands = false;
+  if (ImprovedAlloca) {
+    if (I1->getNumOperands() == I2->getNumOperands()) {
+      MergeableOperands = true;
+      unsigned CountNot = 0, CountYes = 0;
+      for (unsigned i = 0; i < I1->getNumOperands(); ++i) {
+        Instruction *OI1 = dyn_cast<Instruction>(I1->getOperand(i));
+        Instruction *OI2 = dyn_cast<Instruction>(I2->getOperand(i));
+
+        if ((OI1 == nullptr) && (OI2 == nullptr))
+          continue;
+
+        if ((OI1 == nullptr) || (OI2 == nullptr)) {
+          //MergeableOperands = false;
+          //break;
+          CountNot++;
+          continue;
+        }
+
+        if (OI1->getOpcode() != OI2->getOpcode()) {
+          //MergeableOperands = false;
+          //break;
+          CountNot++;
+          continue;
+        }
+
+        if (auto It = MatchedValues.find(OI1); It != MatchedValues.end() && It->second != OI2) {
+          //MergeableOperands = false;
+          //break;
+          CountNot++;
+          continue;
+        }
+
+        if (auto It = MatchedValues.find(OI2); It != MatchedValues.end() && It->second != OI1) {
+          //MergeableOperands = false;
+          //break;
+          CountNot++;
+          continue;
+        }
+        CountYes++;
+      }
+      MergeableOperands = CountYes > CountNot;
+    }
+
+    //if (MergeableOperands) {
+    //  unsigned Count = 0;
+    //  SmallSet<unsigned, 16> UserOpcodes1;
+
+    //  for (User* U1 : I1->users()) 
+    //    if (Instruction* UI1 = dyn_cast<Instruction>(U1))
+    //      UserOpcodes1.insert(UI1->getOpcode());
+
+    //  for (User* U2 : I2->users()) 
+    //    if (Instruction* UI2 = dyn_cast<Instruction>(U2))
+    //      if (UserOpcodes1.contains(UI2->getOpcode()))
+    //          ++Count;
+
+    //  if (Count == 0)
+    //    MergeableOperands = false;
+    //}
+  }
+
+  bool Matching = false;
   switch (I1->getOpcode()) {
     // case Instruction::Br: return false; //{ return (I1->getNumOperands()==1);
     // }
@@ -511,119 +585,134 @@ bool FunctionMerger::matchInstructions(Instruction *I1, Instruction *I2) {
     // #define MatchCaseInst(Kind, I1, I2) case Instruction::#Kind
 
   case Instruction::Load:
-    return matchLoadInsts(dyn_cast<LoadInst>(I1), dyn_cast<LoadInst>(I2));
+    Matching = matchLoadInsts(dyn_cast<LoadInst>(I1), dyn_cast<LoadInst>(I2));
+    break;
   case Instruction::Store:
-    return matchStoreInsts(dyn_cast<StoreInst>(I1), dyn_cast<StoreInst>(I2));
+    Matching = matchStoreInsts(dyn_cast<StoreInst>(I1), dyn_cast<StoreInst>(I2));
+    break;
   case Instruction::Alloca:
-    return matchAllocaInsts(dyn_cast<AllocaInst>(I1), dyn_cast<AllocaInst>(I2));
+    Matching = matchAllocaInsts(dyn_cast<AllocaInst>(I1), dyn_cast<AllocaInst>(I2));
+    break;
   case Instruction::GetElementPtr:
-    return matchGetElementPtrInsts(dyn_cast<GetElementPtrInst>(I1),
+    Matching = matchGetElementPtrInsts(dyn_cast<GetElementPtrInst>(I1),
                                    dyn_cast<GetElementPtrInst>(I2));
+    break;
   case Instruction::Switch:
-    return matchSwitchInsts(dyn_cast<SwitchInst>(I1), dyn_cast<SwitchInst>(I2));
+    Matching = matchSwitchInsts(dyn_cast<SwitchInst>(I1), dyn_cast<SwitchInst>(I2));
+    break;
   case Instruction::Call:
-    return matchCallInsts(dyn_cast<CallInst>(I1), dyn_cast<CallInst>(I2));
+    Matching = matchCallInsts(dyn_cast<CallInst>(I1), dyn_cast<CallInst>(I2));
+    break;
   case Instruction::Invoke:
-    return matchInvokeInsts(dyn_cast<InvokeInst>(I1), dyn_cast<InvokeInst>(I2));
+    Matching = matchInvokeInsts(dyn_cast<InvokeInst>(I1), dyn_cast<InvokeInst>(I2));
+    break;
   case Instruction::InsertValue:
-    return matchInsertValueInsts(dyn_cast<InsertValueInst>(I1),
+    Matching = matchInsertValueInsts(dyn_cast<InsertValueInst>(I1),
                                  dyn_cast<InsertValueInst>(I2));
+    break;
   case Instruction::ExtractValue:
-    return matchExtractValueInsts(dyn_cast<ExtractValueInst>(I1),
+    Matching = matchExtractValueInsts(dyn_cast<ExtractValueInst>(I1),
                                   dyn_cast<ExtractValueInst>(I2));
+    break;
   case Instruction::Fence:
-    return matchFenceInsts(dyn_cast<FenceInst>(I1), dyn_cast<FenceInst>(I2));
+    Matching = matchFenceInsts(dyn_cast<FenceInst>(I1), dyn_cast<FenceInst>(I2));
+    break;
   case Instruction::AtomicCmpXchg: {
     const AtomicCmpXchgInst *CXI = dyn_cast<AtomicCmpXchgInst>(I1);
     const AtomicCmpXchgInst *CXI2 = cast<AtomicCmpXchgInst>(I2);
-    return CXI->isVolatile() == CXI2->isVolatile() &&
+    Matching = CXI->isVolatile() == CXI2->isVolatile() &&
            CXI->isWeak() == CXI2->isWeak() &&
            CXI->getSuccessOrdering() == CXI2->getSuccessOrdering() &&
            CXI->getFailureOrdering() == CXI2->getFailureOrdering() &&
            CXI->getSyncScopeID() == CXI2->getSyncScopeID();
+    break;
   }
   case Instruction::AtomicRMW: {
     const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(I1);
-    return RMWI->getOperation() == cast<AtomicRMWInst>(I2)->getOperation() &&
+    Matching = RMWI->getOperation() == cast<AtomicRMWInst>(I2)->getOperation() &&
            RMWI->isVolatile() == cast<AtomicRMWInst>(I2)->isVolatile() &&
            RMWI->getOrdering() == cast<AtomicRMWInst>(I2)->getOrdering() &&
            RMWI->getSyncScopeID() == cast<AtomicRMWInst>(I2)->getSyncScopeID();
+    break;
   }
   default:
     if (auto *CI = dyn_cast<CmpInst>(I1))
-      return CI->getPredicate() == cast<CmpInst>(I2)->getPredicate();
+      Matching = CI->getPredicate() == cast<CmpInst>(I2)->getPredicate();
     if (isa<OverflowingBinaryOperator>(I1)) {
       if (!isa<OverflowingBinaryOperator>(I2))
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasNoUnsignedWrap() != I2->hasNoUnsignedWrap())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasNoSignedWrap() != I2->hasNoSignedWrap())
-        return false;
+        return MatchScore::MISMATCH;
     }
     if (isa<PossiblyExactOperator>(I1)) {
       if (!isa<PossiblyExactOperator>(I2))
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->isExact() != I2->isExact())
-        return false;
+        return MatchScore::MISMATCH;
     }
     if (isa<FPMathOperator>(I1)) {
       if (!isa<FPMathOperator>(I2))
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->isFast() != I2->isFast())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasAllowReassoc() != I2->hasAllowReassoc())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasNoNaNs() != I2->hasNoNaNs())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasNoInfs() != I2->hasNoInfs())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasNoSignedZeros() != I2->hasNoSignedZeros())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasAllowReciprocal() != I2->hasAllowReciprocal())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasAllowContract() != I2->hasAllowContract())
-        return false;
+        return MatchScore::MISMATCH;
       if (I1->hasApproxFunc() != I2->hasApproxFunc())
-        return false;
+        return MatchScore::MISMATCH;
     }
+    Matching = true;
   }
 
-  return true;
+  if (Matching && MergeableOperands)
+    return MatchScore::FULL_MATCH;
+  return Matching ? MatchScore::MATCH : MatchScore::MISMATCH;
 }
 
-bool FunctionMerger::match(Value *V1, Value *V2) {
+MatchScore FunctionMerger::match(Value *V1, Value *V2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues) {
   if (auto *I1 = dyn_cast<Instruction>(V1))
     if (auto *I2 = dyn_cast<Instruction>(V2))
-      return matchInstructions(I1, I2);
+      return matchInstructions(I1, I2, MatchedValues);
 
   if (auto *BB1 = dyn_cast<BasicBlock>(V1))
     if (auto *BB2 = dyn_cast<BasicBlock>(V2))
-      return matchBlocks(BB1, BB2);
+      return matchBlocks(BB1, BB2, MatchedValues);
 
-  return false;
+  return MatchScore::MISMATCH;
 }
 
-bool FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2) {
+MatchScore FunctionMerger::matchBlocks(BasicBlock *BB1, BasicBlock *BB2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues) {
   if (BB1 == nullptr || BB2 == nullptr)
-    return false;
+    return MatchScore::MISMATCH;
   if (BB1->isLandingPad() || BB2->isLandingPad()) {
     LandingPadInst *LP1 = BB1->getLandingPadInst();
     LandingPadInst *LP2 = BB2->getLandingPadInst();
     if (LP1 == nullptr || LP2 == nullptr)
-      return false;
-    return matchLandingPad(LP1, LP2);
+      return MatchScore::MISMATCH;
+    return matchLandingPad(LP1, LP2) ? MatchScore::MATCH : MatchScore::MISMATCH;
   }
-  return true;
+  return MatchScore::MATCH;
 }
 
-bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
+MatchScore FunctionMerger::matchWholeBlocks(Value *V1, Value *V2, const std::unordered_map<Instruction*,Instruction*>& MatchedValues) {
   auto *BB1 = dyn_cast<BasicBlock>(V1);
   auto *BB2 = dyn_cast<BasicBlock>(V2);
   if (BB1 == nullptr || BB2 == nullptr)
-    return false;
+    return MatchScore::MISMATCH;
 
-  if (!matchBlocks(BB1, BB2))
-    return false;
+  if (matchBlocks(BB1, BB2, MatchedValues) == MatchScore::MISMATCH)
+    return MatchScore::MISMATCH;
 
   auto It1 = BB1->begin();
   auto It2 = BB2->begin();
@@ -643,17 +732,17 @@ bool FunctionMerger::matchWholeBlocks(Value *V1, Value *V2) {
   }
 
   while (It1 != BB1->end() && It2 != BB2->end()) {
-    if (!matchInstructions(&*It1, &*It2))
-      return false;
+    if (matchInstructions(&*It1, &*It2, MatchedValues) == MatchScore::MISMATCH)
+      return MatchScore::MISMATCH;
 
     It1++;
     It2++;
   }
 
   if (It1 != BB1->end() || It2 != BB2->end())
-    return false;
+    return MatchScore::MISMATCH;
 
-  return true;
+  return MatchScore::MATCH;
 }
 
 static void vectorizeBB(SmallVectorImpl<Value *> &Vec, BasicBlock *BB) {
@@ -1813,6 +1902,7 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
       if (ImprovedAlloca && isa<AllocaInst>(&I))
         continue;
       Data.emplace_back(&I, nullptr, false);
+      Insts++;
     }
     return;
   }
@@ -1826,12 +1916,13 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
       if (ImprovedAlloca && isa<AllocaInst>(&I))
         continue;
       Data.emplace_back(nullptr, &I, false);
+      Insts++;
     }
     return;
   }
 
   // Add both, skipping Phi nodes and Landing Pads
-  Data.emplace_back(BB1, BB2, FunctionMerger::matchBlocks(BB1, BB2));
+  Data.emplace_back(BB1, BB2, FunctionMerger::matchBlocks(BB1, BB2, MatchedValues) != MatchScore::MISMATCH);
 
   auto It1 = BB1->begin();
   auto It2 = BB2->begin();
@@ -1853,11 +1944,16 @@ AlignedCode::AlignedCode(BasicBlock *BB1, BasicBlock *BB2) {
     Instruction *I1 = &*It1;
     Instruction *I2 = &*It2;
 
-    if (FunctionMerger::matchInstructions(I1, I2)) {
+    if (FunctionMerger::matchInstructions(I1, I2, MatchedValues) != MatchScore::MISMATCH) {
       Data.emplace_back(I1, I2, true);
+      Insts++;
+      Matches++;
+      if (!I1->isTerminator())
+        CoreMatches++;
     } else {
       Data.emplace_back(I1, nullptr, false);
       Data.emplace_back(nullptr, I2, false);
+      Insts += 2;
     }
 
     It1++;
@@ -1904,7 +2000,7 @@ bool AlignedCode::isProfitable() const {
   }
 
   bool Profitable = (MergedCost <= OriginalCost);
-  if (Verbose)
+  if (Debug)
     errs() << ((Profitable) ? "Profitable" : "Unprofitable") << "\n";
   return Profitable;
 }
@@ -1927,6 +2023,8 @@ void AlignedCode::extend(const AlignedCode &Other) {
       Insts++;
       if (Entry.match()) {
         Matches++;
+        MatchedValues[I1] = I2;
+        MatchedValues[I2] = I1;
         Instruction *I = I1 ? I1 : I2;
         if (!I->isTerminator())
           CoreMatches++;
@@ -1973,14 +2071,34 @@ void AlignedCode::dump() const {
 std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
 
   AlignedCode AlignedSeq;
-  NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2),
-                                                 FunctionMerger::match);
+  //ScoringSystem ScoresOriginal(-1, 2);
+  NeedlemanWunschSA<SmallVectorImpl<Value *>> SA(ScoringSystem(-1, 2, 4),
+      [&AlignedSeq](Value *V1, Value *V2) -> MatchScore {return FunctionMerger::match(V1, V2, AlignedSeq.MatchedValues);});
 
   // Old alignment options are removed
   // Can now be only NW or PA
   assert(EnableNW || EnablePA);
 
   int NumBB1{0}, NumBB2{0};
+
+  // PP: Bail-out if the function contains an unreachable statement
+  // Merging is likely to complicate dead code elimination later on
+  if (ImprovedAlloca) {
+    for (BasicBlock& BB: *F1) {
+      for (Instruction& I: BB) {
+        if (isa<UnreachableInst>(I))
+          return {};
+      }
+    }
+
+    for (BasicBlock& BB: *F2) {
+      for (Instruction& I: BB) {
+        if (isa<UnreachableInst>(I))
+          return {};
+      }
+    }
+  }
+
 
   MergeTimers.start(Timers::Name::codegen_rank);
 
@@ -1994,12 +2112,60 @@ std::optional<AlignedCode> FunctionMerger::align(Function *F1, Function *F2) {
 
   MergeTimers.stop(Timers::Name::codegen_rank);
 
+  std::set<BasicBlock*> UsedF2Blocks;
+  if (ImprovedAlloca) {
+    // Merge identical blocks first
+    // This makes it easier to figure out how to align
+    // the rest of the code
+    unsigned FullyMergedBlocks = 0;
+    unsigned AllBlocks = 0;
+    for (BasicBlock &BIt : *F2) {
+      BasicBlock *BB2 = &BIt;
+      BlockFingerprint BD2(BB2);
+      AllBlocks++;
+
+      auto ItSet = Blocks.find(BD2.Size);
+      if (ItSet == Blocks.end())
+        continue;
+
+      // Bail-out if multiple blocks in F1 have the same fingerprint size as BB2
+      // If there are multiple candidates, we might prefer to wait for the more
+      // sophisticated alignment approach later.
+      // We could also iterate through all blocks and only bailout
+      // if more than one is fully mergeable with BB2, but this
+      // would be costlier
+      if (ItSet->second.size() != 1)
+        continue;
+
+      for (auto BDIt = ItSet->second.begin(), E = ItSet->second.end(); BDIt != E; BDIt++) {
+        if (BD2.distance(*BDIt) < std::numeric_limits<float>::epsilon()) {
+          BasicBlock *BB1 = BDIt->BB;
+          AlignedCode AlignedBlocks(BB1, BB2);
+          if (AlignedBlocks.isFullyMerged()) {
+            AlignedSeq.extend(AlignedBlocks);
+            ItSet->second.erase(BDIt);
+            UsedF2Blocks.insert(BB2);
+            FullyMergedBlocks++;
+            break;
+          }
+        }
+      }
+    }
+    errs() << "Fully Merged Blocks: " << FullyMergedBlocks << " out of " << AllBlocks << "\n";
+  }
+
   for (BasicBlock &BIt : *F2) {
+    NumBB2++;
+    // Added to support the addition of the loop above
+    // Should have minimal overhead in the case
+    // where we skip the previous loop
+    if (UsedF2Blocks.count(&BIt) > 0)
+      continue;
+
     MergeTimers.start(Timers::Name::codegen_rank);
 
     BasicBlock *BB2 = &BIt;
     BlockFingerprint BD2(BB2);
-    NumBB2++;
 
     // list all the map entries in Blocks in order of distance from BD2.Size
     auto ItSetIncr = Blocks.lower_bound(BD2.Size);
@@ -2979,6 +3145,16 @@ bool FunctionMerging::runImpl(
         size_t MergedSize = EstimateFunctionSize(
             Result.getMergedFunction(), GTTI(*Result.getMergedFunction()));
         size_t Overhead = EstimateThunkOverhead(Result, AlwaysPreserved);
+        if (CallSiteOverheads) {
+          size_t NumCallers = F1->getNumUses() + F2->getNumUses();
+          // Why 5? Assuming the two functions haven't merged perfectly,
+          // we need to pass a function identifier, by moving 0 or 1 in
+          // a register. x86_64 uses 2 bytes for 0 (xor), and 5 bytes for 1.
+          // 64bit RISC/ARM architecture should be able to do this with one
+          // instruction, i.e. 8 bytes. In which case we should change this,
+          // ideally
+          Overhead += 5 * NumCallers;
+        }
 
         size_t SizeF12 = MergedSize + Overhead;
         size_t SizeF1F2 = match.OtherSize + match.Size;
@@ -2986,7 +3162,7 @@ bool FunctionMerging::runImpl(
         match.MergedSize = SizeF12;
         match.Profitable = (SizeF12 + MergingOverheadThreshold) < SizeF1F2;
 
-        if (!ToMergeFile.empty() || match.Profitable) {
+        if (MergeAll || match.Profitable) {
           TotalMerges++;
           matcher->remove_candidate(F2);
 
